@@ -109,27 +109,6 @@ const calculatePipValue = (symbol, exitPrice) => {
   }
 };
 
-// Convert TradingView page URL to direct image URL
-const getTradingViewImageUrl = (url) => {
-  if (!url) return null;
-  
-  // Already a direct image URL
-  if (url.includes('s3.tradingview.com') || url.match(/\.(png|jpg|jpeg|gif|webp)$/i)) {
-    return url;
-  }
-  
-  // TradingView snapshot URL: https://www.tradingview.com/x/XXXXXXXX/
-  const tvMatch = url.match(/tradingview\.com\/x\/([a-zA-Z0-9]+)/);
-  if (tvMatch) {
-    const id = tvMatch[1];
-    // TradingView stores snapshots with first letter as subfolder
-    return `https://s3.tradingview.com/snapshots/${id[0].toLowerCase()}/${id}.png`;
-  }
-  
-  // Return as-is if not recognized (might be another image host)
-  return url;
-};
-
 // localStorage for dark mode only (UI preference)
 const loadDarkMode = () => {
   try {
@@ -516,30 +495,31 @@ function JournalView({ trades, accounts, filterAccount, setFilterAccount, onSele
           {filtered.map(trade => {
             const chartImg = getTradingViewImageUrl(trade.chartLink) || trade.chartImage;
             return (
-            <div key={trade.id} onClick={() => onSelectTrade(trade)} className="table-row" style={{ display: 'grid', gridTemplateColumns: '1.5fr 80px 100px 80px 100px 50px', gap: 12, alignItems: 'center' }}>
-              <div className="flex items-center gap-3">
-                {chartImg ? (
-                  <div style={{ width: 48, height: 36, borderRadius: 6, overflow: 'hidden', flexShrink: 0, background: theme.hoverBg }}>
-                    <img src={chartImg} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={(e) => e.target.style.display = 'none'} />
+              <div key={trade.id} onClick={() => onSelectTrade(trade)} className="table-row" style={{ display: 'grid', gridTemplateColumns: '1.5fr 80px 100px 80px 100px 50px', gap: 12, alignItems: 'center' }}>
+                <div className="flex items-center gap-3">
+                  {chartImg ? (
+                    <div style={{ width: 48, height: 36, borderRadius: 6, overflow: 'hidden', flexShrink: 0, background: theme.hoverBg }}>
+                      <img src={chartImg} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={(e) => e.target.style.display = 'none'} />
+                    </div>
+                  ) : (
+                    <div style={{ width: 36, height: 36, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 600, background: trade.pnl >= 0 ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)', color: trade.pnl >= 0 ? '#10b981' : '#ef4444' }}>
+                      {trade.symbol?.slice(0, 2)}
+                    </div>
+                  )}
+                  <div>
+                    <div style={{ fontSize: 14, fontWeight: 500, color: theme.text }}>{trade.symbol}</div>
+                    <div style={{ fontSize: 12, color: theme.textFaint }}>{trade.date}</div>
                   </div>
-                ) : (
-                  <div style={{ width: 36, height: 36, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 600, background: trade.pnl >= 0 ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)', color: trade.pnl >= 0 ? '#10b981' : '#ef4444' }}>
-                    {trade.symbol?.slice(0, 2)}
-                  </div>
-                )}
-                <div>
-                  <div style={{ fontSize: 14, fontWeight: 500, color: theme.text }}>{trade.symbol}</div>
-                  <div style={{ fontSize: 12, color: theme.textFaint }}>{trade.date}</div>
+                  {trade.chartLink && !chartImg && <ExternalLink size={14} style={{ color: theme.textFaint }} />}
                 </div>
-                {trade.chartLink && !chartImg && <ExternalLink size={14} style={{ color: theme.textFaint }} />}
+                <span className="badge" style={{ background: trade.side === 'Long' ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)', color: trade.side === 'Long' ? '#10b981' : '#ef4444' }}>{trade.side}</span>
+                <span className="badge" style={{ background: MARKET_STRUCTURES[trade.marketStructure]?.color, color: 'white' }}>{trade.marketStructure?.replace('_', ' ').slice(0, 8)}</span>
+                <span style={{ fontSize: 14, color: theme.text }}>{trade.lots}</span>
+                <span style={{ fontSize: 14, fontWeight: 600, color: trade.pnl >= 0 ? '#10b981' : '#ef4444', textAlign: 'right' }}>{trade.pnl >= 0 ? '+' : ''}${trade.pnl?.toFixed(2)}</span>
+                <Eye size={16} style={{ color: theme.textFaint }} />
               </div>
-              <span className="badge" style={{ background: trade.side === 'Long' ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)', color: trade.side === 'Long' ? '#10b981' : '#ef4444' }}>{trade.side}</span>
-              <span className="badge" style={{ background: MARKET_STRUCTURES[trade.marketStructure]?.color, color: 'white' }}>{trade.marketStructure?.replace('_', ' ').slice(0, 8)}</span>
-              <span style={{ fontSize: 14, color: theme.text }}>{trade.lots}</span>
-              <span style={{ fontSize: 14, fontWeight: 600, color: trade.pnl >= 0 ? '#10b981' : '#ef4444', textAlign: 'right' }}>{trade.pnl >= 0 ? '+' : ''}${trade.pnl?.toFixed(2)}</span>
-              <Eye size={16} style={{ color: theme.textFaint }} />
-            </div>
-          );})}
+            );
+          })}
         </div>
       ) : (
         /* Grid View */
@@ -547,56 +527,57 @@ function JournalView({ trades, accounts, filterAccount, setFilterAccount, onSele
           {filtered.map(trade => {
             const chartImg = getTradingViewImageUrl(trade.chartLink) || trade.chartImage;
             return (
-            <div 
-              key={trade.id} 
-              onClick={() => onSelectTrade(trade)} 
-              className="card" 
-              style={{ cursor: 'pointer', overflow: 'hidden', transition: 'transform 0.15s, box-shadow 0.15s' }}
-              onMouseEnter={(e) => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.boxShadow = '0 8px 24px rgba(0,0,0,0.12)'; }}
-              onMouseLeave={(e) => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = 'none'; }}
-            >
-              {/* Chart Image Preview */}
-              {chartImg ? (
-                <div style={{ width: '100%', height: 140, background: theme.hoverBg, position: 'relative' }}>
-                  <img src={chartImg} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={(e) => { e.target.parentElement.style.display = 'none'; }} />
-                  {trade.chartLink && (
-                    <a href={trade.chartLink} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} style={{ position: 'absolute', top: 8, right: 8, padding: 6, borderRadius: 6, background: 'rgba(0,0,0,0.6)', color: 'white' }}>
-                      <ExternalLink size={14} />
-                    </a>
+              <div 
+                key={trade.id} 
+                onClick={() => onSelectTrade(trade)} 
+                className="card" 
+                style={{ cursor: 'pointer', overflow: 'hidden', transition: 'transform 0.15s, box-shadow 0.15s' }}
+                onMouseEnter={(e) => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.boxShadow = '0 8px 24px rgba(0,0,0,0.12)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = 'none'; }}
+              >
+                {/* Chart Image Preview */}
+                {chartImg ? (
+                  <div style={{ width: '100%', height: 140, background: theme.hoverBg, position: 'relative' }}>
+                    <img src={chartImg} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={(e) => { e.target.parentElement.style.display = 'none'; }} />
+                    {trade.chartLink && (
+                      <a href={trade.chartLink} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} style={{ position: 'absolute', top: 8, right: 8, padding: 6, borderRadius: 6, background: 'rgba(0,0,0,0.6)', color: 'white' }}>
+                        <ExternalLink size={14} />
+                      </a>
+                    )}
+                  </div>
+                ) : (
+                  <div style={{ width: '100%', height: 80, background: trade.pnl >= 0 ? 'rgba(16,185,129,0.05)' : 'rgba(239,68,68,0.05)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <span style={{ fontSize: 28, fontWeight: 700, color: trade.pnl >= 0 ? '#10b981' : '#ef4444', opacity: 0.3 }}>{trade.symbol}</span>
+                  </div>
+                )}
+                
+                {/* Card Content */}
+                <div style={{ padding: 16 }}>
+                  <div className="flex items-center justify-between" style={{ marginBottom: 12 }}>
+                    <div>
+                      <div style={{ fontSize: 15, fontWeight: 600, color: theme.text }}>{trade.symbol}</div>
+                      <div style={{ fontSize: 12, color: theme.textFaint }}>{trade.date} · {trade.time}</div>
+                    </div>
+                    <span style={{ fontSize: 18, fontWeight: 700, color: trade.pnl >= 0 ? '#10b981' : '#ef4444' }}>
+                      {trade.pnl >= 0 ? '+' : ''}${trade.pnl?.toFixed(2)}
+                    </span>
+                  </div>
+                  
+                  <div className="flex items-center gap-2" style={{ flexWrap: 'wrap' }}>
+                    <span className="badge" style={{ background: trade.side === 'Long' ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)', color: trade.side === 'Long' ? '#10b981' : '#ef4444' }}>{trade.side}</span>
+                    <span className="badge" style={{ background: MARKET_STRUCTURES[trade.marketStructure]?.color, color: 'white' }}>{MARKET_STRUCTURES[trade.marketStructure]?.label?.split(' ')[0]}</span>
+                    <span style={{ fontSize: 12, color: theme.textMuted }}>{trade.lots} lots</span>
+                  </div>
+                  
+                  {trade.notes && (
+                    <p style={{ fontSize: 12, color: theme.textMuted, marginTop: 10, lineHeight: 1.4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {trade.notes}
+                    </p>
                   )}
                 </div>
-              ) : (
-                <div style={{ width: '100%', height: 80, background: trade.pnl >= 0 ? 'rgba(16,185,129,0.05)' : 'rgba(239,68,68,0.05)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <span style={{ fontSize: 28, fontWeight: 700, color: trade.pnl >= 0 ? '#10b981' : '#ef4444', opacity: 0.3 }}>{trade.symbol}</span>
-                </div>
-              )}
-              
-              {/* Card Content */}
-              <div style={{ padding: 16 }}>
-                <div className="flex items-center justify-between" style={{ marginBottom: 12 }}>
-                  <div>
-                    <div style={{ fontSize: 15, fontWeight: 600, color: theme.text }}>{trade.symbol}</div>
-                    <div style={{ fontSize: 12, color: theme.textFaint }}>{trade.date} · {trade.time}</div>
-                  </div>
-                  <span style={{ fontSize: 18, fontWeight: 700, color: trade.pnl >= 0 ? '#10b981' : '#ef4444' }}>
-                    {trade.pnl >= 0 ? '+' : ''}${trade.pnl?.toFixed(2)}
-                  </span>
-                </div>
-                
-                <div className="flex items-center gap-2" style={{ flexWrap: 'wrap' }}>
-                  <span className="badge" style={{ background: trade.side === 'Long' ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)', color: trade.side === 'Long' ? '#10b981' : '#ef4444' }}>{trade.side}</span>
-                  <span className="badge" style={{ background: MARKET_STRUCTURES[trade.marketStructure]?.color, color: 'white' }}>{MARKET_STRUCTURES[trade.marketStructure]?.label?.split(' ')[0]}</span>
-                  <span style={{ fontSize: 12, color: theme.textMuted }}>{trade.lots} lots</span>
-                </div>
-                
-                {trade.notes && (
-                  <p style={{ fontSize: 12, color: theme.textMuted, marginTop: 10, lineHeight: 1.4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {trade.notes}
-                  </p>
-                )}
               </div>
-            </div>
-          );})}
+            );
+          })}
         </div>
       )}
     </div>
