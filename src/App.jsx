@@ -20,6 +20,29 @@ const MARKET_STRUCTURES = {
   CHOPPY: { label: 'Choppy/Range', color: '#8B5CF6', description: 'No clear structure' }
 };
 
+// Convert TradingView share URL to direct image URL
+// Input: https://www.tradingview.com/x/bGSZen5C/
+// Output: https://s3.tradingview.com/snapshots/b/bGSZen5C.png
+const getTradingViewImageUrl = (url) => {
+  if (!url) return null;
+  
+  // Already a direct image URL
+  if (url.includes('s3.tradingview.com') || url.match(/\.(png|jpg|jpeg|gif|webp)$/i)) {
+    return url;
+  }
+  
+  // Extract ID from TradingView share URL
+  const match = url.match(/tradingview\.com\/x\/([a-zA-Z0-9]+)/);
+  if (match) {
+    const id = match[1];
+    const firstChar = id.charAt(0).toLowerCase();
+    return `https://s3.tradingview.com/snapshots/${firstChar}/${id}.png`;
+  }
+  
+  // Return original if can't parse
+  return url;
+};
+
 const CANDLE_TYPES = {
   OHLC: { label: 'OHLC (Bullish)', description: 'Open → Low → High → Close' },
   OLHC: { label: 'OLHC (Bearish)', description: 'Open → High → Low → Close' }
@@ -86,6 +109,27 @@ const calculatePipValue = (symbol, exitPrice) => {
   }
 };
 
+// Convert TradingView page URL to direct image URL
+const getTradingViewImageUrl = (url) => {
+  if (!url) return null;
+  
+  // Already a direct image URL
+  if (url.includes('s3.tradingview.com') || url.match(/\.(png|jpg|jpeg|gif|webp)$/i)) {
+    return url;
+  }
+  
+  // TradingView snapshot URL: https://www.tradingview.com/x/XXXXXXXX/
+  const tvMatch = url.match(/tradingview\.com\/x\/([a-zA-Z0-9]+)/);
+  if (tvMatch) {
+    const id = tvMatch[1];
+    // TradingView stores snapshots with first letter as subfolder
+    return `https://s3.tradingview.com/snapshots/${id[0].toLowerCase()}/${id}.png`;
+  }
+  
+  // Return as-is if not recognized (might be another image host)
+  return url;
+};
+
 // localStorage for dark mode only (UI preference)
 const loadDarkMode = () => {
   try {
@@ -101,6 +145,7 @@ export default function TradingJournal() {
   const [showNewTrade, setShowNewTrade] = useState(false);
   const [showNewAccount, setShowNewAccount] = useState(false);
   const [selectedTrade, setSelectedTrade] = useState(null);
+  const [editingTrade, setEditingTrade] = useState(null);
   const [filterAccount, setFilterAccount] = useState('all');
   const [analyticsAccount, setAnalyticsAccount] = useState('all');
   const [loading, setLoading] = useState(true);
@@ -203,6 +248,36 @@ export default function TradingJournal() {
     const { error } = await supabase.from('trades').delete().eq('id', id);
     if (error) { console.error('Error deleting trade:', error); return; }
     setTrades(prev => prev.filter(t => t.id !== id));
+  };
+
+  const updateTrade = async (trade) => {
+    const dbTrade = {
+      date: trade.date,
+      time: trade.time,
+      symbol: trade.symbol,
+      side: trade.side,
+      entry: trade.entry,
+      exit_price: trade.exit,
+      lots: trade.lots,
+      stop_loss: trade.stopLoss,
+      take_profit: trade.takeProfit,
+      pnl: trade.pnl,
+      commission: trade.commission,
+      swap: trade.swap,
+      risk_reward: trade.riskReward,
+      market_structure: trade.marketStructure,
+      candle_type: trade.candleType,
+      liquidity_taken: trade.liquidityTaken,
+      liquidity_target: trade.liquidityTarget,
+      notes: trade.notes,
+      account: trade.account,
+      chart_link: trade.chartLink,
+      chart_image: trade.chartImage
+    };
+    
+    const { error } = await supabase.from('trades').update(dbTrade).eq('id', trade.id);
+    if (error) { console.error('Error updating trade:', error); return; }
+    setTrades(prev => prev.map(t => t.id === trade.id ? trade : t));
   };
 
   const addAccount = async (account) => {
@@ -387,7 +462,8 @@ export default function TradingJournal() {
 
         {showNewTrade && <NewTradeModal onClose={() => setShowNewTrade(false)} onSave={(trade) => { addTrade(trade); setShowNewTrade(false); }} accounts={accounts} />}
         {showNewAccount && <NewAccountModal onClose={() => setShowNewAccount(false)} onSave={(acc) => { addAccount(acc); setShowNewAccount(false); }} />}
-        {selectedTrade && <TradeDetailModal trade={selectedTrade} onClose={() => setSelectedTrade(null)} onDelete={(id) => { deleteTrade(id); setSelectedTrade(null); }} />}
+        {selectedTrade && <TradeDetailModal trade={selectedTrade} onClose={() => setSelectedTrade(null)} onDelete={(id) => { deleteTrade(id); setSelectedTrade(null); }} onEdit={(trade) => { setSelectedTrade(null); setEditingTrade(trade); }} />}
+        {editingTrade && <EditTradeModal trade={editingTrade} onClose={() => setEditingTrade(null)} onSave={(trade) => { updateTrade(trade); setEditingTrade(null); }} accounts={accounts} />}
       </div>
     </ThemeContext.Provider>
   );
@@ -437,12 +513,14 @@ function JournalView({ trades, accounts, filterAccount, setFilterAccount, onSele
           <div className="table-header" style={{ display: 'grid', gridTemplateColumns: '1.5fr 80px 100px 80px 100px 50px', gap: 12 }}>
             <div>Trade</div><div>Side</div><div>Structure</div><div>Lots</div><div style={{ textAlign: 'right' }}>P&L</div><div></div>
           </div>
-          {filtered.map(trade => (
+          {filtered.map(trade => {
+            const chartImg = getTradingViewImageUrl(trade.chartLink) || trade.chartImage;
+            return (
             <div key={trade.id} onClick={() => onSelectTrade(trade)} className="table-row" style={{ display: 'grid', gridTemplateColumns: '1.5fr 80px 100px 80px 100px 50px', gap: 12, alignItems: 'center' }}>
               <div className="flex items-center gap-3">
-                {trade.chartImage ? (
-                  <div style={{ width: 48, height: 36, borderRadius: 6, overflow: 'hidden', flexShrink: 0 }}>
-                    <img src={trade.chartImage} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                {chartImg ? (
+                  <div style={{ width: 48, height: 36, borderRadius: 6, overflow: 'hidden', flexShrink: 0, background: theme.hoverBg }}>
+                    <img src={chartImg} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={(e) => e.target.style.display = 'none'} />
                   </div>
                 ) : (
                   <div style={{ width: 36, height: 36, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 600, background: trade.pnl >= 0 ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)', color: trade.pnl >= 0 ? '#10b981' : '#ef4444' }}>
@@ -453,7 +531,7 @@ function JournalView({ trades, accounts, filterAccount, setFilterAccount, onSele
                   <div style={{ fontSize: 14, fontWeight: 500, color: theme.text }}>{trade.symbol}</div>
                   <div style={{ fontSize: 12, color: theme.textFaint }}>{trade.date}</div>
                 </div>
-                {trade.chartLink && !trade.chartImage && <ExternalLink size={14} style={{ color: theme.textFaint }} />}
+                {trade.chartLink && !chartImg && <ExternalLink size={14} style={{ color: theme.textFaint }} />}
               </div>
               <span className="badge" style={{ background: trade.side === 'Long' ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)', color: trade.side === 'Long' ? '#10b981' : '#ef4444' }}>{trade.side}</span>
               <span className="badge" style={{ background: MARKET_STRUCTURES[trade.marketStructure]?.color, color: 'white' }}>{trade.marketStructure?.replace('_', ' ').slice(0, 8)}</span>
@@ -461,12 +539,14 @@ function JournalView({ trades, accounts, filterAccount, setFilterAccount, onSele
               <span style={{ fontSize: 14, fontWeight: 600, color: trade.pnl >= 0 ? '#10b981' : '#ef4444', textAlign: 'right' }}>{trade.pnl >= 0 ? '+' : ''}${trade.pnl?.toFixed(2)}</span>
               <Eye size={16} style={{ color: theme.textFaint }} />
             </div>
-          ))}
+          );})}
         </div>
       ) : (
         /* Grid View */
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 16 }}>
-          {filtered.map(trade => (
+          {filtered.map(trade => {
+            const chartImg = getTradingViewImageUrl(trade.chartLink) || trade.chartImage;
+            return (
             <div 
               key={trade.id} 
               onClick={() => onSelectTrade(trade)} 
@@ -476,9 +556,9 @@ function JournalView({ trades, accounts, filterAccount, setFilterAccount, onSele
               onMouseLeave={(e) => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = 'none'; }}
             >
               {/* Chart Image Preview */}
-              {trade.chartImage ? (
+              {chartImg ? (
                 <div style={{ width: '100%', height: 140, background: theme.hoverBg, position: 'relative' }}>
-                  <img src={trade.chartImage} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                  <img src={chartImg} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={(e) => { e.target.parentElement.style.display = 'none'; }} />
                   {trade.chartLink && (
                     <a href={trade.chartLink} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} style={{ position: 'absolute', top: 8, right: 8, padding: 6, borderRadius: 6, background: 'rgba(0,0,0,0.6)', color: 'white' }}>
                       <ExternalLink size={14} />
@@ -516,7 +596,7 @@ function JournalView({ trades, accounts, filterAccount, setFilterAccount, onSele
                 )}
               </div>
             </div>
-          ))}
+          );})}
         </div>
       )}
     </div>
@@ -934,6 +1014,149 @@ function NewTradeModal({ onClose, onSave, accounts }) {
   );
 }
 
+function EditTradeModal({ trade: initialTrade, onClose, onSave, accounts }) {
+  const theme = useTheme();
+  const [trade, setTrade] = useState({
+    ...initialTrade,
+    entry: initialTrade.entry?.toString() || '',
+    exit: initialTrade.exit?.toString() || '',
+    lots: initialTrade.lots?.toString() || '',
+    stopLoss: initialTrade.stopLoss?.toString() || '',
+    takeProfit: initialTrade.takeProfit?.toString() || '',
+    commission: initialTrade.commission?.toString() || '',
+    swap: initialTrade.swap?.toString() || '',
+    liquidityTaken: initialTrade.liquidityTaken || [],
+    liquidityTarget: initialTrade.liquidityTarget || [],
+    chartLink: initialTrade.chartLink || '',
+    chartImage: initialTrade.chartImage || ''
+  });
+
+  useEffect(() => {
+    if (trade.entry && trade.exit && trade.lots && trade.symbol) {
+      const config = SYMBOL_CONFIG[trade.symbol.toUpperCase()] || SYMBOL_CONFIG['DEFAULT'];
+      const entry = parseFloat(trade.entry), exit = parseFloat(trade.exit), lots = parseFloat(trade.lots);
+      const commission = parseFloat(trade.commission) || 0, swap = parseFloat(trade.swap) || 0;
+      if (!isNaN(entry) && !isNaN(exit) && !isNaN(lots)) {
+        const diff = trade.side === 'Long' ? exit - entry : entry - exit;
+        const pips = diff / config.pipSize;
+        const pipValue = calculatePipValue(trade.symbol, exit);
+        const gross = pips * pipValue * lots;
+        setTrade(prev => ({ ...prev, pnl: gross - commission + swap }));
+      }
+    }
+  }, [trade.entry, trade.exit, trade.lots, trade.symbol, trade.side, trade.commission, trade.swap]);
+
+  const handleSave = () => {
+    const rr = trade.stopLoss && trade.takeProfit && trade.entry
+      ? `1:${Math.abs((parseFloat(trade.takeProfit) - parseFloat(trade.entry)) / (parseFloat(trade.entry) - parseFloat(trade.stopLoss))).toFixed(1)}` : trade.riskReward || '-';
+    onSave({ 
+      ...trade, 
+      entry: parseFloat(trade.entry), 
+      exit: parseFloat(trade.exit), 
+      lots: parseFloat(trade.lots), 
+      stopLoss: parseFloat(trade.stopLoss) || 0, 
+      takeProfit: parseFloat(trade.takeProfit) || 0, 
+      commission: parseFloat(trade.commission) || 0, 
+      swap: parseFloat(trade.swap) || 0, 
+      riskReward: rr 
+    });
+  };
+
+  const toggleLiq = (key, type) => {
+    const field = type === 'taken' ? 'liquidityTaken' : 'liquidityTarget';
+    setTrade(prev => ({ ...prev, [field]: prev[field].includes(key) ? prev[field].filter(k => k !== key) : [...prev[field], key] }));
+  };
+
+  const chartPreview = getTradingViewImageUrl(trade.chartLink) || trade.chartImage;
+
+  return (
+    <Modal width={520} onClose={onClose}>
+      <div style={{ padding: 20, borderBottom: `1px solid ${theme.cardBorder}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <h3 style={{ fontSize: 16, fontWeight: 600, color: theme.text }}>Edit Trade</h3>
+        <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4 }}><X size={20} style={{ color: theme.textFaint }} /></button>
+      </div>
+
+      <div style={{ padding: 20, maxHeight: '65vh', overflow: 'auto' }} className="scrollbar">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div><label className="label">Date</label><input type="date" value={trade.date} onChange={(e) => setTrade({...trade, date: e.target.value})} className="input" /></div>
+            <div><label className="label">Time</label><input type="time" value={trade.time} onChange={(e) => setTrade({...trade, time: e.target.value})} className="input" /></div>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div><label className="label">Symbol</label><input value={trade.symbol} onChange={(e) => setTrade({...trade, symbol: e.target.value.toUpperCase()})} className="input" /></div>
+            <div><label className="label">Account</label><select value={trade.account} onChange={(e) => setTrade({...trade, account: e.target.value})} className="input">{accounts.map(a => <option key={a.id} value={a.name}>{a.name}</option>)}</select></div>
+          </div>
+          <div>
+            <label className="label">Side</label>
+            <div className="flex gap-2">{['Long', 'Short'].map(s => (
+              <button key={s} onClick={() => setTrade({...trade, side: s})} style={{ flex: 1, padding: 12, borderRadius: 10, fontSize: 14, fontWeight: 500, border: 'none', cursor: 'pointer', background: trade.side === s ? (s === 'Long' ? '#10b981' : '#ef4444') : theme.hoverBg, color: trade.side === s ? 'white' : theme.textMuted }}>{s}</button>
+            ))}</div>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+            <div><label className="label">Entry</label><input type="number" step="any" value={trade.entry} onChange={(e) => setTrade({...trade, entry: e.target.value})} className="input" /></div>
+            <div><label className="label">Exit</label><input type="number" step="any" value={trade.exit} onChange={(e) => setTrade({...trade, exit: e.target.value})} className="input" /></div>
+            <div><label className="label">Lots</label><input type="number" step="0.01" value={trade.lots} onChange={(e) => setTrade({...trade, lots: e.target.value})} className="input" /></div>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div><label className="label">Stop Loss</label><input type="number" step="any" value={trade.stopLoss} onChange={(e) => setTrade({...trade, stopLoss: e.target.value})} className="input" /></div>
+            <div><label className="label">Take Profit</label><input type="number" step="any" value={trade.takeProfit} onChange={(e) => setTrade({...trade, takeProfit: e.target.value})} className="input" /></div>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div><label className="label">Commission ($)</label><input type="number" step="0.01" value={trade.commission} onChange={(e) => setTrade({...trade, commission: e.target.value})} className="input" /></div>
+            <div><label className="label">Swap ($)</label><input type="number" step="0.01" value={trade.swap} onChange={(e) => setTrade({...trade, swap: e.target.value})} className="input" /></div>
+          </div>
+          
+          <div style={{ padding: 16, borderRadius: 10, background: trade.pnl >= 0 ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)' }}>
+            <div className="flex justify-between items-center">
+              <span style={{ fontSize: 13, color: theme.textMuted }}>Calculated P&L</span>
+              <span style={{ fontSize: 20, fontWeight: 700, color: trade.pnl >= 0 ? '#10b981' : '#ef4444' }}>{trade.pnl >= 0 ? '+' : ''}${trade.pnl?.toFixed(2)}</span>
+            </div>
+          </div>
+
+          <div>
+            <label className="label" style={{ marginBottom: 8 }}>Market Structure</label>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8 }}>
+              {Object.entries(MARKET_STRUCTURES).map(([key, val]) => (
+                <button key={key} onClick={() => setTrade({...trade, marketStructure: key})} style={{ padding: 10, borderRadius: 8, fontSize: 12, border: `1px solid ${trade.marketStructure === key ? '#6366f1' : theme.cardBorder}`, background: trade.marketStructure === key ? 'rgba(99,102,241,0.1)' : 'transparent', color: theme.text, cursor: 'pointer', textAlign: 'left' }}>
+                  <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: 4, background: val.color, marginRight: 8 }}></span>
+                  {val.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <label className="label" style={{ marginBottom: 8 }}>Liquidity Taken</label>
+            <div className="flex flex-wrap gap-2">{LIQUIDITY_LEVELS.map(l => (
+              <button key={l.key} onClick={() => toggleLiq(l.key, 'taken')} style={{ padding: '6px 12px', borderRadius: 6, fontSize: 11, fontWeight: 500, border: 'none', cursor: 'pointer', background: trade.liquidityTaken.includes(l.key) ? '#f59e0b' : theme.hoverBg, color: trade.liquidityTaken.includes(l.key) ? 'white' : theme.textMuted }}>{l.abbr}</button>
+            ))}</div>
+          </div>
+
+          <div style={{ padding: 16, borderRadius: 10, background: theme.hoverBg }}>
+            <div className="flex items-center gap-2" style={{ marginBottom: 12 }}><Link size={14} style={{ color: theme.textMuted }} /><span style={{ fontSize: 12, fontWeight: 500, color: theme.textMuted }}>Chart Reference</span></div>
+            <div><label className="label">TradingView Link</label><input value={trade.chartLink} onChange={(e) => setTrade({...trade, chartLink: e.target.value})} placeholder="https://www.tradingview.com/x/..." className="input" /></div>
+            {chartPreview && (
+              <div style={{ marginTop: 12, borderRadius: 8, overflow: 'hidden' }}>
+                <img src={chartPreview} alt="Chart" style={{ width: '100%', height: 120, objectFit: 'cover' }} onError={(e) => e.target.style.display = 'none'} />
+              </div>
+            )}
+          </div>
+
+          <div>
+            <label className="label">Notes</label>
+            <textarea value={trade.notes} onChange={(e) => setTrade({...trade, notes: e.target.value})} rows={3} className="input" style={{ resize: 'none' }} />
+          </div>
+        </div>
+      </div>
+
+      <div style={{ padding: 20, borderTop: `1px solid ${theme.cardBorder}`, display: 'flex', justifyContent: 'flex-end', gap: 12 }}>
+        <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: 14, color: theme.textMuted, cursor: 'pointer' }}>Cancel</button>
+        <button onClick={handleSave} className="btn-primary">Save Changes</button>
+      </div>
+    </Modal>
+  );
+}
+
 function NewAccountModal({ onClose, onSave }) {
   const theme = useTheme();
   const [acc, setAcc] = useState({ name: '', platform: 'MT5', broker: '', server: '', balance: '', equity: '' });
@@ -994,9 +1217,10 @@ function EditAccountModal({ account, onClose, onSave }) {
   );
 }
 
-function TradeDetailModal({ trade, onClose, onDelete }) {
+function TradeDetailModal({ trade, onClose, onDelete, onEdit }) {
   const theme = useTheme();
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const chartImg = getTradingViewImageUrl(trade.chartLink) || trade.chartImage;
 
   return (
     <Modal width={520} onClose={onClose}>
@@ -1041,9 +1265,9 @@ function TradeDetailModal({ trade, onClose, onDelete }) {
         </div>
 
         {/* Chart Section */}
-        {(trade.chartLink || trade.chartImage) && (
+        {(chartImg || trade.chartLink) && (
           <div style={{ borderRadius: 10, overflow: 'hidden', border: `1px solid ${theme.cardBorder}` }}>
-            {trade.chartImage && <img src={trade.chartImage} alt="Chart" style={{ width: '100%', height: 180, objectFit: 'cover' }} />}
+            {chartImg && <img src={chartImg} alt="Chart" style={{ width: '100%', height: 200, objectFit: 'cover' }} onError={(e) => e.target.style.display = 'none'} />}
             {trade.chartLink && (
               <a href={trade.chartLink} target="_blank" rel="noopener noreferrer" style={{ display: 'flex', alignItems: 'center', gap: 8, padding: 14, fontSize: 13, color: '#6366f1', textDecoration: 'none', background: theme.hoverBg }}>
                 <ExternalLink size={14} />Open in TradingView
@@ -1063,7 +1287,10 @@ function TradeDetailModal({ trade, onClose, onDelete }) {
       <div style={{ padding: 20, borderTop: `1px solid ${theme.cardBorder}`, display: 'flex', justifyContent: 'space-between' }}>
         {!confirmDelete ? <>
           <button onClick={() => setConfirmDelete(true)} style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'none', border: 'none', fontSize: 14, color: '#ef4444', cursor: 'pointer' }}><Trash2 size={16} />Delete</button>
-          <button onClick={onClose} className="btn-primary">Close</button>
+          <div className="flex gap-2">
+            <button onClick={() => onEdit(trade)} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '10px 16px', borderRadius: 10, border: `1px solid ${theme.cardBorder}`, background: 'none', fontSize: 14, color: theme.text, cursor: 'pointer' }}><Edit3 size={16} />Edit</button>
+            <button onClick={onClose} className="btn-primary">Close</button>
+          </div>
         </> : <>
           <span style={{ fontSize: 14, color: theme.textMuted }}>Delete this trade?</span>
           <div className="flex gap-2">
@@ -1071,6 +1298,173 @@ function TradeDetailModal({ trade, onClose, onDelete }) {
             <button onClick={() => onDelete(trade.id)} className="btn-primary" style={{ background: '#ef4444' }}>Delete</button>
           </div>
         </>}
+      </div>
+    </Modal>
+  );
+}
+
+
+function EditTradeModal({ trade, onClose, onSave, accounts }) {
+  const theme = useTheme();
+  const [step, setStep] = useState(1);
+  const [data, setData] = useState({
+    ...trade,
+    entry: trade.entry?.toString() || '',
+    exit: trade.exit?.toString() || '',
+    lots: trade.lots?.toString() || '',
+    stopLoss: trade.stopLoss?.toString() || '',
+    takeProfit: trade.takeProfit?.toString() || '',
+    commission: trade.commission?.toString() || '',
+    swap: trade.swap?.toString() || '',
+  });
+
+  useEffect(() => {
+    if (data.entry && data.exit && data.lots && data.symbol) {
+      const config = SYMBOL_CONFIG[data.symbol.toUpperCase()] || SYMBOL_CONFIG['DEFAULT'];
+      const entry = parseFloat(data.entry), exit = parseFloat(data.exit), lots = parseFloat(data.lots);
+      const commission = parseFloat(data.commission) || 0, swap = parseFloat(data.swap) || 0;
+      if (!isNaN(entry) && !isNaN(exit) && !isNaN(lots)) {
+        const diff = data.side === 'Long' ? exit - entry : entry - exit;
+        const pips = diff / config.pipSize;
+        const pipValue = calculatePipValue(data.symbol, exit);
+        const gross = pips * pipValue * lots;
+        setData(prev => ({ ...prev, pnl: gross - commission + swap }));
+      }
+    }
+  }, [data.entry, data.exit, data.lots, data.symbol, data.side, data.commission, data.swap]);
+
+  const handleSave = () => {
+    const rr = data.stopLoss && data.takeProfit && data.entry
+      ? `1:${Math.abs((parseFloat(data.takeProfit) - parseFloat(data.entry)) / (parseFloat(data.entry) - parseFloat(data.stopLoss))).toFixed(1)}` : '-';
+    onSave({
+      ...data,
+      entry: parseFloat(data.entry),
+      exit: parseFloat(data.exit),
+      lots: parseFloat(data.lots),
+      stopLoss: parseFloat(data.stopLoss) || 0,
+      takeProfit: parseFloat(data.takeProfit) || 0,
+      commission: parseFloat(data.commission) || 0,
+      swap: parseFloat(data.swap) || 0,
+      riskReward: rr
+    });
+  };
+
+  const toggleLiq = (key, type) => {
+    const field = type === 'taken' ? 'liquidityTaken' : 'liquidityTarget';
+    setData(prev => ({ ...prev, [field]: prev[field]?.includes(key) ? prev[field].filter(k => k !== key) : [...(prev[field] || []), key] }));
+  };
+
+  return (
+    <Modal width={520} onClose={onClose}>
+      <div style={{ padding: 20, borderBottom: `1px solid ${theme.cardBorder}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div>
+          <h3 style={{ fontSize: 16, fontWeight: 600, color: theme.text }}>Edit Trade</h3>
+          <p style={{ fontSize: 12, color: theme.textFaint }}>Step {step} of 3</p>
+        </div>
+        <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4 }}><X size={20} style={{ color: theme.textFaint }} /></button>
+      </div>
+
+      <div style={{ padding: 20, maxHeight: '60vh', overflow: 'auto' }} className="scrollbar">
+        {step === 1 && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+              <div><label className="label">Date</label><input type="date" value={data.date} onChange={(e) => setData({...data, date: e.target.value})} className="input" /></div>
+              <div><label className="label">Time</label><input type="time" value={data.time} onChange={(e) => setData({...data, time: e.target.value})} className="input" /></div>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+              <div><label className="label">Symbol</label><input value={data.symbol} onChange={(e) => setData({...data, symbol: e.target.value.toUpperCase()})} className="input" /></div>
+              <div><label className="label">Account</label><select value={data.account} onChange={(e) => setData({...data, account: e.target.value})} className="input">{accounts.map(a => <option key={a.id} value={a.name}>{a.name}</option>)}</select></div>
+            </div>
+            <div>
+              <label className="label">Side</label>
+              <div className="flex gap-2">{['Long', 'Short'].map(s => (
+                <button key={s} onClick={() => setData({...data, side: s})} style={{ flex: 1, padding: 12, borderRadius: 10, fontSize: 14, fontWeight: 500, border: 'none', cursor: 'pointer', background: data.side === s ? (s === 'Long' ? '#10b981' : '#ef4444') : theme.hoverBg, color: data.side === s ? 'white' : theme.textMuted }}>{s}</button>
+              ))}</div>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+              <div><label className="label">Entry</label><input type="number" step="any" value={data.entry} onChange={(e) => setData({...data, entry: e.target.value})} className="input" /></div>
+              <div><label className="label">Exit</label><input type="number" step="any" value={data.exit} onChange={(e) => setData({...data, exit: e.target.value})} className="input" /></div>
+              <div><label className="label">Lots</label><input type="number" step="0.01" value={data.lots} onChange={(e) => setData({...data, lots: e.target.value})} className="input" /></div>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+              <div><label className="label">Stop Loss</label><input type="number" step="any" value={data.stopLoss} onChange={(e) => setData({...data, stopLoss: e.target.value})} className="input" /></div>
+              <div><label className="label">Take Profit</label><input type="number" step="any" value={data.takeProfit} onChange={(e) => setData({...data, takeProfit: e.target.value})} className="input" /></div>
+            </div>
+            <div style={{ padding: 16, borderRadius: 10, background: theme.hoverBg }}>
+              <div className="flex items-center gap-2" style={{ marginBottom: 12 }}><Settings size={14} style={{ color: theme.textMuted }} /><span style={{ fontSize: 12, fontWeight: 500, color: theme.textMuted }}>Fees</span></div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <div><label className="label">Commission ($)</label><input type="number" step="0.01" value={data.commission} onChange={(e) => setData({...data, commission: e.target.value})} className="input" /></div>
+                <div><label className="label">Swap ($)</label><input type="number" step="0.01" value={data.swap} onChange={(e) => setData({...data, swap: e.target.value})} className="input" /></div>
+              </div>
+            </div>
+            <div style={{ padding: 16, borderRadius: 10, background: data.pnl >= 0 ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)' }}>
+              <div className="flex justify-between items-center">
+                <span style={{ fontSize: 13, color: theme.textMuted }}>Calculated P&L</span>
+                <span style={{ fontSize: 20, fontWeight: 700, color: data.pnl >= 0 ? '#10b981' : '#ef4444' }}>{data.pnl >= 0 ? '+' : ''}${(data.pnl || 0).toFixed(2)}</span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {step === 2 && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+            <div>
+              <label className="label" style={{ marginBottom: 12 }}>Market Structure</label>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {Object.entries(MARKET_STRUCTURES).map(([key, val]) => (
+                  <button key={key} onClick={() => setData({...data, marketStructure: key})} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: 14, borderRadius: 10, border: `1px solid ${data.marketStructure === key ? '#6366f1' : theme.cardBorder}`, background: data.marketStructure === key ? 'rgba(99,102,241,0.1)' : 'transparent', cursor: 'pointer' }}>
+                    <div className="flex items-center gap-3">
+                      <div style={{ width: 32, height: 32, borderRadius: 8, background: val.color + '20', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><div style={{ width: 10, height: 10, borderRadius: 5, background: val.color }}></div></div>
+                      <div style={{ textAlign: 'left' }}><div style={{ fontSize: 14, fontWeight: 500, color: theme.text }}>{val.label}</div><div style={{ fontSize: 12, color: theme.textFaint }}>{val.description}</div></div>
+                    </div>
+                    {data.marketStructure === key && <CheckCircle size={20} style={{ color: '#6366f1' }} />}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <label className="label" style={{ marginBottom: 12 }}>Candle Type</label>
+              <div className="flex gap-3">{Object.entries(CANDLE_TYPES).map(([key, val]) => (
+                <button key={key} onClick={() => setData({...data, candleType: key})} style={{ flex: 1, padding: 14, borderRadius: 10, border: `1px solid ${data.candleType === key ? '#6366f1' : theme.cardBorder}`, background: data.candleType === key ? 'rgba(99,102,241,0.1)' : 'transparent', textAlign: 'left', cursor: 'pointer' }}>
+                  <div style={{ fontSize: 14, fontWeight: 500, color: theme.text }}>{val.label}</div>
+                  <div style={{ fontSize: 12, color: theme.textFaint }}>{val.description}</div>
+                </button>
+              ))}</div>
+            </div>
+          </div>
+        )}
+
+        {step === 3 && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+            <div>
+              <label className="label" style={{ marginBottom: 8 }}>Liquidity Taken</label>
+              <div className="flex flex-wrap gap-2">{LIQUIDITY_LEVELS.map(l => (
+                <button key={l.key} onClick={() => toggleLiq(l.key, 'taken')} style={{ padding: '8px 14px', borderRadius: 8, fontSize: 12, fontWeight: 500, border: 'none', cursor: 'pointer', background: data.liquidityTaken?.includes(l.key) ? '#f59e0b' : theme.hoverBg, color: data.liquidityTaken?.includes(l.key) ? 'white' : theme.textMuted }}>{l.abbr}</button>
+              ))}</div>
+            </div>
+            <div>
+              <label className="label" style={{ marginBottom: 8 }}>Liquidity Target</label>
+              <div className="flex flex-wrap gap-2">{LIQUIDITY_LEVELS.map(l => (
+                <button key={l.key} onClick={() => toggleLiq(l.key, 'target')} style={{ padding: '8px 14px', borderRadius: 8, fontSize: 12, fontWeight: 500, border: 'none', cursor: 'pointer', background: data.liquidityTarget?.includes(l.key) ? '#3b82f6' : theme.hoverBg, color: data.liquidityTarget?.includes(l.key) ? 'white' : theme.textMuted }}>{l.abbr}</button>
+              ))}</div>
+            </div>
+            
+            <div style={{ padding: 16, borderRadius: 10, background: theme.hoverBg }}>
+              <div className="flex items-center gap-2" style={{ marginBottom: 12 }}><Link size={14} style={{ color: theme.textMuted }} /><span style={{ fontSize: 12, fontWeight: 500, color: theme.textMuted }}>Chart Reference</span></div>
+              <div><label className="label">TradingView Link</label><input value={data.chartLink || ''} onChange={(e) => setData({...data, chartLink: e.target.value})} placeholder="https://www.tradingview.com/x/..." className="input" /></div>
+            </div>
+
+            <div>
+              <label className="label">Notes</label>
+              <textarea value={data.notes || ''} onChange={(e) => setData({...data, notes: e.target.value})} rows={3} className="input" placeholder="Trade thesis..." style={{ resize: 'none' }} />
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div style={{ padding: 20, borderTop: `1px solid ${theme.cardBorder}`, display: 'flex', justifyContent: 'space-between' }}>
+        <button onClick={() => step > 1 ? setStep(step - 1) : onClose()} style={{ background: 'none', border: 'none', fontSize: 14, color: theme.textMuted, cursor: 'pointer' }}>{step > 1 ? 'Back' : 'Cancel'}</button>
+        <button onClick={() => step < 3 ? setStep(step + 1) : handleSave()} className="btn-primary">{step < 3 ? 'Continue' : 'Save Changes'}</button>
       </div>
     </Modal>
   );
