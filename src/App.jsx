@@ -1,7 +1,7 @@
-import React, { useState, useEffect, createContext, useContext } from 'react';
+import React, { useState, useEffect, createContext, useContext, useRef } from 'react';
 import { createClient } from '@supabase/supabase-js';
 import { XAxis, YAxis, Tooltip, ResponsiveContainer, AreaChart, Area, BarChart, Bar, Cell } from 'recharts';
-import { Plus, TrendingUp, TrendingDown, ChevronDown, Calendar, BarChart3, BookOpen, Wallet, CheckCircle, Clock, X, Eye, Database, ChevronLeft, ChevronRight, Trash2, Edit3, Moon, Sun, Settings, Link, Image, ExternalLink, Loader2, CloudOff, Cloud, LayoutGrid, LayoutList } from 'lucide-react';
+import { Plus, TrendingUp, TrendingDown, ChevronDown, Calendar, BarChart3, BookOpen, Wallet, CheckCircle, Clock, X, Eye, Database, ChevronLeft, ChevronRight, Trash2, Edit3, Moon, Sun, Settings, Link, Image, ExternalLink, Loader2, CloudOff, Cloud, LayoutGrid, LayoutList, Upload, FileText, AlertCircle } from 'lucide-react';
 
 // Supabase client
 const supabase = createClient(
@@ -41,6 +41,224 @@ const getTradingViewImageUrl = (url) => {
   
   // Return original if can't parse
   return url;
+};
+
+// Parse MT5 HTML statement
+const parseMT5Statement = (html) => {
+  const trades = [];
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(html, 'text/html');
+  
+  // Find the deals/trades table - MT5 uses different table structures
+  const tables = doc.querySelectorAll('table');
+  
+  for (const table of tables) {
+    const rows = table.querySelectorAll('tr');
+    let isDealsTable = false;
+    let headers = [];
+    
+    for (const row of rows) {
+      const cells = row.querySelectorAll('td');
+      const headerCells = row.querySelectorAll('th, td[colspan]');
+      
+      // Check if this is the deals header
+      const rowText = row.textContent.toLowerCase();
+      if (rowText.includes('deals') || rowText.includes('positions') || rowText.includes('orders')) {
+        isDealsTable = true;
+        continue;
+      }
+      
+      // Get column headers
+      if (cells.length >= 8 && headers.length === 0) {
+        const firstCell = cells[0]?.textContent?.trim().toLowerCase();
+        if (firstCell === 'time' || firstCell === 'open time' || firstCell === 'ticket') {
+          headers = Array.from(cells).map(c => c.textContent.trim().toLowerCase());
+          continue;
+        }
+      }
+      
+      // Parse trade rows
+      if (cells.length >= 8 && headers.length > 0) {
+        const getValue = (names) => {
+          for (const name of names) {
+            const idx = headers.findIndex(h => h.includes(name));
+            if (idx !== -1) return cells[idx]?.textContent?.trim() || '';
+          }
+          return '';
+        };
+        
+        const symbol = getValue(['symbol']);
+        const type = getValue(['type']).toLowerCase();
+        const volume = parseFloat(getValue(['volume', 'lots'])) || 0;
+        const openPrice = parseFloat(getValue(['open price', 'price'])) || 0;
+        const closePrice = parseFloat(getValue(['close price', 'price'])) || 0;
+        const profit = parseFloat(getValue(['profit']).replace(/[^-\d.]/g, '')) || 0;
+        const commission = Math.abs(parseFloat(getValue(['commission']).replace(/[^-\d.]/g, '')) || 0);
+        const swap = parseFloat(getValue(['swap']).replace(/[^-\d.]/g, '')) || 0;
+        const timeStr = getValue(['time', 'open time', 'close time']);
+        
+        // Skip if not a buy/sell trade
+        if (!type.includes('buy') && !type.includes('sell')) continue;
+        if (!symbol || volume === 0) continue;
+        
+        // Parse date/time
+        let date = new Date().toISOString().split('T')[0];
+        let time = '00:00';
+        if (timeStr) {
+          const dateMatch = timeStr.match(/(\d{4}[.\-/]\d{2}[.\-/]\d{2})/);
+          const timeMatch = timeStr.match(/(\d{2}:\d{2})/);
+          if (dateMatch) date = dateMatch[1].replace(/[./]/g, '-');
+          if (timeMatch) time = timeMatch[1];
+        }
+        
+        trades.push({
+          date, time, symbol,
+          side: type.includes('buy') ? 'Long' : 'Short',
+          entry: openPrice || closePrice,
+          exit: closePrice || openPrice,
+          lots: volume,
+          pnl: profit,
+          commission, swap,
+          stopLoss: 0, takeProfit: 0,
+          marketStructure: '', candleType: '',
+          liquidityTaken: [], liquidityTarget: [],
+          notes: 'Imported from MT5', chartLink: '', chartImage: ''
+        });
+      }
+    }
+  }
+  
+  return trades;
+};
+
+// Parse cTrader HTML statement  
+const parseCTraderStatement = (html) => {
+  const trades = [];
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(html, 'text/html');
+  
+  const rows = doc.querySelectorAll('tr');
+  let headers = [];
+  
+  for (const row of rows) {
+    const cells = row.querySelectorAll('td');
+    
+    // Get headers from first data row pattern
+    if (cells.length >= 6 && headers.length === 0) {
+      const text = cells[0]?.textContent?.trim().toLowerCase();
+      if (text.includes('position') || text.includes('id') || !isNaN(parseInt(text))) {
+        // This might be data, try to detect column structure
+        headers = ['id', 'symbol', 'direction', 'volume', 'open', 'close', 'profit'];
+      }
+    }
+    
+    if (cells.length >= 6) {
+      // Try to extract trade data
+      let symbol = '', direction = '', volume = 0, openPrice = 0, closePrice = 0, profit = 0;
+      let date = new Date().toISOString().split('T')[0];
+      let time = '00:00';
+      
+      for (let i = 0; i < cells.length; i++) {
+        const text = cells[i]?.textContent?.trim() || '';
+        const textLower = text.toLowerCase();
+        
+        // Detect symbol (usually 6 chars like EURUSD)
+        if (/^[A-Z]{6}$/.test(text) || /^[A-Z]{3}\/[A-Z]{3}$/.test(text)) {
+          symbol = text.replace('/', '');
+        }
+        // Detect direction
+        if (textLower === 'buy' || textLower === 'sell' || textLower === 'long' || textLower === 'short') {
+          direction = textLower.includes('buy') || textLower.includes('long') ? 'Long' : 'Short';
+        }
+        // Detect volume
+        if (/^\d+\.?\d*$/.test(text) && parseFloat(text) < 100 && parseFloat(text) > 0) {
+          if (volume === 0) volume = parseFloat(text);
+        }
+        // Detect prices
+        if (/^\d+\.\d{2,5}$/.test(text)) {
+          const price = parseFloat(text);
+          if (openPrice === 0) openPrice = price;
+          else if (closePrice === 0) closePrice = price;
+        }
+        // Detect profit (with currency symbol or negative)
+        if (/^-?[\d,]+\.?\d*$/.test(text.replace(/[$€£]/g, '')) && Math.abs(parseFloat(text.replace(/[^-\d.]/g, ''))) < 100000) {
+          profit = parseFloat(text.replace(/[^-\d.]/g, '')) || 0;
+        }
+        // Detect date
+        const dateMatch = text.match(/(\d{1,2}[.\-/]\d{1,2}[.\-/]\d{2,4})/);
+        if (dateMatch) {
+          const parts = dateMatch[1].split(/[.\-/]/);
+          if (parts[2]?.length === 4) {
+            date = `${parts[2]}-${parts[1].padStart(2,'0')}-${parts[0].padStart(2,'0')}`;
+          }
+        }
+      }
+      
+      if (symbol && direction && volume > 0) {
+        trades.push({
+          date, time, symbol,
+          side: direction,
+          entry: openPrice, exit: closePrice || openPrice,
+          lots: volume, pnl: profit,
+          commission: 0, swap: 0,
+          stopLoss: 0, takeProfit: 0,
+          marketStructure: '', candleType: '',
+          liquidityTaken: [], liquidityTarget: [],
+          notes: 'Imported from cTrader', chartLink: '', chartImage: ''
+        });
+      }
+    }
+  }
+  
+  return trades;
+};
+
+// Parse CSV file (generic format)
+const parseCSV = (csv, platform) => {
+  const trades = [];
+  const lines = csv.split('\n').filter(l => l.trim());
+  if (lines.length < 2) return trades;
+  
+  const headers = lines[0].split(',').map(h => h.trim().toLowerCase().replace(/"/g, ''));
+  
+  for (let i = 1; i < lines.length; i++) {
+    const values = lines[i].split(',').map(v => v.trim().replace(/"/g, ''));
+    const row = {};
+    headers.forEach((h, idx) => row[h] = values[idx] || '');
+    
+    const symbol = row.symbol || row.instrument || row.pair || '';
+    const type = (row.type || row.direction || row.side || '').toLowerCase();
+    const volume = parseFloat(row.volume || row.lots || row.size) || 0;
+    const entry = parseFloat(row.entry || row.open || row['open price'] || row.openprice) || 0;
+    const exit = parseFloat(row.exit || row.close || row['close price'] || row.closeprice) || 0;
+    const profit = parseFloat((row.profit || row.pnl || row['p&l'] || '0').replace(/[^-\d.]/g, '')) || 0;
+    const commission = Math.abs(parseFloat((row.commission || '0').replace(/[^-\d.]/g, ''))) || 0;
+    const swap = parseFloat((row.swap || '0').replace(/[^-\d.]/g, '')) || 0;
+    
+    let date = row.date || row['close time'] || row['open time'] || '';
+    const dateMatch = date.match(/(\d{4}[.\-/]\d{2}[.\-/]\d{2})/);
+    date = dateMatch ? dateMatch[1].replace(/[./]/g, '-') : new Date().toISOString().split('T')[0];
+    
+    const timeMatch = (row.time || row['close time'] || '').match(/(\d{2}:\d{2})/);
+    const time = timeMatch ? timeMatch[1] : '00:00';
+    
+    if (!symbol || volume === 0) continue;
+    if (!type.includes('buy') && !type.includes('sell') && !type.includes('long') && !type.includes('short')) continue;
+    
+    trades.push({
+      date, time, symbol: symbol.replace('/', '').toUpperCase(),
+      side: type.includes('buy') || type.includes('long') ? 'Long' : 'Short',
+      entry, exit: exit || entry,
+      lots: volume, pnl: profit,
+      commission, swap,
+      stopLoss: 0, takeProfit: 0,
+      marketStructure: '', candleType: '',
+      liquidityTaken: [], liquidityTarget: [],
+      notes: `Imported from ${platform}`, chartLink: '', chartImage: ''
+    });
+  }
+  
+  return trades;
 };
 
 const CANDLE_TYPES = {
@@ -123,6 +341,7 @@ export default function TradingJournal() {
   const [accounts, setAccounts] = useState([]);
   const [showNewTrade, setShowNewTrade] = useState(false);
   const [showNewAccount, setShowNewAccount] = useState(false);
+  const [showImport, setShowImport] = useState(false);
   const [selectedTrade, setSelectedTrade] = useState(null);
   const [editingTrade, setEditingTrade] = useState(null);
   const [filterAccount, setFilterAccount] = useState('all');
@@ -221,6 +440,39 @@ export default function TradingJournal() {
     const { data, error } = await supabase.from('trades').insert(dbTrade).select().single();
     if (error) { console.error('Error adding trade:', error); return; }
     setTrades(prev => [{ ...trade, id: data.id }, ...prev]);
+  };
+
+  const importTrades = async (newTrades, accountName) => {
+    const dbTrades = newTrades.map(trade => ({
+      date: trade.date,
+      time: trade.time,
+      symbol: trade.symbol,
+      side: trade.side,
+      entry: trade.entry,
+      exit_price: trade.exit,
+      lots: trade.lots,
+      stop_loss: trade.stopLoss,
+      take_profit: trade.takeProfit,
+      pnl: trade.pnl,
+      commission: trade.commission,
+      swap: trade.swap,
+      risk_reward: '-',
+      market_structure: trade.marketStructure,
+      candle_type: trade.candleType,
+      liquidity_taken: trade.liquidityTaken,
+      liquidity_target: trade.liquidityTarget,
+      notes: trade.notes,
+      account: accountName,
+      chart_link: trade.chartLink,
+      chart_image: trade.chartImage
+    }));
+    
+    const { data, error } = await supabase.from('trades').insert(dbTrades).select();
+    if (error) { console.error('Error importing trades:', error); return 0; }
+    
+    const importedTrades = data.map((t, i) => ({ ...newTrades[i], id: t.id, account: accountName }));
+    setTrades(prev => [...importedTrades, ...prev].sort((a, b) => new Date(b.date) - new Date(a.date)));
+    return data.length;
   };
 
   const deleteTrade = async (id) => {
@@ -415,7 +667,14 @@ export default function TradingJournal() {
                     {darkMode ? <Sun size={18} style={{ color: theme.textMuted }} /> : <Moon size={18} style={{ color: theme.textMuted }} />}
                   </button>
                   
-                  {activeTab === 'journal' && <button onClick={() => setShowNewTrade(true)} className="btn-primary flex items-center gap-2"><Plus size={16} />Log Trade</button>}
+                  {activeTab === 'journal' && (
+                    <>
+                      <button onClick={() => setShowImport(true)} style={{ padding: 10, borderRadius: 10, border: `1px solid ${theme.cardBorder}`, background: theme.card, cursor: 'pointer' }} title="Import trades from MT5/cTrader">
+                        <Upload size={18} style={{ color: theme.textMuted }} />
+                      </button>
+                      <button onClick={() => setShowNewTrade(true)} className="btn-primary flex items-center gap-2"><Plus size={16} />Log Trade</button>
+                    </>
+                  )}
                   {activeTab === 'accounts' && <button onClick={() => setShowNewAccount(true)} className="btn-primary flex items-center gap-2"><Plus size={16} />Add Account</button>}
                 </div>
               </div>
@@ -441,10 +700,202 @@ export default function TradingJournal() {
 
         {showNewTrade && <NewTradeModal onClose={() => setShowNewTrade(false)} onSave={(trade) => { addTrade(trade); setShowNewTrade(false); }} accounts={accounts} />}
         {showNewAccount && <NewAccountModal onClose={() => setShowNewAccount(false)} onSave={(acc) => { addAccount(acc); setShowNewAccount(false); }} />}
+        {showImport && <ImportModal onClose={() => setShowImport(false)} onImport={importTrades} accounts={accounts} />}
         {selectedTrade && <TradeDetailModal trade={selectedTrade} onClose={() => setSelectedTrade(null)} onDelete={(id) => { deleteTrade(id); setSelectedTrade(null); }} onEdit={(trade) => { setSelectedTrade(null); setEditingTrade(trade); }} />}
         {editingTrade && <EditTradeModal trade={editingTrade} onClose={() => setEditingTrade(null)} onSave={(trade) => { updateTrade(trade); setEditingTrade(null); }} accounts={accounts} />}
       </div>
     </ThemeContext.Provider>
+  );
+}
+
+function ImportModal({ onClose, onImport, accounts }) {
+  const theme = useTheme();
+  const fileInputRef = useRef(null);
+  const [platform, setPlatform] = useState('MT5');
+  const [account, setAccount] = useState(accounts[0]?.name || '');
+  const [parsedTrades, setParsedTrades] = useState([]);
+  const [importing, setImporting] = useState(false);
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
+
+  const handleFileSelect = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    
+    setError('');
+    setParsedTrades([]);
+    
+    try {
+      const text = await file.text();
+      let trades = [];
+      
+      if (file.name.endsWith('.csv')) {
+        trades = parseCSV(text, platform);
+      } else if (file.name.endsWith('.html') || file.name.endsWith('.htm')) {
+        if (platform === 'MT5') {
+          trades = parseMT5Statement(text);
+        } else {
+          trades = parseCTraderStatement(text);
+        }
+      } else {
+        // Try to detect format
+        if (text.includes('<html') || text.includes('<table')) {
+          trades = platform === 'MT5' ? parseMT5Statement(text) : parseCTraderStatement(text);
+        } else {
+          trades = parseCSV(text, platform);
+        }
+      }
+      
+      if (trades.length === 0) {
+        setError('No trades found in file. Make sure you exported the correct statement format.');
+      } else {
+        setParsedTrades(trades);
+      }
+    } catch (err) {
+      setError('Failed to parse file: ' + err.message);
+    }
+  };
+
+  const handleImport = async () => {
+    if (parsedTrades.length === 0 || !account) return;
+    
+    setImporting(true);
+    setError('');
+    
+    try {
+      const count = await onImport(parsedTrades, account);
+      setSuccess(`Successfully imported ${count} trades!`);
+      setParsedTrades([]);
+      setTimeout(() => onClose(), 1500);
+    } catch (err) {
+      setError('Failed to import: ' + err.message);
+    }
+    
+    setImporting(false);
+  };
+
+  return (
+    <Modal width={600} onClose={onClose}>
+      <div style={{ padding: 20, borderBottom: `1px solid ${theme.cardBorder}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div>
+          <h3 style={{ fontSize: 16, fontWeight: 600, color: theme.text }}>Import Trades</h3>
+          <p style={{ fontSize: 12, color: theme.textFaint }}>Import from MT5 or cTrader statement</p>
+        </div>
+        <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4 }}><X size={20} style={{ color: theme.textFaint }} /></button>
+      </div>
+
+      <div style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 16 }}>
+        {/* Platform Selection */}
+        <div>
+          <label className="label">Platform</label>
+          <div className="flex gap-2">
+            {['MT5', 'cTrader'].map(p => (
+              <button key={p} onClick={() => setPlatform(p)} style={{ flex: 1, padding: 12, borderRadius: 10, fontSize: 14, fontWeight: 500, border: `1px solid ${platform === p ? '#6366f1' : theme.cardBorder}`, background: platform === p ? 'rgba(99,102,241,0.1)' : 'transparent', color: platform === p ? '#6366f1' : theme.textMuted, cursor: 'pointer' }}>
+                {p}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Account Selection */}
+        <div>
+          <label className="label">Import to Account</label>
+          <select value={account} onChange={(e) => setAccount(e.target.value)} className="input">
+            {accounts.length === 0 ? <option>No accounts - create one first</option> : accounts.map(a => <option key={a.id} value={a.name}>{a.name}</option>)}
+          </select>
+        </div>
+
+        {/* File Upload */}
+        <div>
+          <label className="label">Statement File</label>
+          <input type="file" ref={fileInputRef} onChange={handleFileSelect} accept=".html,.htm,.csv" style={{ display: 'none' }} />
+          <button onClick={() => fileInputRef.current?.click()} style={{ width: '100%', padding: 24, borderRadius: 10, border: `2px dashed ${theme.cardBorder}`, background: 'transparent', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
+            <FileText size={32} style={{ color: theme.textMuted }} />
+            <span style={{ fontSize: 14, color: theme.text }}>Click to select file</span>
+            <span style={{ fontSize: 12, color: theme.textFaint }}>HTML or CSV statement from {platform}</span>
+          </button>
+        </div>
+
+        {/* Instructions */}
+        <div style={{ padding: 14, borderRadius: 10, background: theme.hoverBg }}>
+          <div style={{ fontSize: 12, fontWeight: 500, color: theme.textMuted, marginBottom: 8 }}>How to export:</div>
+          {platform === 'MT5' ? (
+            <ol style={{ fontSize: 12, color: theme.textFaint, paddingLeft: 16, margin: 0 }}>
+              <li>Open MT5 → History tab</li>
+              <li>Right-click → Select period (e.g., Last Month)</li>
+              <li>Right-click → Report → HTML</li>
+              <li>Save and upload the HTML file here</li>
+            </ol>
+          ) : (
+            <ol style={{ fontSize: 12, color: theme.textFaint, paddingLeft: 16, margin: 0 }}>
+              <li>Open cTrader → History</li>
+              <li>Set your date range</li>
+              <li>Click Export → HTML or CSV</li>
+              <li>Upload the file here</li>
+            </ol>
+          )}
+        </div>
+
+        {/* Error/Success Messages */}
+        {error && (
+          <div style={{ padding: 12, borderRadius: 10, background: 'rgba(239,68,68,0.1)', display: 'flex', alignItems: 'center', gap: 8 }}>
+            <AlertCircle size={16} style={{ color: '#ef4444' }} />
+            <span style={{ fontSize: 13, color: '#ef4444' }}>{error}</span>
+          </div>
+        )}
+        
+        {success && (
+          <div style={{ padding: 12, borderRadius: 10, background: 'rgba(16,185,129,0.1)', display: 'flex', alignItems: 'center', gap: 8 }}>
+            <CheckCircle size={16} style={{ color: '#10b981' }} />
+            <span style={{ fontSize: 13, color: '#10b981' }}>{success}</span>
+          </div>
+        )}
+
+        {/* Preview */}
+        {parsedTrades.length > 0 && (
+          <div style={{ borderRadius: 10, border: `1px solid ${theme.cardBorder}`, overflow: 'hidden' }}>
+            <div style={{ padding: 12, background: theme.hoverBg, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ fontSize: 13, fontWeight: 500, color: theme.text }}>Preview ({parsedTrades.length} trades)</span>
+              <span style={{ fontSize: 12, color: parsedTrades.reduce((s, t) => s + t.pnl, 0) >= 0 ? '#10b981' : '#ef4444' }}>
+                Total P&L: ${parsedTrades.reduce((s, t) => s + t.pnl, 0).toFixed(2)}
+              </span>
+            </div>
+            <div style={{ maxHeight: 200, overflow: 'auto' }} className="scrollbar">
+              {parsedTrades.slice(0, 10).map((t, i) => (
+                <div key={i} style={{ padding: 10, borderBottom: `1px solid ${theme.cardBorder}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 12 }}>
+                  <div className="flex items-center gap-3">
+                    <span style={{ fontWeight: 600, color: theme.text }}>{t.symbol}</span>
+                    <span style={{ color: t.side === 'Long' ? '#10b981' : '#ef4444' }}>{t.side}</span>
+                    <span style={{ color: theme.textFaint }}>{t.lots} lots</span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span style={{ color: theme.textFaint }}>{t.date}</span>
+                    <span style={{ fontWeight: 600, color: t.pnl >= 0 ? '#10b981' : '#ef4444' }}>{t.pnl >= 0 ? '+' : ''}${t.pnl.toFixed(2)}</span>
+                  </div>
+                </div>
+              ))}
+              {parsedTrades.length > 10 && (
+                <div style={{ padding: 10, textAlign: 'center', fontSize: 12, color: theme.textFaint }}>
+                  ... and {parsedTrades.length - 10} more trades
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div style={{ padding: 20, borderTop: `1px solid ${theme.cardBorder}`, display: 'flex', justifyContent: 'flex-end', gap: 12 }}>
+        <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: 14, color: theme.textMuted, cursor: 'pointer' }}>Cancel</button>
+        <button 
+          onClick={handleImport} 
+          disabled={parsedTrades.length === 0 || importing || !account || accounts.length === 0}
+          className="btn-primary"
+          style={{ opacity: (parsedTrades.length === 0 || importing || accounts.length === 0) ? 0.5 : 1 }}
+        >
+          {importing ? 'Importing...' : `Import ${parsedTrades.length} Trades`}
+        </button>
+      </div>
+    </Modal>
   );
 }
 
