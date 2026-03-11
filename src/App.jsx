@@ -1,7 +1,7 @@
 import React, { useState, useEffect, createContext, useContext } from 'react';
 import { createClient } from '@supabase/supabase-js';
 import { XAxis, YAxis, Tooltip, ResponsiveContainer, AreaChart, Area, BarChart, Bar, Cell } from 'recharts';
-import { Plus, TrendingUp, TrendingDown, ChevronDown, Calendar, BarChart3, BookOpen, Wallet, CheckCircle, Clock, X, Eye, Database, ChevronLeft, ChevronRight, Trash2, Edit3, Moon, Sun, Settings, Link, Image, ExternalLink, Loader2, CloudOff, Cloud } from 'lucide-react';
+import { Plus, TrendingUp, TrendingDown, ChevronDown, Calendar, BarChart3, BookOpen, Wallet, CheckCircle, Clock, X, Eye, Database, ChevronLeft, ChevronRight, Trash2, Edit3, Moon, Sun, Settings, Link, Image, ExternalLink, Loader2, CloudOff, Cloud, LayoutGrid, LayoutList } from 'lucide-react';
 
 // Supabase client
 const supabase = createClient(
@@ -320,14 +320,7 @@ export default function TradingJournal() {
                 {loading ? 'Syncing...' : synced ? 'Synced to cloud' : 'Offline'}
               </div>
               
-              <div onClick={() => setDarkMode(!darkMode)} className="nav-item" style={{ justifyContent: 'space-between' }}>
-                <span className="flex items-center gap-3">{darkMode ? <Moon size={18} /> : <Sun size={18} />}{darkMode ? 'Dark' : 'Light'}</span>
-                <div style={{ width: 36, height: 20, borderRadius: 10, background: darkMode ? '#6366f1' : '#cbd5e1', position: 'relative' }}>
-                  <div style={{ position: 'absolute', width: 16, height: 16, borderRadius: 8, background: 'white', top: 2, left: darkMode ? 18 : 2, transition: 'left 0.2s' }}></div>
-                </div>
-              </div>
-              
-              <div className="card" style={{ marginTop: 12, padding: 16 }}>
+              <div className="card" style={{ padding: 16 }}>
                 <div className="stat-label">Today's P&L</div>
                 <div className="stat-value" style={{ color: totalPnl >= 0 ? '#10b981' : '#ef4444', marginTop: 4 }}>
                   {totalPnl >= 0 ? '+' : ''}{totalPnl.toFixed(2)}
@@ -358,7 +351,16 @@ export default function TradingJournal() {
                     {activeTab === 'calendar' && 'Visual trade history'}
                   </p>
                 </div>
-                <div className="flex gap-3">
+                <div className="flex items-center gap-3">
+                  {/* Theme Toggle */}
+                  <button 
+                    onClick={() => setDarkMode(!darkMode)} 
+                    style={{ padding: 10, borderRadius: 10, border: `1px solid ${theme.cardBorder}`, background: theme.card, cursor: 'pointer' }}
+                    title={darkMode ? 'Switch to light mode' : 'Switch to dark mode'}
+                  >
+                    {darkMode ? <Sun size={18} style={{ color: theme.textMuted }} /> : <Moon size={18} style={{ color: theme.textMuted }} />}
+                  </button>
+                  
                   {activeTab === 'journal' && <button onClick={() => setShowNewTrade(true)} className="btn-primary flex items-center gap-2"><Plus size={16} />Log Trade</button>}
                   {activeTab === 'accounts' && <button onClick={() => setShowNewAccount(true)} className="btn-primary flex items-center gap-2"><Plus size={16} />Add Account</button>}
                 </div>
@@ -393,48 +395,130 @@ export default function TradingJournal() {
 
 function JournalView({ trades, accounts, filterAccount, setFilterAccount, onSelectTrade }) {
   const theme = useTheme();
+  const [viewMode, setViewMode] = useState('list'); // 'list' or 'grid'
   const filtered = filterAccount === 'all' ? trades : trades.filter(t => t.account === filterAccount);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-      <div className="flex gap-3">
-        <select value={filterAccount} onChange={(e) => setFilterAccount(e.target.value)} className="input input-sm" style={{ width: 200 }}>
-          <option value="all">All Accounts</option>
-          {accounts.map(acc => <option key={acc.id} value={acc.name}>{acc.name}</option>)}
-        </select>
-      </div>
-
-      <div className="card-lg" style={{ overflow: 'hidden' }}>
-        <div className="table-header" style={{ display: 'grid', gridTemplateColumns: '1.5fr 80px 100px 80px 100px 50px', gap: 12 }}>
-          <div>Trade</div><div>Side</div><div>Structure</div><div>Lots</div><div style={{ textAlign: 'right' }}>P&L</div><div></div>
+      <div className="flex items-center justify-between">
+        <div className="flex gap-3">
+          <select value={filterAccount} onChange={(e) => setFilterAccount(e.target.value)} className="input input-sm" style={{ width: 200 }}>
+            <option value="all">All Accounts</option>
+            {accounts.map(acc => <option key={acc.id} value={acc.name}>{acc.name}</option>)}
+          </select>
         </div>
         
-        {filtered.length === 0 ? (
-          <div style={{ padding: 60, textAlign: 'center' }}>
-            <BookOpen size={40} style={{ color: theme.textFaint, margin: '0 auto 12px', opacity: 0.5 }} />
-            <p style={{ fontSize: 14, color: theme.textMuted }}>No trades logged yet</p>
-            <p style={{ fontSize: 13, color: theme.textFaint, marginTop: 4 }}>Click "Log Trade" to get started</p>
-          </div>
-        ) : filtered.map(trade => (
-          <div key={trade.id} onClick={() => onSelectTrade(trade)} className="table-row" style={{ display: 'grid', gridTemplateColumns: '1.5fr 80px 100px 80px 100px 50px', gap: 12, alignItems: 'center' }}>
-            <div className="flex items-center gap-3">
-              <div style={{ width: 36, height: 36, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 600, background: trade.pnl >= 0 ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)', color: trade.pnl >= 0 ? '#10b981' : '#ef4444' }}>
-                {trade.symbol?.slice(0, 2)}
-              </div>
-              <div>
-                <div style={{ fontSize: 14, fontWeight: 500, color: theme.text }}>{trade.symbol}</div>
-                <div style={{ fontSize: 12, color: theme.textFaint }}>{trade.date}</div>
-              </div>
-              {trade.chartLink && <ExternalLink size={14} style={{ color: theme.textFaint }} />}
-            </div>
-            <span className="badge" style={{ background: trade.side === 'Long' ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)', color: trade.side === 'Long' ? '#10b981' : '#ef4444' }}>{trade.side}</span>
-            <span className="badge" style={{ background: MARKET_STRUCTURES[trade.marketStructure]?.color, color: 'white' }}>{trade.marketStructure?.replace('_', ' ').slice(0, 8)}</span>
-            <span style={{ fontSize: 14, color: theme.text }}>{trade.lots}</span>
-            <span style={{ fontSize: 14, fontWeight: 600, color: trade.pnl >= 0 ? '#10b981' : '#ef4444', textAlign: 'right' }}>{trade.pnl >= 0 ? '+' : ''}${trade.pnl?.toFixed(2)}</span>
-            <Eye size={16} style={{ color: theme.textFaint }} />
-          </div>
-        ))}
+        {/* View Toggle */}
+        <div className="flex" style={{ background: theme.hoverBg, borderRadius: 8, padding: 4 }}>
+          <button 
+            onClick={() => setViewMode('list')} 
+            style={{ padding: '6px 10px', borderRadius: 6, border: 'none', cursor: 'pointer', background: viewMode === 'list' ? theme.card : 'transparent', boxShadow: viewMode === 'list' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none' }}
+          >
+            <LayoutList size={18} style={{ color: viewMode === 'list' ? theme.text : theme.textMuted }} />
+          </button>
+          <button 
+            onClick={() => setViewMode('grid')} 
+            style={{ padding: '6px 10px', borderRadius: 6, border: 'none', cursor: 'pointer', background: viewMode === 'grid' ? theme.card : 'transparent', boxShadow: viewMode === 'grid' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none' }}
+          >
+            <LayoutGrid size={18} style={{ color: viewMode === 'grid' ? theme.text : theme.textMuted }} />
+          </button>
+        </div>
       </div>
+
+      {filtered.length === 0 ? (
+        <div className="card-lg" style={{ padding: 60, textAlign: 'center' }}>
+          <BookOpen size={40} style={{ color: theme.textFaint, margin: '0 auto 12px', opacity: 0.5 }} />
+          <p style={{ fontSize: 14, color: theme.textMuted }}>No trades logged yet</p>
+          <p style={{ fontSize: 13, color: theme.textFaint, marginTop: 4 }}>Click "Log Trade" to get started</p>
+        </div>
+      ) : viewMode === 'list' ? (
+        /* List View */
+        <div className="card-lg" style={{ overflow: 'hidden' }}>
+          <div className="table-header" style={{ display: 'grid', gridTemplateColumns: '1.5fr 80px 100px 80px 100px 50px', gap: 12 }}>
+            <div>Trade</div><div>Side</div><div>Structure</div><div>Lots</div><div style={{ textAlign: 'right' }}>P&L</div><div></div>
+          </div>
+          {filtered.map(trade => (
+            <div key={trade.id} onClick={() => onSelectTrade(trade)} className="table-row" style={{ display: 'grid', gridTemplateColumns: '1.5fr 80px 100px 80px 100px 50px', gap: 12, alignItems: 'center' }}>
+              <div className="flex items-center gap-3">
+                {trade.chartImage ? (
+                  <div style={{ width: 48, height: 36, borderRadius: 6, overflow: 'hidden', flexShrink: 0 }}>
+                    <img src={trade.chartImage} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                  </div>
+                ) : (
+                  <div style={{ width: 36, height: 36, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 600, background: trade.pnl >= 0 ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)', color: trade.pnl >= 0 ? '#10b981' : '#ef4444' }}>
+                    {trade.symbol?.slice(0, 2)}
+                  </div>
+                )}
+                <div>
+                  <div style={{ fontSize: 14, fontWeight: 500, color: theme.text }}>{trade.symbol}</div>
+                  <div style={{ fontSize: 12, color: theme.textFaint }}>{trade.date}</div>
+                </div>
+                {trade.chartLink && !trade.chartImage && <ExternalLink size={14} style={{ color: theme.textFaint }} />}
+              </div>
+              <span className="badge" style={{ background: trade.side === 'Long' ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)', color: trade.side === 'Long' ? '#10b981' : '#ef4444' }}>{trade.side}</span>
+              <span className="badge" style={{ background: MARKET_STRUCTURES[trade.marketStructure]?.color, color: 'white' }}>{trade.marketStructure?.replace('_', ' ').slice(0, 8)}</span>
+              <span style={{ fontSize: 14, color: theme.text }}>{trade.lots}</span>
+              <span style={{ fontSize: 14, fontWeight: 600, color: trade.pnl >= 0 ? '#10b981' : '#ef4444', textAlign: 'right' }}>{trade.pnl >= 0 ? '+' : ''}${trade.pnl?.toFixed(2)}</span>
+              <Eye size={16} style={{ color: theme.textFaint }} />
+            </div>
+          ))}
+        </div>
+      ) : (
+        /* Grid View */
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 16 }}>
+          {filtered.map(trade => (
+            <div 
+              key={trade.id} 
+              onClick={() => onSelectTrade(trade)} 
+              className="card" 
+              style={{ cursor: 'pointer', overflow: 'hidden', transition: 'transform 0.15s, box-shadow 0.15s' }}
+              onMouseEnter={(e) => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.boxShadow = '0 8px 24px rgba(0,0,0,0.12)'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = 'none'; }}
+            >
+              {/* Chart Image Preview */}
+              {trade.chartImage ? (
+                <div style={{ width: '100%', height: 140, background: theme.hoverBg, position: 'relative' }}>
+                  <img src={trade.chartImage} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                  {trade.chartLink && (
+                    <a href={trade.chartLink} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} style={{ position: 'absolute', top: 8, right: 8, padding: 6, borderRadius: 6, background: 'rgba(0,0,0,0.6)', color: 'white' }}>
+                      <ExternalLink size={14} />
+                    </a>
+                  )}
+                </div>
+              ) : (
+                <div style={{ width: '100%', height: 80, background: trade.pnl >= 0 ? 'rgba(16,185,129,0.05)' : 'rgba(239,68,68,0.05)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <span style={{ fontSize: 28, fontWeight: 700, color: trade.pnl >= 0 ? '#10b981' : '#ef4444', opacity: 0.3 }}>{trade.symbol}</span>
+                </div>
+              )}
+              
+              {/* Card Content */}
+              <div style={{ padding: 16 }}>
+                <div className="flex items-center justify-between" style={{ marginBottom: 12 }}>
+                  <div>
+                    <div style={{ fontSize: 15, fontWeight: 600, color: theme.text }}>{trade.symbol}</div>
+                    <div style={{ fontSize: 12, color: theme.textFaint }}>{trade.date} · {trade.time}</div>
+                  </div>
+                  <span style={{ fontSize: 18, fontWeight: 700, color: trade.pnl >= 0 ? '#10b981' : '#ef4444' }}>
+                    {trade.pnl >= 0 ? '+' : ''}${trade.pnl?.toFixed(2)}
+                  </span>
+                </div>
+                
+                <div className="flex items-center gap-2" style={{ flexWrap: 'wrap' }}>
+                  <span className="badge" style={{ background: trade.side === 'Long' ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)', color: trade.side === 'Long' ? '#10b981' : '#ef4444' }}>{trade.side}</span>
+                  <span className="badge" style={{ background: MARKET_STRUCTURES[trade.marketStructure]?.color, color: 'white' }}>{MARKET_STRUCTURES[trade.marketStructure]?.label?.split(' ')[0]}</span>
+                  <span style={{ fontSize: 12, color: theme.textMuted }}>{trade.lots} lots</span>
+                </div>
+                
+                {trade.notes && (
+                  <p style={{ fontSize: 12, color: theme.textMuted, marginTop: 10, lineHeight: 1.4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {trade.notes}
+                  </p>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
