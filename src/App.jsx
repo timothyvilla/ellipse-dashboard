@@ -1074,8 +1074,6 @@ function DashboardView({ trades, accounts, selectedAccount, setSelectedAccount }
       else break;
     }
     currentStreak = { type: lastTradeWin ? 'win' : 'loss', count };
-    
-    // Calculate days
     const uniqueDays = new Set();
     for (let i = 0; i < count && i < sortedTrades.length; i++) {
       uniqueDays.add(sortedTrades[i].date);
@@ -1085,9 +1083,9 @@ function DashboardView({ trades, accounts, selectedAccount, setSelectedAccount }
   
   // Ellipse Score (0-100 based on Win%, Avg Win/Loss Ratio, and Profit Factor)
   const avgWinLossRatio = avgLoss > 0 ? avgWin / avgLoss : avgWin > 0 ? 3 : 0;
-  const winRateScore = Math.min(winRate / 60 * 33, 33); // 60%+ = full points
-  const ratioScore = Math.min(avgWinLossRatio / 2 * 33, 33); // 2:1+ = full points
-  const pfScore = Math.min(profitFactor / 2 * 34, 34); // 2+ = full points
+  const winRateScore = Math.min(winRate / 60 * 33, 33);
+  const ratioScore = Math.min(avgWinLossRatio / 2 * 33, 33);
+  const pfScore = Math.min(profitFactor / 2 * 34, 34);
   const ellipseScore = totalTrades >= 5 ? winRateScore + ratioScore + pfScore : 0;
   
   // Monthly Calendar Data
@@ -1102,25 +1100,7 @@ function DashboardView({ trades, accounts, selectedAccount, setSelectedAccount }
   });
   
   const monthlyPnl = monthTrades.reduce((s, t) => s + t.pnl, 0);
-  const monthlyWins = monthTrades.filter(t => t.pnl > 0).length;
   const monthlyTradeDays = new Set(monthTrades.map(t => t.date)).size;
-  
-  // Weekly breakdown
-  const getWeekNumber = (date) => {
-    const d = new Date(date);
-    const dayOfMonth = d.getDate();
-    return Math.ceil(dayOfMonth / 7);
-  };
-  
-  const weeklyStats = [1, 2, 3, 4, 5, 6].map(week => {
-    const weekTrades = monthTrades.filter(t => getWeekNumber(t.date) === week);
-    return {
-      week,
-      pnl: weekTrades.reduce((s, t) => s + t.pnl, 0),
-      days: new Set(weekTrades.map(t => t.date)).size,
-      trades: weekTrades.length
-    };
-  }).filter(w => w.trades > 0 || w.week <= Math.ceil(daysInMonth / 7));
   
   // Calendar days array
   const calendarDays = [];
@@ -1133,12 +1113,37 @@ function DashboardView({ trades, accounts, selectedAccount, setSelectedAccount }
     const dayTrades = monthTrades.filter(t => t.date === dateStr);
     if (dayTrades.length === 0) return null;
     const pnl = dayTrades.reduce((s, t) => s + t.pnl, 0);
-    const winCount = dayTrades.filter(t => t.pnl > 0).length;
-    return { trades: dayTrades.length, pnl, winRate: (winCount / dayTrades.length * 100).toFixed(0) };
+    return { trades: dayTrades.length, pnl };
   };
 
+  // Daily P&L data for chart (last 14 days with trades)
+  const dailyPnlData = [];
+  const uniqueDates = [...new Set(filtered.map(t => t.date))].sort().slice(-14);
+  uniqueDates.forEach(date => {
+    const dayTrades = filtered.filter(t => t.date === date);
+    const pnl = dayTrades.reduce((s, t) => s + t.pnl, 0);
+    dailyPnlData.push({ date: date.slice(5), pnl });
+  });
+
+  // Cumulative P&L data
+  let cumulative = 0;
+  const cumulativePnlData = [];
+  const sortedByDate = [...filtered].sort((a, b) => new Date(a.date) - new Date(b.date));
+  const dateGroups = {};
+  sortedByDate.forEach(t => {
+    if (!dateGroups[t.date]) dateGroups[t.date] = 0;
+    dateGroups[t.date] += t.pnl;
+  });
+  Object.entries(dateGroups).slice(-14).forEach(([date, pnl]) => {
+    cumulative += pnl;
+    cumulativePnlData.push({ date: date.slice(5), pnl: cumulative });
+  });
+
+  // Recent trades
+  const recentTrades = sortedTrades.slice(0, 5);
+
   // Donut chart for win rate
-  const DonutChart = ({ value, size = 80, strokeWidth = 8, color = '#10b981' }) => {
+  const DonutChart = ({ value, size = 60, strokeWidth = 6, color = '#10b981' }) => {
     const radius = (size - strokeWidth) / 2;
     const circumference = 2 * Math.PI * radius;
     const offset = circumference - (value / 100) * circumference;
@@ -1150,25 +1155,21 @@ function DashboardView({ trades, accounts, selectedAccount, setSelectedAccount }
     );
   };
 
-  // Triangle radar chart for Ellipse Score
-  const RadarChart = ({ winRate: wr, avgRatio, pf }) => {
-    const size = 90;
+  // Large Radar chart for Ellipse Score
+  const RadarChart = ({ winRate: wr, avgRatio, pf, size = 180 }) => {
     const center = size / 2;
-    const maxRadius = 35;
+    const maxRadius = size * 0.38;
     
-    // Normalize values (0-1)
     const wrNorm = Math.min(wr / 70, 1);
     const ratioNorm = Math.min(avgRatio / 3, 1);
     const pfNorm = Math.min(pf / 3, 1);
     
-    // Triangle points (top, bottom-left, bottom-right)
     const points = [
-      { x: center, y: center - maxRadius * wrNorm }, // Win % (top)
-      { x: center - maxRadius * 0.866 * ratioNorm, y: center + maxRadius * 0.5 * ratioNorm }, // Avg Win/Loss (bottom-left)
-      { x: center + maxRadius * 0.866 * pfNorm, y: center + maxRadius * 0.5 * pfNorm } // Profit Factor (bottom-right)
+      { x: center, y: center - maxRadius * wrNorm },
+      { x: center - maxRadius * 0.866 * ratioNorm, y: center + maxRadius * 0.5 * ratioNorm },
+      { x: center + maxRadius * 0.866 * pfNorm, y: center + maxRadius * 0.5 * pfNorm }
     ];
     
-    // Outer triangle
     const outerPoints = [
       { x: center, y: center - maxRadius },
       { x: center - maxRadius * 0.866, y: center + maxRadius * 0.5 },
@@ -1176,26 +1177,28 @@ function DashboardView({ trades, accounts, selectedAccount, setSelectedAccount }
     ];
     
     return (
-      <svg width={size} height={size}>
-        {/* Grid lines */}
+      <svg width={size} height={size + 30}>
         <polygon points={outerPoints.map(p => `${p.x},${p.y}`).join(' ')} fill="none" stroke={theme.cardBorder} strokeWidth="1" />
         <polygon points={outerPoints.map(p => `${center + (p.x - center) * 0.66},${center + (p.y - center) * 0.66}`).join(' ')} fill="none" stroke={theme.cardBorder} strokeWidth="1" opacity="0.5" />
         <polygon points={outerPoints.map(p => `${center + (p.x - center) * 0.33},${center + (p.y - center) * 0.33}`).join(' ')} fill="none" stroke={theme.cardBorder} strokeWidth="1" opacity="0.3" />
+        <polygon points={points.map(p => `${p.x},${p.y}`).join(' ')} fill="rgba(99,102,241,0.3)" stroke="#6366f1" strokeWidth="2" />
         
-        {/* Data polygon */}
-        <polygon points={points.map(p => `${p.x},${p.y}`).join(' ')} fill="rgba(99,102,241,0.2)" stroke="#6366f1" strokeWidth="2" />
+        {/* Labels with bubbles */}
+        <rect x={center - 25} y={5} width={50} height={18} rx={9} fill={theme.hoverBg} />
+        <text x={center} y={17} textAnchor="middle" fontSize="10" fill={theme.textMuted}>Win %</text>
         
-        {/* Labels */}
-        <text x={center} y={10} textAnchor="middle" fontSize="8" fill={theme.textMuted}>Win %</text>
-        <text x={8} y={size - 5} textAnchor="start" fontSize="8" fill={theme.textMuted}>Avg W/L</text>
-        <text x={size - 8} y={size - 5} textAnchor="end" fontSize="8" fill={theme.textMuted}>PF</text>
+        <rect x={5} y={size - 15} width={55} height={18} rx={9} fill={theme.hoverBg} />
+        <text x={32} y={size - 2} textAnchor="middle" fontSize="10" fill={theme.textMuted}>Avg win/loss</text>
+        
+        <rect x={size - 60} y={size - 15} width={55} height={18} rx={9} fill={theme.hoverBg} />
+        <text x={size - 32} y={size - 2} textAnchor="middle" fontSize="10" fill={theme.textMuted}>Profit factor</text>
       </svg>
     );
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-      {/* Header with account selector */}
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <span style={{ fontSize: 13, color: theme.textMuted }}>Dashboard for:</span>
@@ -1206,156 +1209,204 @@ function DashboardView({ trades, accounts, selectedAccount, setSelectedAccount }
         </div>
       </div>
 
-      {/* Top Stats Row */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16 }}>
+      {/* Top Stats Row - 5 cards */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 12 }}>
         {/* Net P&L */}
-        <div className="card" style={{ padding: 20 }}>
+        <div className="card" style={{ padding: 16 }}>
           <div className="flex items-center gap-2">
             <div className="stat-label">Net P&L</div>
             <div style={{ width: 18, height: 18, borderRadius: 4, background: theme.hoverBg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, color: theme.textFaint }}>{totalTrades}</div>
           </div>
-          <div className="stat-value" style={{ color: totalPnl >= 0 ? '#10b981' : '#ef4444', marginTop: 8 }}>
+          <div style={{ fontSize: 22, fontWeight: 700, color: totalPnl >= 0 ? '#10b981' : '#ef4444', marginTop: 6 }}>
             {totalPnl >= 0 ? '+' : ''}${totalPnl.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </div>
         </div>
 
-        {/* Profit Factor */}
-        <div className="card" style={{ padding: 20 }}>
-          <div className="stat-label">Profit Factor</div>
-          <div className="stat-value" style={{ color: profitFactor >= 1.5 ? '#10b981' : profitFactor >= 1 ? '#f59e0b' : '#ef4444', marginTop: 8 }}>
-            {profitFactor >= 99 ? '∞' : profitFactor.toFixed(2)}
-          </div>
-        </div>
-
-        {/* Account Balance & P&L */}
-        <div className="card" style={{ padding: 20 }}>
-          <div className="stat-label">Account Balance & P&L</div>
-          <div className="stat-value" style={{ marginTop: 8 }}>${accountBalance.toLocaleString()}</div>
-          <div style={{ fontSize: 13, color: totalPnl >= 0 ? '#10b981' : '#ef4444', marginTop: 4 }}>
-            P&L: {totalPnl >= 0 ? '+' : ''}${totalPnl.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-          </div>
-        </div>
-
-        {/* Current Streak */}
-        <div className="card" style={{ padding: 20 }}>
-          <div className="stat-label">Current Streak</div>
-          <div className="flex items-center gap-4" style={{ marginTop: 8 }}>
-            <div style={{ width: 40, height: 40, borderRadius: 10, background: currentStreak.type === 'win' ? '#10b981' : currentStreak.type === 'loss' ? '#ef4444' : theme.hoverBg, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontSize: 18, fontWeight: 700 }}>
-              {currentStreak.count}
-            </div>
-            <div className="flex items-center gap-4">
-              <div>
-                <div style={{ fontSize: 10, color: theme.textFaint, textTransform: 'uppercase' }}>Days</div>
-                <div style={{ fontSize: 14, fontWeight: 500, color: theme.text }}>{currentStreak.days} day{currentStreak.days !== 1 ? 's' : ''}</div>
-              </div>
-              <div>
-                <div style={{ fontSize: 10, color: theme.textFaint, textTransform: 'uppercase' }}>Trades</div>
-                <div style={{ fontSize: 14, fontWeight: 500, color: theme.text }}>{currentStreak.count} trade{currentStreak.count !== 1 ? 's' : ''}</div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Second Row - Win%, Expectancy, Ellipse Score */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 16 }}>
-        {/* Trade Win % */}
-        <div className="card" style={{ padding: 20 }}>
-          <div className="stat-label">Trade Win %</div>
-          <div className="flex items-center gap-4" style={{ marginTop: 12 }}>
-            <div style={{ position: 'relative', width: 70, height: 70 }}>
-              <DonutChart value={winRate} size={70} strokeWidth={7} color={winRate >= 50 ? '#10b981' : '#ef4444'} />
-              <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <span style={{ fontSize: 15, fontWeight: 700, color: theme.text }}>{winRate.toFixed(1)}%</span>
-              </div>
-            </div>
-            <div className="flex items-center gap-4">
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <div style={{ width: 8, height: 8, borderRadius: 4, background: '#10b981' }}></div>
-                <span style={{ fontSize: 13, color: theme.textMuted }}>{wins.length}</span>
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <div style={{ width: 8, height: 8, borderRadius: 4, background: '#ef4444' }}></div>
-                <span style={{ fontSize: 13, color: theme.textMuted }}>{losses.length}</span>
-              </div>
-            </div>
-          </div>
-        </div>
-
         {/* Trade Expectancy */}
-        <div className="card" style={{ padding: 20 }}>
+        <div className="card" style={{ padding: 16 }}>
           <div className="stat-label">Trade Expectancy</div>
-          <div className="stat-value" style={{ color: expectancy >= 0 ? '#10b981' : '#ef4444', marginTop: 8 }}>
+          <div style={{ fontSize: 22, fontWeight: 700, color: expectancy >= 0 ? '#10b981' : '#ef4444', marginTop: 6 }}>
             ${expectancy.toFixed(2)}
           </div>
-          <div style={{ fontSize: 11, color: theme.textFaint, marginTop: 4 }}>Expected value per trade</div>
         </div>
 
-        {/* Ellipse Score */}
-        <div className="card" style={{ padding: 20 }}>
-          <div className="stat-label">Ellipse Score</div>
-          <div className="flex items-center gap-4" style={{ marginTop: 12 }}>
-            <RadarChart winRate={winRate} avgRatio={avgWinLossRatio} pf={profitFactor} />
-            <div>
-              <div style={{ fontSize: 28, fontWeight: 700, color: ellipseScore >= 70 ? '#10b981' : ellipseScore >= 40 ? '#f59e0b' : '#ef4444' }}>
-                {ellipseScore.toFixed(1)}
-              </div>
-              <div style={{ fontSize: 11, color: theme.textFaint }}>
-                {totalTrades < 5 ? 'Need 5+ trades' : ellipseScore >= 70 ? 'Excellent' : ellipseScore >= 50 ? 'Good' : ellipseScore >= 30 ? 'Average' : 'Needs work'}
-              </div>
+        {/* Profit Factor */}
+        <div className="card" style={{ padding: 16 }}>
+          <div className="stat-label">Profit Factor</div>
+          <div className="flex items-center gap-3" style={{ marginTop: 6 }}>
+            <span style={{ fontSize: 22, fontWeight: 700, color: profitFactor >= 1.5 ? '#10b981' : profitFactor >= 1 ? '#f59e0b' : '#ef4444' }}>
+              {profitFactor >= 99 ? '∞' : profitFactor.toFixed(2)}
+            </span>
+            <div style={{ position: 'relative', width: 40, height: 40 }}>
+              <DonutChart value={Math.min(profitFactor / 3 * 100, 100)} size={40} strokeWidth={4} color={profitFactor >= 1.5 ? '#10b981' : profitFactor >= 1 ? '#f59e0b' : '#ef4444'} />
+            </div>
+          </div>
+        </div>
+
+        {/* Win % */}
+        <div className="card" style={{ padding: 16 }}>
+          <div className="flex items-center gap-2">
+            <div className="stat-label">Win %</div>
+            <div style={{ display: 'flex', gap: 4 }}>
+              <span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 4, background: '#10b981', color: 'white' }}>{wins.length}</span>
+              <span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 4, background: '#ef4444', color: 'white' }}>{losses.length}</span>
+            </div>
+          </div>
+          <div className="flex items-center gap-3" style={{ marginTop: 6 }}>
+            <span style={{ fontSize: 22, fontWeight: 700, color: theme.text }}>{winRate.toFixed(2)}%</span>
+            <div style={{ position: 'relative', width: 40, height: 40 }}>
+              <DonutChart value={winRate} size={40} strokeWidth={4} color={winRate >= 50 ? '#10b981' : '#ef4444'} />
+            </div>
+          </div>
+        </div>
+
+        {/* Avg Win/Loss */}
+        <div className="card" style={{ padding: 16 }}>
+          <div className="stat-label">Avg Win/Loss Trade</div>
+          <div className="flex items-center gap-2" style={{ marginTop: 6 }}>
+            <span style={{ fontSize: 22, fontWeight: 700, color: theme.text }}>{avgWinLossRatio.toFixed(1)}</span>
+            <div style={{ display: 'flex', flexDirection: 'column', fontSize: 11 }}>
+              <span style={{ color: '#10b981' }}>${avgWin.toFixed(2)}</span>
+              <span style={{ color: '#ef4444' }}>${avgLoss.toFixed(2)}</span>
             </div>
           </div>
         </div>
       </div>
 
-      {/* Calendar Section */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 280px', gap: 16 }}>
+      {/* Second Row - Ellipse Score + Charts */}
+      <div style={{ display: 'grid', gridTemplateColumns: '280px 1fr 1fr', gap: 12 }}>
+        {/* Ellipse Score - Large Card */}
+        <div className="card" style={{ padding: 20 }}>
+          <div className="stat-label">Ellipse Score</div>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginTop: 8 }}>
+            <RadarChart winRate={winRate} avgRatio={avgWinLossRatio} pf={profitFactor} size={160} />
+            <div style={{ marginTop: 8, textAlign: 'center' }}>
+              <span style={{ fontSize: 14, color: theme.textMuted }}>Your Ellipse Score: </span>
+              <span style={{ fontSize: 24, fontWeight: 700, color: ellipseScore >= 70 ? '#10b981' : ellipseScore >= 40 ? '#f59e0b' : '#ef4444' }}>
+                {totalTrades < 5 ? '--' : ellipseScore.toFixed(0)}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Daily Net Cumulative P&L Chart */}
+        <div className="card" style={{ padding: 20 }}>
+          <div className="stat-label">Daily Net Cumulative P&L</div>
+          <div style={{ height: 180, marginTop: 12 }}>
+            {cumulativePnlData.length > 0 ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={cumulativePnlData}>
+                  <defs>
+                    <linearGradient id="cumGreen" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#10b981" stopOpacity={0.3} />
+                      <stop offset="100%" stopColor="#10b981" stopOpacity={0} />
+                    </linearGradient>
+                    <linearGradient id="cumRed" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#ef4444" stopOpacity={0.3} />
+                      <stop offset="100%" stopColor="#ef4444" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: theme.textFaint }} />
+                  <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: theme.textFaint }} tickFormatter={v => `$${v}`} />
+                  <Tooltip contentStyle={{ background: theme.card, border: `1px solid ${theme.cardBorder}`, borderRadius: 8, fontSize: 12 }} formatter={(v) => [`$${v.toFixed(2)}`, 'Cumulative P&L']} />
+                  <Area type="monotone" dataKey="pnl" stroke={totalPnl >= 0 ? '#10b981' : '#ef4444'} fill={totalPnl >= 0 ? 'url(#cumGreen)' : 'url(#cumRed)'} strokeWidth={2} />
+                </AreaChart>
+              </ResponsiveContainer>
+            ) : (
+              <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.textFaint, fontSize: 12 }}>No data yet</div>
+            )}
+          </div>
+        </div>
+
+        {/* Net Daily P&L Chart */}
+        <div className="card" style={{ padding: 20 }}>
+          <div className="stat-label">Net Daily P&L</div>
+          <div style={{ height: 180, marginTop: 12 }}>
+            {dailyPnlData.length > 0 ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={dailyPnlData}>
+                  <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: theme.textFaint }} />
+                  <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: theme.textFaint }} tickFormatter={v => `$${v}`} />
+                  <Tooltip contentStyle={{ background: theme.card, border: `1px solid ${theme.cardBorder}`, borderRadius: 8, fontSize: 12 }} formatter={(v) => [`$${v.toFixed(2)}`, 'Daily P&L']} />
+                  <Bar dataKey="pnl" radius={[4, 4, 0, 0]}>
+                    {dailyPnlData.map((entry, index) => (
+                      <Cell key={index} fill={entry.pnl >= 0 ? '#10b981' : '#ef4444'} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            ) : (
+              <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.textFaint, fontSize: 12 }}>No data yet</div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Third Row - Recent Trades + Calendar */}
+      <div style={{ display: 'grid', gridTemplateColumns: '320px 1fr', gap: 12 }}>
+        {/* Recent Trades */}
+        <div className="card" style={{ padding: 20 }}>
+          <div className="stat-label" style={{ marginBottom: 12 }}>Recent Trades</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {recentTrades.length === 0 ? (
+              <div style={{ padding: 20, textAlign: 'center', color: theme.textFaint, fontSize: 12 }}>No trades yet</div>
+            ) : recentTrades.map(t => (
+              <div key={t.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: 10, borderRadius: 8, background: theme.hoverBg }}>
+                <div className="flex items-center gap-3">
+                  <div style={{ fontSize: 12, color: theme.textFaint }}>{t.date}</div>
+                  <div style={{ fontSize: 13, fontWeight: 500, color: theme.text }}>{t.symbol}</div>
+                </div>
+                <span style={{ fontSize: 13, fontWeight: 600, color: t.pnl >= 0 ? '#10b981' : '#ef4444' }}>
+                  {t.pnl >= 0 ? '+' : ''}${t.pnl.toFixed(2)}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+
         {/* Calendar */}
         <div className="card" style={{ padding: 20 }}>
-          <div className="flex items-center justify-between" style={{ marginBottom: 16 }}>
+          <div className="flex items-center justify-between" style={{ marginBottom: 12 }}>
             <div className="flex items-center gap-3">
               <button onClick={() => setDashboardMonth(new Date(dashboardMonth.getFullYear(), dashboardMonth.getMonth() - 1))} style={{ padding: 6, borderRadius: 6, border: 'none', background: theme.hoverBg, cursor: 'pointer' }}>
                 <ChevronLeft size={16} style={{ color: theme.textMuted }} />
               </button>
-              <span style={{ fontSize: 15, fontWeight: 600, color: theme.text }}>
+              <span style={{ fontSize: 14, fontWeight: 600, color: theme.text }}>
                 {dashboardMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
               </span>
               <button onClick={() => setDashboardMonth(new Date(dashboardMonth.getFullYear(), dashboardMonth.getMonth() + 1))} style={{ padding: 6, borderRadius: 6, border: 'none', background: theme.hoverBg, cursor: 'pointer' }}>
                 <ChevronRight size={16} style={{ color: theme.textMuted }} />
               </button>
             </div>
-            <div className="flex items-center gap-4" style={{ fontSize: 12, color: theme.textMuted }}>
-              <span>Monthly stats:</span>
+            <div className="flex items-center gap-3" style={{ fontSize: 12, color: theme.textMuted }}>
               <span style={{ color: monthlyPnl >= 0 ? '#10b981' : '#ef4444', fontWeight: 600 }}>${monthlyPnl.toFixed(2)}</span>
               <span>{monthlyTradeDays} days</span>
             </div>
           </div>
 
-          {/* Calendar Grid */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 4 }}>
             {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(d => (
-              <div key={d} style={{ padding: 8, textAlign: 'center', fontSize: 11, fontWeight: 500, color: theme.textFaint }}>{d}</div>
+              <div key={d} style={{ padding: 6, textAlign: 'center', fontSize: 11, fontWeight: 500, color: theme.textFaint }}>{d}</div>
             ))}
             {calendarDays.map((day, i) => {
               const data = getDayData(day);
               return (
                 <div key={i} style={{ 
-                  minHeight: 70, 
-                  padding: 6, 
-                  borderRadius: 8, 
-                  background: data ? (data.pnl >= 0 ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)') : 'transparent',
+                  minHeight: 50, 
+                  padding: 4, 
+                  borderRadius: 6, 
+                  background: data ? (data.pnl >= 0 ? 'rgba(16,185,129,0.15)' : 'rgba(239,68,68,0.15)') : 'transparent',
                   border: day ? `1px solid ${theme.cardBorder}` : 'none'
                 }}>
                   {day && (
                     <>
-                      <div style={{ fontSize: 12, color: theme.textMuted }}>{day}</div>
+                      <div style={{ fontSize: 11, color: theme.textMuted }}>{day}</div>
                       {data && (
-                        <div style={{ marginTop: 4 }}>
-                          <div style={{ fontSize: 13, fontWeight: 600, color: data.pnl >= 0 ? '#10b981' : '#ef4444' }}>
-                            {data.pnl >= 0 ? '+' : ''}${Math.abs(data.pnl) >= 1000 ? (data.pnl / 1000).toFixed(1) + 'K' : data.pnl.toFixed(0)}
+                        <div style={{ marginTop: 2 }}>
+                          <div style={{ fontSize: 11, fontWeight: 600, color: data.pnl >= 0 ? '#10b981' : '#ef4444' }}>
+                            {data.pnl >= 0 ? '+' : ''}{Math.abs(data.pnl) >= 1000 ? (data.pnl / 1000).toFixed(1) + 'K' : data.pnl.toFixed(0)}
                           </div>
-                          <div style={{ fontSize: 10, color: theme.textFaint }}>{data.trades} trade{data.trades > 1 ? 's' : ''}</div>
-                          <div style={{ fontSize: 10, color: theme.textFaint }}>{data.winRate}%</div>
+                          <div style={{ fontSize: 9, color: theme.textFaint }}>{data.trades} trade{data.trades > 1 ? 's' : ''}</div>
                         </div>
                       )}
                     </>
@@ -1363,29 +1414,6 @@ function DashboardView({ trades, accounts, selectedAccount, setSelectedAccount }
                 </div>
               );
             })}
-          </div>
-        </div>
-
-        {/* Weekly Overview */}
-        <div className="card" style={{ padding: 20 }}>
-          <div className="stat-label" style={{ marginBottom: 16 }}>Weekly Overview</div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            {weeklyStats.map(w => (
-              <div key={w.week} style={{ padding: 12, borderRadius: 8, background: theme.hoverBg }}>
-                <div className="flex items-center justify-between">
-                  <span style={{ fontSize: 12, color: theme.textMuted }}>Week {w.week}</span>
-                  <span style={{ fontSize: 14, fontWeight: 600, color: w.pnl >= 0 ? '#10b981' : '#ef4444' }}>
-                    {w.pnl >= 0 ? '+' : ''}${w.pnl.toFixed(2)}
-                  </span>
-                </div>
-                <div style={{ fontSize: 11, color: theme.textFaint, marginTop: 4 }}>{w.days} day{w.days !== 1 ? 's' : ''}</div>
-              </div>
-            ))}
-            {weeklyStats.length === 0 && (
-              <div style={{ padding: 20, textAlign: 'center', color: theme.textFaint, fontSize: 12 }}>
-                No trades this month
-              </div>
-            )}
           </div>
         </div>
       </div>
