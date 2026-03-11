@@ -1152,9 +1152,9 @@ function DashboardView({ trades, accounts, selectedAccount, setSelectedAccount }
 
   // Triangle radar chart for Ellipse Score
   const RadarChart = ({ winRate: wr, avgRatio, pf }) => {
-    const size = 120;
+    const size = 90;
     const center = size / 2;
-    const maxRadius = 45;
+    const maxRadius = 35;
     
     // Normalize values (0-1)
     const wrNorm = Math.min(wr / 70, 1);
@@ -1186,9 +1186,9 @@ function DashboardView({ trades, accounts, selectedAccount, setSelectedAccount }
         <polygon points={points.map(p => `${p.x},${p.y}`).join(' ')} fill="rgba(99,102,241,0.2)" stroke="#6366f1" strokeWidth="2" />
         
         {/* Labels */}
-        <text x={center} y={15} textAnchor="middle" fontSize="9" fill={theme.textMuted}>Win %</text>
-        <text x={15} y={size - 10} textAnchor="start" fontSize="9" fill={theme.textMuted}>Avg win/loss</text>
-        <text x={size - 15} y={size - 10} textAnchor="end" fontSize="9" fill={theme.textMuted}>Profit factor</text>
+        <text x={center} y={10} textAnchor="middle" fontSize="8" fill={theme.textMuted}>Win %</text>
+        <text x={8} y={size - 5} textAnchor="start" fontSize="8" fill={theme.textMuted}>Avg W/L</text>
+        <text x={size - 8} y={size - 5} textAnchor="end" fontSize="8" fill={theme.textMuted}>PF</text>
       </svg>
     );
   };
@@ -1212,7 +1212,7 @@ function DashboardView({ trades, accounts, selectedAccount, setSelectedAccount }
         <div className="card" style={{ padding: 20 }}>
           <div className="flex items-center gap-2">
             <div className="stat-label">Net P&L</div>
-            <div style={{ width: 16, height: 16, borderRadius: 4, background: theme.hoverBg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, color: theme.textFaint }}>{totalTrades}</div>
+            <div style={{ width: 18, height: 18, borderRadius: 4, background: theme.hoverBg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, color: theme.textFaint }}>{totalTrades}</div>
           </div>
           <div className="stat-value" style={{ color: totalPnl >= 0 ? '#10b981' : '#ef4444', marginTop: 8 }}>
             {totalPnl >= 0 ? '+' : ''}${totalPnl.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
@@ -1228,11 +1228,8 @@ function DashboardView({ trades, accounts, selectedAccount, setSelectedAccount }
         </div>
 
         {/* Account Balance & P&L */}
-        <div className="card" style={{ padding: 20, background: `linear-gradient(135deg, ${theme.card} 0%, ${theme.dark ? '#1a1a2e' : '#f0f4ff'} 100%)` }}>
-          <div className="flex items-center justify-between">
-            <div className="stat-label">Account Balance & P&L</div>
-            <div style={{ width: 20, height: 20, borderRadius: 6, background: 'linear-gradient(135deg, #6366f1, #8b5cf6)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, color: 'white', fontWeight: 600 }}>{accounts.length}</div>
-          </div>
+        <div className="card" style={{ padding: 20 }}>
+          <div className="stat-label">Account Balance & P&L</div>
           <div className="stat-value" style={{ marginTop: 8 }}>${accountBalance.toLocaleString()}</div>
           <div style={{ fontSize: 13, color: totalPnl >= 0 ? '#10b981' : '#ef4444', marginTop: 4 }}>
             P&L: {totalPnl >= 0 ? '+' : ''}${totalPnl.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
@@ -1243,43 +1240,43 @@ function DashboardView({ trades, accounts, selectedAccount, setSelectedAccount }
         <div className="card" style={{ padding: 20 }}>
           <div className="stat-label">Current Streak</div>
           <div className="flex items-center gap-4" style={{ marginTop: 8 }}>
-            <div className="flex items-center gap-2">
-              <div style={{ width: 36, height: 36, borderRadius: 10, background: currentStreak.type === 'win' ? '#10b981' : currentStreak.type === 'loss' ? '#ef4444' : theme.hoverBg, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontSize: 16, fontWeight: 700 }}>
-                {currentStreak.count}
-              </div>
+            <div style={{ width: 40, height: 40, borderRadius: 10, background: currentStreak.type === 'win' ? '#10b981' : currentStreak.type === 'loss' ? '#ef4444' : theme.hoverBg, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontSize: 18, fontWeight: 700 }}>
+              {currentStreak.count}
+            </div>
+            <div className="flex items-center gap-4">
               <div>
                 <div style={{ fontSize: 10, color: theme.textFaint, textTransform: 'uppercase' }}>Days</div>
-                <div style={{ fontSize: 13, color: theme.text }}>{currentStreak.days} day{currentStreak.days !== 1 ? 's' : ''}</div>
+                <div style={{ fontSize: 14, fontWeight: 500, color: theme.text }}>{currentStreak.days} day{currentStreak.days !== 1 ? 's' : ''}</div>
               </div>
-            </div>
-            <div>
-              <div style={{ fontSize: 10, color: theme.textFaint, textTransform: 'uppercase' }}>Trades</div>
-              <div style={{ fontSize: 13, color: theme.text }}>{currentStreak.count} trade{currentStreak.count !== 1 ? 's' : ''}</div>
+              <div>
+                <div style={{ fontSize: 10, color: theme.textFaint, textTransform: 'uppercase' }}>Trades</div>
+                <div style={{ fontSize: 14, fontWeight: 500, color: theme.text }}>{currentStreak.count} trade{currentStreak.count !== 1 ? 's' : ''}</div>
+              </div>
             </div>
           </div>
         </div>
       </div>
 
       {/* Second Row - Win%, Expectancy, Ellipse Score */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1.5fr', gap: 16 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 16 }}>
         {/* Trade Win % */}
         <div className="card" style={{ padding: 20 }}>
           <div className="stat-label">Trade Win %</div>
           <div className="flex items-center gap-4" style={{ marginTop: 12 }}>
-            <div style={{ position: 'relative' }}>
-              <DonutChart value={winRate} color={winRate >= 50 ? '#10b981' : '#ef4444'} />
+            <div style={{ position: 'relative', width: 70, height: 70 }}>
+              <DonutChart value={winRate} size={70} strokeWidth={7} color={winRate >= 50 ? '#10b981' : '#ef4444'} />
               <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <span style={{ fontSize: 18, fontWeight: 700, color: theme.text }}>{winRate.toFixed(1)}%</span>
+                <span style={{ fontSize: 15, fontWeight: 700, color: theme.text }}>{winRate.toFixed(1)}%</span>
               </div>
             </div>
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-4">
               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                 <div style={{ width: 8, height: 8, borderRadius: 4, background: '#10b981' }}></div>
-                <span style={{ fontSize: 12, color: theme.textMuted }}>{wins.length}</span>
+                <span style={{ fontSize: 13, color: theme.textMuted }}>{wins.length}</span>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                 <div style={{ width: 8, height: 8, borderRadius: 4, background: '#ef4444' }}></div>
-                <span style={{ fontSize: 12, color: theme.textMuted }}>{losses.length}</span>
+                <span style={{ fontSize: 13, color: theme.textMuted }}>{losses.length}</span>
               </div>
             </div>
           </div>
@@ -1296,16 +1293,11 @@ function DashboardView({ trades, accounts, selectedAccount, setSelectedAccount }
 
         {/* Ellipse Score */}
         <div className="card" style={{ padding: 20 }}>
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <div className="stat-label">Ellipse Score</div>
-              <div style={{ padding: '2px 6px', borderRadius: 4, background: 'linear-gradient(135deg, #6366f1, #8b5cf6)', fontSize: 9, color: 'white', fontWeight: 600 }}>BETA</div>
-            </div>
-          </div>
-          <div className="flex items-center gap-6" style={{ marginTop: 12 }}>
+          <div className="stat-label">Ellipse Score</div>
+          <div className="flex items-center gap-4" style={{ marginTop: 12 }}>
             <RadarChart winRate={winRate} avgRatio={avgWinLossRatio} pf={profitFactor} />
             <div>
-              <div style={{ fontSize: 32, fontWeight: 700, color: ellipseScore >= 70 ? '#10b981' : ellipseScore >= 40 ? '#f59e0b' : '#ef4444' }}>
+              <div style={{ fontSize: 28, fontWeight: 700, color: ellipseScore >= 70 ? '#10b981' : ellipseScore >= 40 ? '#f59e0b' : '#ef4444' }}>
                 {ellipseScore.toFixed(1)}
               </div>
               <div style={{ fontSize: 11, color: theme.textFaint }}>
@@ -1397,33 +1389,6 @@ function DashboardView({ trades, accounts, selectedAccount, setSelectedAccount }
           </div>
         </div>
       </div>
-
-      {/* Performance by Structure */}
-      {totalTrades > 0 && (
-        <div className="card" style={{ padding: 20 }}>
-          <h3 style={{ fontSize: 14, fontWeight: 600, color: theme.text, marginBottom: 16 }}>Performance by Structure</h3>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }}>
-            {Object.keys(MARKET_STRUCTURES).map(key => {
-              const structTrades = filtered.filter(t => t.marketStructure === key);
-              if (structTrades.length === 0) return null;
-              const structPnl = structTrades.reduce((s, t) => s + t.pnl, 0);
-              const structWinRate = (structTrades.filter(t => t.pnl > 0).length / structTrades.length * 100).toFixed(0);
-              return (
-                <div key={key} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: 14, borderRadius: 10, background: theme.hoverBg }}>
-                  <div className="flex items-center gap-3">
-                    <div style={{ width: 32, height: 32, borderRadius: 8, background: MARKET_STRUCTURES[key].color, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontSize: 12, fontWeight: 600 }}>{structTrades.length}</div>
-                    <div>
-                      <div style={{ fontSize: 13, fontWeight: 500, color: theme.text }}>{MARKET_STRUCTURES[key].label}</div>
-                      <div style={{ fontSize: 11, color: theme.textFaint }}>{structWinRate}% win rate</div>
-                    </div>
-                  </div>
-                  <span style={{ fontSize: 13, fontWeight: 600, color: structPnl >= 0 ? '#10b981' : '#ef4444' }}>{structPnl >= 0 ? '+' : ''}${structPnl.toFixed(2)}</span>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
     </div>
   );
 }
