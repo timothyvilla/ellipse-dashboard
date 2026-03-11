@@ -1,6 +1,13 @@
 import React, { useState, useEffect, createContext, useContext } from 'react';
+import { createClient } from '@supabase/supabase-js';
 import { XAxis, YAxis, Tooltip, ResponsiveContainer, AreaChart, Area, BarChart, Bar, Cell } from 'recharts';
-import { Plus, TrendingUp, TrendingDown, ChevronDown, Calendar, BarChart3, BookOpen, Wallet, CheckCircle, Clock, X, Eye, Database, ChevronLeft, ChevronRight, Trash2, Edit3, Moon, Sun, Settings, Link, Image, ExternalLink } from 'lucide-react';
+import { Plus, TrendingUp, TrendingDown, ChevronDown, Calendar, BarChart3, BookOpen, Wallet, CheckCircle, Clock, X, Eye, Database, ChevronLeft, ChevronRight, Trash2, Edit3, Moon, Sun, Settings, Link, Image, ExternalLink, Loader2, CloudOff, Cloud } from 'lucide-react';
+
+// Supabase client
+const supabase = createClient(
+  'https://ksbhbhjnrrkcnunehksx.supabase.co',
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtzYmhiaGpucnJrY251bmVoa3N4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMyMTUwNDAsImV4cCI6MjA4ODc5MTA0MH0.t0tbxMpMzYxWtrejNi0TrcM3cUPPopAe2GaUdIuCjeA'
+);
 
 const ThemeContext = createContext();
 const useTheme = () => useContext(ThemeContext);
@@ -79,8 +86,15 @@ const calculatePipValue = (symbol, exitPrice) => {
   }
 };
 
+// localStorage for dark mode only (UI preference)
+const loadDarkMode = () => {
+  try {
+    return localStorage.getItem('ellipse_darkMode') === 'true';
+  } catch { return false; }
+};
+
 export default function TradingJournal() {
-  const [darkMode, setDarkMode] = useState(false);
+  const [darkMode, setDarkMode] = useState(loadDarkMode);
   const [activeTab, setActiveTab] = useState('journal');
   const [trades, setTrades] = useState([]);
   const [accounts, setAccounts] = useState([]);
@@ -89,6 +103,139 @@ export default function TradingJournal() {
   const [selectedTrade, setSelectedTrade] = useState(null);
   const [filterAccount, setFilterAccount] = useState('all');
   const [analyticsAccount, setAnalyticsAccount] = useState('all');
+  const [loading, setLoading] = useState(true);
+  const [synced, setSynced] = useState(false);
+
+  // Save dark mode to localStorage
+  useEffect(() => { localStorage.setItem('ellipse_darkMode', darkMode); }, [darkMode]);
+
+  // Load data from Supabase on mount
+  useEffect(() => {
+    const loadData = async () => {
+      setLoading(true);
+      try {
+        const [tradesRes, accountsRes] = await Promise.all([
+          supabase.from('trades').select('*').order('date', { ascending: false }),
+          supabase.from('accounts').select('*').order('created_at', { ascending: true })
+        ]);
+        
+        if (tradesRes.data) {
+          setTrades(tradesRes.data.map(t => ({
+            id: t.id,
+            date: t.date,
+            time: t.time,
+            symbol: t.symbol,
+            side: t.side,
+            entry: t.entry,
+            exit: t.exit_price,
+            lots: t.lots,
+            stopLoss: t.stop_loss,
+            takeProfit: t.take_profit,
+            pnl: parseFloat(t.pnl) || 0,
+            commission: t.commission,
+            swap: t.swap,
+            riskReward: t.risk_reward,
+            marketStructure: t.market_structure,
+            candleType: t.candle_type,
+            liquidityTaken: t.liquidity_taken || [],
+            liquidityTarget: t.liquidity_target || [],
+            notes: t.notes,
+            account: t.account,
+            chartLink: t.chart_link,
+            chartImage: t.chart_image
+          })));
+        }
+        
+        if (accountsRes.data) {
+          setAccounts(accountsRes.data.map(a => ({
+            id: a.id,
+            name: a.name,
+            platform: a.platform,
+            broker: a.broker,
+            server: a.server,
+            balance: parseFloat(a.balance) || 0,
+            equity: parseFloat(a.equity) || 0,
+            connected: a.connected
+          })));
+        }
+        setSynced(true);
+      } catch (err) {
+        console.error('Error loading data:', err);
+        setSynced(false);
+      }
+      setLoading(false);
+    };
+    loadData();
+  }, []);
+
+  // Supabase CRUD functions
+  const addTrade = async (trade) => {
+    const dbTrade = {
+      date: trade.date,
+      time: trade.time,
+      symbol: trade.symbol,
+      side: trade.side,
+      entry: trade.entry,
+      exit_price: trade.exit,
+      lots: trade.lots,
+      stop_loss: trade.stopLoss,
+      take_profit: trade.takeProfit,
+      pnl: trade.pnl,
+      commission: trade.commission,
+      swap: trade.swap,
+      risk_reward: trade.riskReward,
+      market_structure: trade.marketStructure,
+      candle_type: trade.candleType,
+      liquidity_taken: trade.liquidityTaken,
+      liquidity_target: trade.liquidityTarget,
+      notes: trade.notes,
+      account: trade.account,
+      chart_link: trade.chartLink,
+      chart_image: trade.chartImage
+    };
+    
+    const { data, error } = await supabase.from('trades').insert(dbTrade).select().single();
+    if (error) { console.error('Error adding trade:', error); return; }
+    setTrades(prev => [{ ...trade, id: data.id }, ...prev]);
+  };
+
+  const deleteTrade = async (id) => {
+    const { error } = await supabase.from('trades').delete().eq('id', id);
+    if (error) { console.error('Error deleting trade:', error); return; }
+    setTrades(prev => prev.filter(t => t.id !== id));
+  };
+
+  const addAccount = async (account) => {
+    const { data, error } = await supabase.from('accounts').insert({
+      name: account.name,
+      platform: account.platform,
+      broker: account.broker,
+      server: account.server,
+      balance: account.balance,
+      equity: account.equity,
+      connected: account.connected
+    }).select().single();
+    
+    if (error) { console.error('Error adding account:', error); return; }
+    setAccounts(prev => [...prev, { ...account, id: data.id }]);
+  };
+
+  const updateAccount = async (account) => {
+    const { error } = await supabase.from('accounts').update({
+      name: account.name,
+      balance: account.balance,
+      equity: account.equity
+    }).eq('id', account.id);
+    
+    if (error) { console.error('Error updating account:', error); return; }
+    setAccounts(prev => prev.map(a => a.id === account.id ? account : a));
+  };
+
+  const deleteAccount = async (id) => {
+    const { error } = await supabase.from('accounts').delete().eq('id', id);
+    if (error) { console.error('Error deleting account:', error); return; }
+    setAccounts(prev => prev.filter(a => a.id !== id));
+  };
 
   const filteredTrades = filterAccount === 'all' ? trades : trades.filter(t => t.account === filterAccount);
   const totalPnl = filteredTrades.reduce((sum, t) => sum + t.pnl, 0);
@@ -167,6 +314,12 @@ export default function TradingJournal() {
             </nav>
 
             <div style={{ padding: 12, borderTop: `1px solid ${theme.cardBorder}` }}>
+              {/* Sync Status */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 16px', marginBottom: 8, fontSize: 12, color: synced ? '#10b981' : '#ef4444' }}>
+                {loading ? <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> : synced ? <Cloud size={14} /> : <CloudOff size={14} />}
+                {loading ? 'Syncing...' : synced ? 'Synced to cloud' : 'Offline'}
+              </div>
+              
               <div onClick={() => setDarkMode(!darkMode)} className="nav-item" style={{ justifyContent: 'space-between' }}>
                 <span className="flex items-center gap-3">{darkMode ? <Moon size={18} /> : <Sun size={18} />}{darkMode ? 'Dark' : 'Light'}</span>
                 <div style={{ width: 36, height: 20, borderRadius: 10, background: darkMode ? '#6366f1' : '#cbd5e1', position: 'relative' }}>
@@ -213,17 +366,26 @@ export default function TradingJournal() {
             </header>
 
             <div className="flex-1 overflow-auto scrollbar" style={{ padding: 24 }}>
-              {activeTab === 'journal' && <JournalView trades={trades} accounts={accounts} filterAccount={filterAccount} setFilterAccount={setFilterAccount} onSelectTrade={setSelectedTrade} />}
-              {activeTab === 'analytics' && <AnalyticsView trades={trades} accounts={accounts} selectedAccount={analyticsAccount} setSelectedAccount={setAnalyticsAccount} />}
-              {activeTab === 'accounts' && <AccountsView accounts={accounts} setAccounts={setAccounts} />}
-              {activeTab === 'calendar' && <CalendarView trades={trades} />}
+              {loading ? (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
+                  <Loader2 size={32} style={{ color: theme.textMuted, animation: 'spin 1s linear infinite' }} />
+                  <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+                </div>
+              ) : (
+                <>
+                  {activeTab === 'journal' && <JournalView trades={trades} accounts={accounts} filterAccount={filterAccount} setFilterAccount={setFilterAccount} onSelectTrade={setSelectedTrade} />}
+                  {activeTab === 'analytics' && <AnalyticsView trades={trades} accounts={accounts} selectedAccount={analyticsAccount} setSelectedAccount={setAnalyticsAccount} />}
+                  {activeTab === 'accounts' && <AccountsView accounts={accounts} onUpdate={updateAccount} onDelete={deleteAccount} />}
+                  {activeTab === 'calendar' && <CalendarView trades={trades} />}
+                </>
+              )}
             </div>
           </main>
         </div>
 
-        {showNewTrade && <NewTradeModal onClose={() => setShowNewTrade(false)} onSave={(trade) => { setTrades([{ ...trade, id: Date.now() }, ...trades]); setShowNewTrade(false); }} accounts={accounts} />}
-        {showNewAccount && <NewAccountModal onClose={() => setShowNewAccount(false)} onSave={(acc) => { setAccounts([...accounts, { ...acc, id: Date.now() }]); setShowNewAccount(false); }} />}
-        {selectedTrade && <TradeDetailModal trade={selectedTrade} onClose={() => setSelectedTrade(null)} onDelete={(id) => { setTrades(trades.filter(t => t.id !== id)); setSelectedTrade(null); }} />}
+        {showNewTrade && <NewTradeModal onClose={() => setShowNewTrade(false)} onSave={(trade) => { addTrade(trade); setShowNewTrade(false); }} accounts={accounts} />}
+        {showNewAccount && <NewAccountModal onClose={() => setShowNewAccount(false)} onSave={(acc) => { addAccount(acc); setShowNewAccount(false); }} />}
+        {selectedTrade && <TradeDetailModal trade={selectedTrade} onClose={() => setSelectedTrade(null)} onDelete={(id) => { deleteTrade(id); setSelectedTrade(null); }} />}
       </div>
     </ThemeContext.Provider>
   );
@@ -379,7 +541,7 @@ function AnalyticsView({ trades, accounts, selectedAccount, setSelectedAccount }
   );
 }
 
-function AccountsView({ accounts, setAccounts }) {
+function AccountsView({ accounts, onUpdate, onDelete }) {
   const theme = useTheme();
   const [deleteId, setDeleteId] = useState(null);
   const [editAcc, setEditAcc] = useState(null);
@@ -441,7 +603,7 @@ function AccountsView({ accounts, setAccounts }) {
         ))}
       </div>
 
-      {editAcc && <EditAccountModal account={editAcc} onClose={() => setEditAcc(null)} onSave={(updated) => { setAccounts(accounts.map(a => a.id === updated.id ? updated : a)); setEditAcc(null); }} />}
+      {editAcc && <EditAccountModal account={editAcc} onClose={() => setEditAcc(null)} onSave={(updated) => { onUpdate(updated); setEditAcc(null); }} />}
       
       {deleteId && (
         <Modal onClose={() => setDeleteId(null)}>
@@ -449,7 +611,7 @@ function AccountsView({ accounts, setAccounts }) {
           <p style={{ fontSize: 14, color: theme.textMuted, marginBottom: 20 }}>This will remove {accounts.find(a => a.id === deleteId)?.name}</p>
           <div className="flex gap-3">
             <button onClick={() => setDeleteId(null)} className="input" style={{ flex: 1, textAlign: 'center', cursor: 'pointer' }}>Cancel</button>
-            <button onClick={() => { setAccounts(accounts.filter(a => a.id !== deleteId)); setDeleteId(null); }} className="btn-primary" style={{ flex: 1, background: '#ef4444' }}>Remove</button>
+            <button onClick={() => { onDelete(deleteId); setDeleteId(null); }} className="btn-primary" style={{ flex: 1, background: '#ef4444' }}>Remove</button>
           </div>
         </Modal>
       )}
