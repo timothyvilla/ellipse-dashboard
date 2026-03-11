@@ -28,14 +28,55 @@ const LIQUIDITY_LEVELS = [
   { key: 'trueDayOpen', label: 'True Day Open', abbr: 'TDO' }
 ];
 
-const PIP_VALUES = {
-  'EURUSD': { pipSize: 0.0001, pipValue: 10 }, 'GBPUSD': { pipSize: 0.0001, pipValue: 10 },
-  'AUDUSD': { pipSize: 0.0001, pipValue: 10 }, 'NZDUSD': { pipSize: 0.0001, pipValue: 10 },
-  'USDCAD': { pipSize: 0.0001, pipValue: 10 }, 'USDCHF': { pipSize: 0.0001, pipValue: 10 },
-  'USDJPY': { pipSize: 0.01, pipValue: 9.1 }, 'EURJPY': { pipSize: 0.01, pipValue: 9.1 },
-  'GBPJPY': { pipSize: 0.01, pipValue: 9.1 }, 'XAUUSD': { pipSize: 0.01, pipValue: 1 },
-  'US30': { pipSize: 1, pipValue: 1 }, 'NAS100': { pipSize: 1, pipValue: 1 },
-  'DEFAULT': { pipSize: 0.0001, pipValue: 10 }
+// Symbol configurations - lotSize is contract size, pipSize is minimum pip movement
+const SYMBOL_CONFIG = {
+  // Forex - USD quote (pip value = $10 per standard lot)
+  'EURUSD': { pipSize: 0.0001, lotSize: 100000, quoteUSD: true },
+  'GBPUSD': { pipSize: 0.0001, lotSize: 100000, quoteUSD: true },
+  'AUDUSD': { pipSize: 0.0001, lotSize: 100000, quoteUSD: true },
+  'NZDUSD': { pipSize: 0.0001, lotSize: 100000, quoteUSD: true },
+  // Forex - JPY quote (pip value = lotSize * pipSize / rate)
+  'USDJPY': { pipSize: 0.01, lotSize: 100000, quoteJPY: true },
+  'EURJPY': { pipSize: 0.01, lotSize: 100000, quoteJPY: true },
+  'GBPJPY': { pipSize: 0.01, lotSize: 100000, quoteJPY: true },
+  'AUDJPY': { pipSize: 0.01, lotSize: 100000, quoteJPY: true },
+  'CADJPY': { pipSize: 0.01, lotSize: 100000, quoteJPY: true },
+  'CHFJPY': { pipSize: 0.01, lotSize: 100000, quoteJPY: true },
+  'NZDJPY': { pipSize: 0.01, lotSize: 100000, quoteJPY: true },
+  // Forex - Other crosses
+  'USDCAD': { pipSize: 0.0001, lotSize: 100000, quoteOther: true },
+  'USDCHF': { pipSize: 0.0001, lotSize: 100000, quoteOther: true },
+  'EURGBP': { pipSize: 0.0001, lotSize: 100000, quoteOther: true },
+  'EURAUD': { pipSize: 0.0001, lotSize: 100000, quoteOther: true },
+  'GBPAUD': { pipSize: 0.0001, lotSize: 100000, quoteOther: true },
+  'AUDCAD': { pipSize: 0.0001, lotSize: 100000, quoteOther: true },
+  // Gold - $1 per 0.01 move per 1 oz, standard lot = 100 oz
+  'XAUUSD': { pipSize: 0.01, lotSize: 100, quoteUSD: true },
+  // Indices - $1 per point per contract (varies by broker)
+  'US30': { pipSize: 1, lotSize: 1, pointValue: 1 },
+  'NAS100': { pipSize: 1, lotSize: 1, pointValue: 1 },
+  'SPX500': { pipSize: 0.1, lotSize: 1, pointValue: 10 },
+  'DEFAULT': { pipSize: 0.0001, lotSize: 100000, quoteUSD: true }
+};
+
+// Calculate pip value based on symbol and current price
+const calculatePipValue = (symbol, exitPrice) => {
+  const config = SYMBOL_CONFIG[symbol.toUpperCase()] || SYMBOL_CONFIG['DEFAULT'];
+  
+  if (config.quoteUSD) {
+    // For XXX/USD pairs: pip value = pipSize * lotSize
+    return config.pipSize * config.lotSize;
+  } else if (config.quoteJPY) {
+    // For XXX/JPY pairs: pip value = (pipSize * lotSize) / current rate
+    const rate = parseFloat(exitPrice) || 150; // fallback to ~150 if no rate
+    return (config.pipSize * config.lotSize) / rate;
+  } else if (config.pointValue) {
+    // For indices: fixed point value
+    return config.pointValue;
+  } else {
+    // For other crosses, approximate (would need live rates for accuracy)
+    return config.pipSize * config.lotSize * 0.75; // rough approximation
+  }
 };
 
 export default function TradingJournal() {
@@ -498,13 +539,14 @@ function NewTradeModal({ onClose, onSave, accounts }) {
 
   useEffect(() => {
     if (trade.entry && trade.exit && trade.lots && trade.symbol) {
-      const pip = PIP_VALUES[trade.symbol.toUpperCase()] || PIP_VALUES['DEFAULT'];
+      const config = SYMBOL_CONFIG[trade.symbol.toUpperCase()] || SYMBOL_CONFIG['DEFAULT'];
       const entry = parseFloat(trade.entry), exit = parseFloat(trade.exit), lots = parseFloat(trade.lots);
       const commission = parseFloat(trade.commission) || 0, swap = parseFloat(trade.swap) || 0;
       if (!isNaN(entry) && !isNaN(exit) && !isNaN(lots)) {
         const diff = trade.side === 'Long' ? exit - entry : entry - exit;
-        const pips = diff / pip.pipSize;
-        const gross = pips * pip.pipValue * lots;
+        const pips = diff / config.pipSize;
+        const pipValue = calculatePipValue(trade.symbol, exit);
+        const gross = pips * pipValue * lots;
         setTrade(prev => ({ ...prev, pnl: gross - commission + swap }));
       }
     }
