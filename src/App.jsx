@@ -142,53 +142,131 @@ const parseCTraderStatement = (html) => {
   const trades = [];
   const parser = new DOMParser();
   const doc = parser.parseFromString(html, 'text/html');
-  const rows = doc.querySelectorAll('tr');
-  let headers = [];
   
-  for (const row of rows) {
-    const cells = row.querySelectorAll('td');
-    if (cells.length >= 6 && headers.length === 0) {
-      headers = ['id', 'symbol', 'direction', 'volume', 'open', 'close', 'profit'];
+  // Helper: parse numbers with space as thousands separator (e.g. "2 749.78", "-4 668.45", "50 000.00")
+  const parseNum = (text) => {
+    if (!text) return 0;
+    // Remove non-breaking spaces, regular spaces between digits, currency symbols, and "Lots"
+    const cleaned = text.replace(/\u00a0/g, '').replace(/(\d)\s+(\d)/g, '$1$2').replace(/[^\d.\-]/g, '');
+    return parseFloat(cleaned) || 0;
+  };
+  
+  // Helper: parse DD/MM/YYYY HH:MM:SS.mmm date format
+  const parseDate = (text) => {
+    if (!text) return { date: new Date().toISOString().split('T')[0], time: '00:00' };
+    const match = text.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{2}):(\d{2})/);
+    if (match) {
+      const [, day, month, year, hour, min] = match;
+      return { 
+        date: `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`, 
+        time: `${hour}:${min}` 
+      };
     }
+    return { date: new Date().toISOString().split('T')[0], time: '00:00' };
+  };
+  
+  // Find all tables and look for the History table specifically
+  const tables = doc.querySelectorAll('table');
+  
+  for (const table of tables) {
+    const rows = table.querySelectorAll('tr');
+    let isHistoryTable = false;
+    let columnMap = {};
     
-    if (cells.length >= 6) {
-      let symbol = '', direction = '', volume = 0, openPrice = 0, closePrice = 0, profit = 0;
-      let date = new Date().toISOString().split('T')[0], time = '00:00';
+    for (const row of rows) {
+      const cells = row.querySelectorAll('td');
+      const rowText = row.textContent.trim();
       
-      for (let i = 0; i < cells.length; i++) {
-        const text = cells[i]?.textContent?.trim() || '';
-        const textLower = text.toLowerCase();
-        if (/^[A-Z]{6}$/.test(text) || /^[A-Z]{3}\/[A-Z]{3}$/.test(text)) symbol = text.replace('/', '');
-        if (textLower === 'buy' || textLower === 'sell' || textLower === 'long' || textLower === 'short') {
-          direction = textLower.includes('buy') || textLower.includes('long') ? 'Long' : 'Short';
-        }
-        if (/^\d+\.?\d*$/.test(text) && parseFloat(text) < 100 && parseFloat(text) > 0 && volume === 0) volume = parseFloat(text);
-        if (/^\d+\.\d{2,5}$/.test(text)) {
-          const price = parseFloat(text);
-          if (openPrice === 0) openPrice = price; else if (closePrice === 0) closePrice = price;
-        }
-        if (/^-?[\d,]+\.?\d*$/.test(text.replace(/[$€£]/g, '')) && Math.abs(parseFloat(text.replace(/[^-\d.]/g, ''))) < 100000) {
-          profit = parseFloat(text.replace(/[^-\d.]/g, '')) || 0;
-        }
-        const dateMatch = text.match(/(\d{1,2}[.\-/]\d{1,2}[.\-/]\d{2,4})/);
-        if (dateMatch) {
-          const parts = dateMatch[1].split(/[.\-/]/);
-          if (parts[2]?.length === 4) date = `${parts[2]}-${parts[1].padStart(2,'0')}-${parts[0].padStart(2,'0')}`;
+      // Detect "History" section header
+      if (rowText === 'History') {
+        isHistoryTable = true;
+        continue;
+      }
+      
+      // Detect if we've left the History table (hit Positions, Orders, Transactions, Summary)
+      if (isHistoryTable && /^(Positions|Orders|Transactions|Summary)$/.test(rowText)) {
+        break;
+      }
+      
+      if (!isHistoryTable) continue;
+      
+      // Detect column headers row (contains "Symbol" and "Opening direction")
+      if (cells.length >= 10) {
+        const headerTexts = Array.from(cells).map(c => c.textContent.trim().toLowerCase());
+        if (headerTexts.some(h => h.includes('symbol')) && headerTexts.some(h => h.includes('direction') || h.includes('opening direction'))) {
+          headerTexts.forEach((h, i) => {
+            if (h.includes('symbol')) columnMap.symbol = i;
+            if (h.includes('opening direction') || h === 'direction') columnMap.direction = i;
+            if (h.includes('opening time')) columnMap.openTime = i;
+            if (h.includes('closing time')) columnMap.closeTime = i;
+            if (h.includes('entry price') || h === 'entry') columnMap.entry = i;
+            if (h.includes('closing price') || h === 'close') columnMap.close = i;
+            if (h.includes('closing quantity') || h.includes('quantity')) columnMap.quantity = i;
+            if (h.includes('swap')) columnMap.swap = i;
+            if (h.includes('commission')) columnMap.commission = i;
+            if (h.includes('net')) columnMap.net = i;
+            if (h.includes('balance')) columnMap.balance = i;
+          });
+          continue;
         }
       }
       
-      if (symbol && direction && volume > 0) {
-        trades.push({
-          date, time, symbol, side: direction,
-          entry: openPrice, exit: closePrice || openPrice,
-          lots: volume, pnl: profit, commission: 0, swap: 0,
-          stopLoss: 0, takeProfit: 0, marketStructure: '', candleType: '',
-          liquidityTaken: [], liquidityTarget: [],
-          notes: 'Imported from cTrader', chartLink: '', chartImage: ''
-        });
-      }
+      // Skip if we haven't found headers yet
+      if (Object.keys(columnMap).length === 0) continue;
+      
+      // Skip totals row and empty rows
+      if (rowText.startsWith('Totals') || cells.length < 10) continue;
+      
+      // Extract trade data by column position
+      const getText = (idx) => idx !== undefined && cells[idx] ? cells[idx].textContent.trim() : '';
+      
+      const symbol = getText(columnMap.symbol);
+      const directionText = getText(columnMap.direction).toLowerCase();
+      const openTimeText = getText(columnMap.openTime);
+      const closeTimeText = getText(columnMap.closeTime);
+      const entryPrice = parseNum(getText(columnMap.entry));
+      const closePrice = parseNum(getText(columnMap.close));
+      const quantityText = getText(columnMap.quantity);
+      const swap = parseNum(getText(columnMap.swap));
+      const commission = Math.abs(parseNum(getText(columnMap.commission)));
+      const netPnl = parseNum(getText(columnMap.net));
+      
+      // Parse volume from "2.40 Lots" or "0.20 Lots"  
+      const lotsMatch = quantityText.match(/([\d.]+)\s*Lots?/i);
+      const lots = lotsMatch ? parseFloat(lotsMatch[1]) : parseNum(quantityText);
+      
+      // Validate this is a real trade row
+      if (!symbol || symbol.length < 3 || symbol.length > 10) continue;
+      if (!directionText.includes('buy') && !directionText.includes('sell')) continue;
+      if (lots === 0) continue;
+      
+      // Parse closing time for the trade date (use close time as the trade date)
+      const { date, time } = parseDate(closeTimeText || openTimeText);
+      
+      trades.push({
+        date,
+        time,
+        symbol: symbol.replace('/', '').toUpperCase(),
+        side: directionText.includes('buy') ? 'Long' : 'Short',
+        entry: entryPrice,
+        exit: closePrice,
+        lots,
+        pnl: netPnl, // Use the actual Net USD from the statement, not calculated
+        commission,
+        swap,
+        stopLoss: 0,
+        takeProfit: 0,
+        marketStructure: '',
+        candleType: '',
+        liquidityTaken: [],
+        liquidityTarget: [],
+        notes: 'Imported from cTrader',
+        chartLink: '',
+        chartImage: ''
+      });
     }
   }
+  
   return trades;
 };
 
