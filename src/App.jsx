@@ -1,7 +1,7 @@
 import React, { useState, useEffect, createContext, useContext, useRef } from 'react';
 import { createClient } from '@supabase/supabase-js';
 import { XAxis, YAxis, Tooltip, ResponsiveContainer, AreaChart, Area, BarChart, Bar, Cell } from 'recharts';
-import { Plus, TrendingUp, TrendingDown, ChevronDown, Calendar, BarChart3, BookOpen, Wallet, CheckCircle, Clock, X, Eye, Database, ChevronLeft, ChevronRight, Trash2, Edit3, Moon, Sun, Settings, Link, Image, ExternalLink, Loader2, CloudOff, Cloud, LayoutGrid, LayoutList, Upload, FileText, AlertCircle, Trophy, Shield, Target, AlertTriangle, Zap, Activity } from 'lucide-react';
+import { Plus, TrendingUp, TrendingDown, ChevronDown, Calendar, BarChart3, BookOpen, Wallet, CheckCircle, Clock, X, Eye, Database, ChevronLeft, ChevronRight, Trash2, Edit3, Moon, Sun, Settings, Link, Image, ExternalLink, Loader2, CloudOff, Cloud, LayoutGrid, LayoutList, Upload, FileText, AlertCircle, Shield, Target, AlertTriangle, Zap, Trophy, Flag, Activity } from 'lucide-react';
 
 // Supabase client
 const supabase = createClient(
@@ -20,40 +20,39 @@ const MARKET_STRUCTURES = {
   CHOPPY: { label: 'Choppy/Range', color: '#8B5CF6', description: 'No clear structure' }
 };
 
-// ===== PROP FIRM PRESETS =====
+// ==================== PROP FIRM PRESETS ====================
 const PROP_FIRM_PRESETS = {
   FTMO: {
     name: 'FTMO',
-    color: '#0ea5e9',
     phases: [
       { name: 'FTMO Challenge', profitTarget: 10, maxDailyDrawdown: 5, maxTotalDrawdown: 10, minTradingDays: 4, maxTradingDays: 30, drawdownType: 'balance' },
       { name: 'Verification', profitTarget: 5, maxDailyDrawdown: 5, maxTotalDrawdown: 10, minTradingDays: 4, maxTradingDays: 60, drawdownType: 'balance' },
-      { name: 'Funded', profitTarget: null, maxDailyDrawdown: 5, maxTotalDrawdown: 10, minTradingDays: 0, maxTradingDays: null, drawdownType: 'balance', profitSplit: 80 }
+      { name: 'Funded', profitTarget: null, maxDailyDrawdown: 5, maxTotalDrawdown: 10, minTradingDays: 0, maxTradingDays: null, drawdownType: 'balance' }
     ],
-    consistencyRule: null,
-    accountSizes: [10000, 25000, 50000, 100000, 200000]
+    profitSplit: 80,
+    scalingPlan: true,
+    consistencyRule: null
   },
   FUNDED_HIVE: {
     name: 'Funded Hive',
-    color: '#f59e0b',
     phases: [
-      { name: 'Evaluation', profitTarget: 8, maxDailyDrawdown: 5, maxTotalDrawdown: 10, minTradingDays: 5, maxTradingDays: 45, drawdownType: 'balance' },
-      { name: 'Verification', profitTarget: 5, maxDailyDrawdown: 5, maxTotalDrawdown: 10, minTradingDays: 5, maxTradingDays: 45, drawdownType: 'balance' },
-      { name: 'Funded', profitTarget: null, maxDailyDrawdown: 5, maxTotalDrawdown: 10, minTradingDays: 0, maxTradingDays: null, drawdownType: 'balance', profitSplit: 80 }
+      { name: 'Evaluation Phase 1', profitTarget: 8, maxDailyDrawdown: 5, maxTotalDrawdown: 10, minTradingDays: 5, maxTradingDays: 45, drawdownType: 'balance' },
+      { name: 'Evaluation Phase 2', profitTarget: 5, maxDailyDrawdown: 5, maxTotalDrawdown: 10, minTradingDays: 5, maxTradingDays: 45, drawdownType: 'balance' },
+      { name: 'Funded', profitTarget: null, maxDailyDrawdown: 5, maxTotalDrawdown: 10, minTradingDays: 0, maxTradingDays: null, drawdownType: 'balance' }
     ],
-    consistencyRule: null,
-    accountSizes: [5000, 10000, 25000, 50000, 100000]
+    profitSplit: 80,
+    scalingPlan: true,
+    consistencyRule: null
   },
   CUSTOM: {
     name: 'Custom',
-    color: '#8b5cf6',
     phases: [
-      { name: 'Phase 1', profitTarget: 8, maxDailyDrawdown: 5, maxTotalDrawdown: 10, minTradingDays: 0, maxTradingDays: 30, drawdownType: 'balance' },
-      { name: 'Phase 2', profitTarget: 5, maxDailyDrawdown: 5, maxTotalDrawdown: 8, minTradingDays: 0, maxTradingDays: 60, drawdownType: 'balance' },
-      { name: 'Funded', profitTarget: null, maxDailyDrawdown: 5, maxTotalDrawdown: 8, minTradingDays: 0, maxTradingDays: null, drawdownType: 'balance', profitSplit: 80 }
+      { name: 'Phase 1', profitTarget: 8, maxDailyDrawdown: 5, maxTotalDrawdown: 10, minTradingDays: 1, maxTradingDays: 30, drawdownType: 'balance' },
+      { name: 'Funded', profitTarget: null, maxDailyDrawdown: 5, maxTotalDrawdown: 10, minTradingDays: 0, maxTradingDays: null, drawdownType: 'balance' }
     ],
-    consistencyRule: null,
-    accountSizes: [10000, 25000, 50000, 100000, 200000]
+    profitSplit: 80,
+    scalingPlan: false,
+    consistencyRule: null
   }
 };
 
@@ -125,12 +124,10 @@ const parseMT5Statement = (html) => {
         }
         
         trades.push({
-          date, time, symbol,
-          side: type.includes('buy') ? 'Long' : 'Short',
+          date, time, symbol, side: type.includes('buy') ? 'Long' : 'Short',
           entry: openPrice || closePrice, exit: closePrice || openPrice,
           lots: volume, pnl: profit, commission, swap,
-          stopLoss: 0, takeProfit: 0,
-          marketStructure: '', candleType: '',
+          stopLoss: 0, takeProfit: 0, marketStructure: '', candleType: '',
           liquidityTaken: [], liquidityTarget: [],
           notes: 'Imported from MT5', chartLink: '', chartImage: ''
         });
@@ -151,10 +148,7 @@ const parseCTraderStatement = (html) => {
   for (const row of rows) {
     const cells = row.querySelectorAll('td');
     if (cells.length >= 6 && headers.length === 0) {
-      const text = cells[0]?.textContent?.trim().toLowerCase();
-      if (text.includes('position') || text.includes('id') || !isNaN(parseInt(text))) {
-        headers = ['id', 'symbol', 'direction', 'volume', 'open', 'close', 'profit'];
-      }
+      headers = ['id', 'symbol', 'direction', 'volume', 'open', 'close', 'profit'];
     }
     
     if (cells.length >= 6) {
@@ -165,16 +159,33 @@ const parseCTraderStatement = (html) => {
         const text = cells[i]?.textContent?.trim() || '';
         const textLower = text.toLowerCase();
         if (/^[A-Z]{6}$/.test(text) || /^[A-Z]{3}\/[A-Z]{3}$/.test(text)) symbol = text.replace('/', '');
-        if (textLower === 'buy' || textLower === 'sell' || textLower === 'long' || textLower === 'short') direction = textLower.includes('buy') || textLower.includes('long') ? 'Long' : 'Short';
+        if (textLower === 'buy' || textLower === 'sell' || textLower === 'long' || textLower === 'short') {
+          direction = textLower.includes('buy') || textLower.includes('long') ? 'Long' : 'Short';
+        }
         if (/^\d+\.?\d*$/.test(text) && parseFloat(text) < 100 && parseFloat(text) > 0 && volume === 0) volume = parseFloat(text);
-        if (/^\d+\.\d{2,5}$/.test(text)) { const price = parseFloat(text); if (openPrice === 0) openPrice = price; else if (closePrice === 0) closePrice = price; }
-        if (/^-?[\d,]+\.?\d*$/.test(text.replace(/[$€£]/g, '')) && Math.abs(parseFloat(text.replace(/[^-\d.]/g, ''))) < 100000) profit = parseFloat(text.replace(/[^-\d.]/g, '')) || 0;
+        if (/^\d+\.\d{2,5}$/.test(text)) {
+          const price = parseFloat(text);
+          if (openPrice === 0) openPrice = price; else if (closePrice === 0) closePrice = price;
+        }
+        if (/^-?[\d,]+\.?\d*$/.test(text.replace(/[$€£]/g, '')) && Math.abs(parseFloat(text.replace(/[^-\d.]/g, ''))) < 100000) {
+          profit = parseFloat(text.replace(/[^-\d.]/g, '')) || 0;
+        }
         const dateMatch = text.match(/(\d{1,2}[.\-/]\d{1,2}[.\-/]\d{2,4})/);
-        if (dateMatch) { const parts = dateMatch[1].split(/[.\-/]/); if (parts[2]?.length === 4) date = `${parts[2]}-${parts[1].padStart(2,'0')}-${parts[0].padStart(2,'0')}`; }
+        if (dateMatch) {
+          const parts = dateMatch[1].split(/[.\-/]/);
+          if (parts[2]?.length === 4) date = `${parts[2]}-${parts[1].padStart(2,'0')}-${parts[0].padStart(2,'0')}`;
+        }
       }
       
       if (symbol && direction && volume > 0) {
-        trades.push({ date, time, symbol, side: direction, entry: openPrice, exit: closePrice || openPrice, lots: volume, pnl: profit, commission: 0, swap: 0, stopLoss: 0, takeProfit: 0, marketStructure: '', candleType: '', liquidityTaken: [], liquidityTarget: [], notes: 'Imported from cTrader', chartLink: '', chartImage: '' });
+        trades.push({
+          date, time, symbol, side: direction,
+          entry: openPrice, exit: closePrice || openPrice,
+          lots: volume, pnl: profit, commission: 0, swap: 0,
+          stopLoss: 0, takeProfit: 0, marketStructure: '', candleType: '',
+          liquidityTaken: [], liquidityTarget: [],
+          notes: 'Imported from cTrader', chartLink: '', chartImage: ''
+        });
       }
     }
   }
@@ -211,7 +222,14 @@ const parseCSV = (csv, platform) => {
     if (!symbol || volume === 0) continue;
     if (!type.includes('buy') && !type.includes('sell') && !type.includes('long') && !type.includes('short')) continue;
     
-    trades.push({ date, time, symbol: symbol.replace('/', '').toUpperCase(), side: type.includes('buy') || type.includes('long') ? 'Long' : 'Short', entry, exit: exit || entry, lots: volume, pnl: profit, commission, swap, stopLoss: 0, takeProfit: 0, marketStructure: '', candleType: '', liquidityTaken: [], liquidityTarget: [], notes: `Imported from ${platform}`, chartLink: '', chartImage: '' });
+    trades.push({
+      date, time, symbol: symbol.replace('/', '').toUpperCase(),
+      side: type.includes('buy') || type.includes('long') ? 'Long' : 'Short',
+      entry, exit: exit || entry, lots: volume, pnl: profit, commission, swap,
+      stopLoss: 0, takeProfit: 0, marketStructure: '', candleType: '',
+      liquidityTaken: [], liquidityTarget: [],
+      notes: `Imported from ${platform}`, chartLink: '', chartImage: ''
+    });
   }
   return trades;
 };
@@ -259,13 +277,14 @@ const SYMBOL_CONFIG = {
 const calculatePipValue = (symbol, exitPrice) => {
   const config = SYMBOL_CONFIG[symbol.toUpperCase()] || SYMBOL_CONFIG['DEFAULT'];
   if (config.quoteUSD) return config.pipSize * config.lotSize;
-  if (config.quoteJPY) { const rate = parseFloat(exitPrice) || 150; return (config.pipSize * config.lotSize) / rate; }
-  if (config.pointValue) return config.pointValue;
-  return config.pipSize * config.lotSize * 0.75;
+  else if (config.quoteJPY) { const rate = parseFloat(exitPrice) || 150; return (config.pipSize * config.lotSize) / rate; }
+  else if (config.pointValue) return config.pointValue;
+  else return config.pipSize * config.lotSize * 0.75;
 };
 
 const loadDarkMode = () => { try { return localStorage.getItem('ellipse_darkMode') === 'true'; } catch { return false; } };
 
+// ==================== MAIN APP ====================
 export default function TradingJournal() {
   const [darkMode, setDarkMode] = useState(loadDarkMode);
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -274,8 +293,8 @@ export default function TradingJournal() {
   const [challenges, setChallenges] = useState([]);
   const [showNewTrade, setShowNewTrade] = useState(false);
   const [showNewAccount, setShowNewAccount] = useState(false);
-  const [showNewChallenge, setShowNewChallenge] = useState(false);
   const [showImport, setShowImport] = useState(false);
+  const [showNewChallenge, setShowNewChallenge] = useState(false);
   const [selectedTrade, setSelectedTrade] = useState(null);
   const [editingTrade, setEditingTrade] = useState(null);
   const [filterAccount, setFilterAccount] = useState('all');
@@ -304,8 +323,7 @@ export default function TradingJournal() {
             riskReward: t.risk_reward, marketStructure: t.market_structure,
             candleType: t.candle_type, liquidityTaken: t.liquidity_taken || [],
             liquidityTarget: t.liquidity_target || [], notes: t.notes,
-            account: t.account, chartLink: t.chart_link, chartImage: t.chart_image,
-            challengeId: t.challenge_id || null
+            account: t.account, chartLink: t.chart_link, chartImage: t.chart_image
           })));
         }
         
@@ -317,15 +335,37 @@ export default function TradingJournal() {
           })));
         }
 
-        // Load challenges from localStorage (or could be Supabase table)
+        // Load challenges separately — table may not exist yet
         try {
-          const saved = localStorage.getItem('ellipse_challenges');
-          if (saved) setChallenges(JSON.parse(saved));
-        } catch {}
-
+          const challengesRes = await supabase.from('challenges').select('*').order('created_at', { ascending: false });
+          if (challengesRes.data) {
+            setChallenges(challengesRes.data.map(c => ({
+              id: c.id,
+              name: c.name || 'Untitled Challenge',
+              propFirm: c.prop_firm || 'Custom',
+              accountSize: parseFloat(c.account_size) || 100000,
+              currentPhase: c.current_phase || 0,
+              phases: (Array.isArray(c.phases) ? c.phases : []) .length > 0 ? c.phases : [{ name: 'Phase 1', profitTarget: 10, maxDailyDrawdown: 5, maxTotalDrawdown: 10, minTradingDays: 1, maxTradingDays: 30, drawdownType: 'balance' }],
+              account: c.account || '',
+              startDate: c.start_date,
+              status: c.status || 'active',
+              profitSplit: c.profit_split || 80,
+              drawdownType: c.drawdown_type || 'balance',
+              consistencyRule: c.consistency_rule,
+              notes: c.notes || ''
+            })));
+          }
+        } catch (challengeErr) {
+          console.warn('Challenges table not available, using localStorage:', challengeErr.message);
+          try {
+            const localChallenges = JSON.parse(localStorage.getItem('ellipse_challenges') || '[]');
+            setChallenges(localChallenges);
+          } catch {}
+        }
+        
         setSynced(true);
       } catch (err) {
-        console.error('Error loading data:', err);
+        console.error('Error loading trades/accounts:', err);
         setSynced(false);
       }
       setLoading(false);
@@ -333,9 +373,9 @@ export default function TradingJournal() {
     loadData();
   }, []);
 
-  // Save challenges to localStorage whenever they change
+  // Save challenges to localStorage as fallback
   useEffect(() => {
-    if (challenges.length > 0 || !loading) {
+    if (challenges.length > 0) {
       localStorage.setItem('ellipse_challenges', JSON.stringify(challenges));
     }
   }, [challenges]);
@@ -361,12 +401,12 @@ export default function TradingJournal() {
     const dbTrades = newTrades.map(trade => ({
       date: trade.date, time: trade.time, symbol: trade.symbol, side: trade.side,
       entry: trade.entry, exit_price: trade.exit, lots: trade.lots,
-      stop_loss: trade.stopLoss, take_profit: trade.takeProfit,
-      pnl: trade.pnl, commission: trade.commission, swap: trade.swap,
-      risk_reward: '-', market_structure: trade.marketStructure,
-      candle_type: trade.candleType, liquidity_taken: trade.liquidityTaken,
-      liquidity_target: trade.liquidityTarget, notes: trade.notes,
-      account: accountName, chart_link: trade.chartLink, chart_image: trade.chartImage
+      stop_loss: trade.stopLoss, take_profit: trade.takeProfit, pnl: trade.pnl,
+      commission: trade.commission, swap: trade.swap, risk_reward: '-',
+      market_structure: trade.marketStructure, candle_type: trade.candleType,
+      liquidity_taken: trade.liquidityTaken, liquidity_target: trade.liquidityTarget,
+      notes: trade.notes, account: accountName,
+      chart_link: trade.chartLink, chart_image: trade.chartImage
     }));
     const { data, error } = await supabase.from('trades').insert(dbTrades).select();
     if (error) { console.error('Error importing trades:', error); return 0; }
@@ -385,12 +425,12 @@ export default function TradingJournal() {
     const dbTrade = {
       date: trade.date, time: trade.time, symbol: trade.symbol, side: trade.side,
       entry: trade.entry, exit_price: trade.exit, lots: trade.lots,
-      stop_loss: trade.stopLoss, take_profit: trade.takeProfit,
-      pnl: trade.pnl, commission: trade.commission, swap: trade.swap,
-      risk_reward: trade.riskReward, market_structure: trade.marketStructure,
-      candle_type: trade.candleType, liquidity_taken: trade.liquidityTaken,
-      liquidity_target: trade.liquidityTarget, notes: trade.notes,
-      account: trade.account, chart_link: trade.chartLink, chart_image: trade.chartImage
+      stop_loss: trade.stopLoss, take_profit: trade.takeProfit, pnl: trade.pnl,
+      commission: trade.commission, swap: trade.swap, risk_reward: trade.riskReward,
+      market_structure: trade.marketStructure, candle_type: trade.candleType,
+      liquidity_taken: trade.liquidityTaken, liquidity_target: trade.liquidityTarget,
+      notes: trade.notes, account: trade.account,
+      chart_link: trade.chartLink, chart_image: trade.chartImage
     };
     const { error } = await supabase.from('trades').update(dbTrade).eq('id', trade.id);
     if (error) { console.error('Error updating trade:', error); return; }
@@ -400,8 +440,7 @@ export default function TradingJournal() {
   const addAccount = async (account) => {
     const { data, error } = await supabase.from('accounts').insert({
       name: account.name, platform: account.platform, broker: account.broker,
-      server: account.server, balance: account.balance, equity: account.equity,
-      connected: account.connected
+      server: account.server, balance: account.balance, equity: account.equity, connected: account.connected
     }).select().single();
     if (error) { console.error('Error adding account:', error); return; }
     setAccounts(prev => [...prev, { ...account, id: data.id }]);
@@ -422,16 +461,42 @@ export default function TradingJournal() {
   };
 
   // Challenge CRUD
-  const addChallenge = (challenge) => {
-    const newChallenge = { ...challenge, id: Date.now().toString(), createdAt: new Date().toISOString() };
-    setChallenges(prev => [...prev, newChallenge]);
+  const addChallenge = async (challenge) => {
+    try {
+      const dbChallenge = {
+        name: challenge.name, prop_firm: challenge.propFirm,
+        account_size: challenge.accountSize, current_phase: challenge.currentPhase,
+        phases: challenge.phases, account: challenge.account,
+        start_date: challenge.startDate, status: challenge.status,
+        profit_split: challenge.profitSplit, drawdown_type: challenge.drawdownType,
+        consistency_rule: challenge.consistencyRule, notes: challenge.notes
+      };
+      const { data, error } = await supabase.from('challenges').insert(dbChallenge).select().single();
+      if (!error && data) {
+        setChallenges(prev => [{ ...challenge, id: data.id }, ...prev]);
+        return;
+      }
+    } catch {}
+    // Fallback to local
+    const id = 'local_' + Date.now();
+    setChallenges(prev => [{ ...challenge, id }, ...prev]);
   };
 
-  const updateChallenge = (challenge) => {
+  const updateChallenge = async (challenge) => {
+    try {
+      const { error } = await supabase.from('challenges').update({
+        name: challenge.name, current_phase: challenge.currentPhase,
+        status: challenge.status, phases: challenge.phases, notes: challenge.notes
+      }).eq('id', challenge.id);
+      if (error) throw error;
+    } catch {}
     setChallenges(prev => prev.map(c => c.id === challenge.id ? challenge : c));
   };
 
-  const deleteChallenge = (id) => {
+  const deleteChallenge = async (id) => {
+    try {
+      await supabase.from('challenges').delete().eq('id', id);
+    } catch {}
     setChallenges(prev => prev.filter(c => c.id !== id));
   };
 
@@ -439,20 +504,12 @@ export default function TradingJournal() {
   const totalPnl = filteredTrades.reduce((sum, t) => sum + t.pnl, 0);
   const winningTrades = filteredTrades.filter(t => t.pnl > 0).length;
 
-  // Count active challenges for badge
-  const activeChallenges = challenges.filter(c => c.status === 'active').length;
-
   const theme = {
-    dark: darkMode,
-    bg: darkMode ? '#0a0a0a' : '#f8fafc',
-    card: darkMode ? '#111111' : '#ffffff',
-    cardBorder: darkMode ? '#1f1f1f' : '#e2e8f0',
-    text: darkMode ? '#f1f5f9' : '#0f172a',
-    textMuted: darkMode ? '#94a3b8' : '#64748b',
-    textFaint: darkMode ? '#64748b' : '#94a3b8',
-    inputBg: darkMode ? '#1a1a1a' : '#ffffff',
-    inputBorder: darkMode ? '#2a2a2a' : '#e2e8f0',
-    hoverBg: darkMode ? '#1a1a1a' : '#f1f5f9',
+    dark: darkMode, bg: darkMode ? '#0a0a0a' : '#f8fafc',
+    card: darkMode ? '#111111' : '#ffffff', cardBorder: darkMode ? '#1f1f1f' : '#e2e8f0',
+    text: darkMode ? '#f1f5f9' : '#0f172a', textMuted: darkMode ? '#94a3b8' : '#64748b',
+    textFaint: darkMode ? '#64748b' : '#94a3b8', inputBg: darkMode ? '#1a1a1a' : '#ffffff',
+    inputBorder: darkMode ? '#2a2a2a' : '#e2e8f0', hoverBg: darkMode ? '#1a1a1a' : '#f1f5f9',
   };
 
   return (
@@ -481,11 +538,10 @@ export default function TradingJournal() {
           .badge { font-size: 11px; font-weight: 600; padding: 4px 10px; border-radius: 6px; }
           .scrollbar::-webkit-scrollbar { width: 6px; }
           .scrollbar::-webkit-scrollbar-thumb { background: ${darkMode ? '#333' : '#ddd'}; border-radius: 3px; }
-          .progress-bar { height: 8px; border-radius: 4px; overflow: hidden; position: relative; }
-          .progress-fill { height: 100%; border-radius: 4px; transition: width 0.5s ease; }
           @keyframes spin { to { transform: rotate(360deg); } }
-          @keyframes pulse-danger { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
-          .pulse-danger { animation: pulse-danger 1.5s ease-in-out infinite; }
+          @keyframes pulse-warning { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+          .pulse-warn { animation: pulse-warning 1.5s ease-in-out infinite; }
+          .progress-bar-animate { transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1); }
         `}</style>
 
         <div className="flex h-screen">
@@ -507,16 +563,17 @@ export default function TradingJournal() {
             <nav style={{ flex: 1, padding: 12 }}>
               {[
                 { id: 'dashboard', label: 'Dashboard', icon: BarChart3 },
+                { id: 'challenges', label: 'Challenges', icon: Trophy },
                 { id: 'journal', label: 'Journal', icon: BookOpen },
-                { id: 'propfirm', label: 'Prop Firms', icon: Trophy, badge: activeChallenges },
                 { id: 'accounts', label: 'Accounts', icon: Wallet },
                 { id: 'calendar', label: 'Calendar', icon: Calendar },
               ].map(item => (
-                <div key={item.id} onClick={() => setActiveTab(item.id)} className={`nav-item ${activeTab === item.id ? 'active' : ''}`} style={{ position: 'relative' }}>
-                  <item.icon size={18} />
-                  {item.label}
-                  {item.badge > 0 && (
-                    <span style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 10, background: activeTab === item.id ? 'rgba(255,255,255,0.25)' : '#6366f1', color: 'white' }}>{item.badge}</span>
+                <div key={item.id} onClick={() => setActiveTab(item.id)} className={`nav-item ${activeTab === item.id ? 'active' : ''}`}>
+                  <item.icon size={18} />{item.label}
+                  {item.id === 'challenges' && challenges.filter(c => c.status === 'active').length > 0 && (
+                    <span style={{ marginLeft: 'auto', fontSize: 10, padding: '2px 7px', borderRadius: 10, background: activeTab === 'challenges' ? 'rgba(255,255,255,0.2)' : '#6366f1', color: 'white', fontWeight: 600 }}>
+                      {challenges.filter(c => c.status === 'active').length}
+                    </span>
                   )}
                 </div>
               ))}
@@ -527,6 +584,7 @@ export default function TradingJournal() {
                 {loading ? <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> : synced ? <Cloud size={14} /> : <CloudOff size={14} />}
                 {loading ? 'Syncing...' : synced ? 'Synced to cloud' : 'Offline'}
               </div>
+              
               <div className="card" style={{ padding: 16 }}>
                 <div className="stat-label">Today's P&L</div>
                 <div className="stat-value" style={{ color: totalPnl >= 0 ? '#10b981' : '#ef4444', marginTop: 4 }}>
@@ -547,15 +605,15 @@ export default function TradingJournal() {
                 <div>
                   <h1 style={{ fontSize: 18, fontWeight: 600, color: theme.text }}>
                     {activeTab === 'dashboard' && 'Dashboard'}
+                    {activeTab === 'challenges' && 'Prop Firm Challenges'}
                     {activeTab === 'journal' && 'Trading Journal'}
-                    {activeTab === 'propfirm' && 'Prop Firm Challenges'}
                     {activeTab === 'accounts' && 'Accounts'}
                     {activeTab === 'calendar' && 'Calendar'}
                   </h1>
                   <p style={{ fontSize: 13, color: theme.textMuted, marginTop: 2 }}>
                     {activeTab === 'dashboard' && 'Performance metrics and insights'}
+                    {activeTab === 'challenges' && 'Track challenge phases, drawdown limits & profit targets'}
                     {activeTab === 'journal' && 'Document and analyze your trades'}
-                    {activeTab === 'propfirm' && 'Track challenges, drawdowns & profit targets'}
                     {activeTab === 'accounts' && 'Manage trading accounts'}
                     {activeTab === 'calendar' && 'Visual trade history'}
                   </p>
@@ -564,6 +622,7 @@ export default function TradingJournal() {
                   <button onClick={() => setDarkMode(!darkMode)} style={{ padding: 10, borderRadius: 10, border: `1px solid ${theme.cardBorder}`, background: theme.card, cursor: 'pointer' }}>
                     {darkMode ? <Sun size={18} style={{ color: theme.textMuted }} /> : <Moon size={18} style={{ color: theme.textMuted }} />}
                   </button>
+                  
                   {activeTab === 'journal' && (
                     <>
                       <button onClick={() => setShowImport(true)} style={{ padding: 10, borderRadius: 10, border: `1px solid ${theme.cardBorder}`, background: theme.card, cursor: 'pointer' }} title="Import trades">
@@ -573,7 +632,7 @@ export default function TradingJournal() {
                     </>
                   )}
                   {activeTab === 'accounts' && <button onClick={() => setShowNewAccount(true)} className="btn-primary flex items-center gap-2"><Plus size={16} />Add Account</button>}
-                  {activeTab === 'propfirm' && <button onClick={() => setShowNewChallenge(true)} className="btn-primary flex items-center gap-2"><Plus size={16} />New Challenge</button>}
+                  {activeTab === 'challenges' && <button onClick={() => setShowNewChallenge(true)} className="btn-primary flex items-center gap-2"><Plus size={16} />New Challenge</button>}
                 </div>
               </div>
             </header>
@@ -585,9 +644,9 @@ export default function TradingJournal() {
                 </div>
               ) : (
                 <>
-                  {activeTab === 'dashboard' && <DashboardView trades={trades} accounts={accounts} selectedAccount={analyticsAccount} setSelectedAccount={setAnalyticsAccount} challenges={challenges} />}
+                  {activeTab === 'dashboard' && <DashboardView trades={trades} accounts={accounts} challenges={challenges} selectedAccount={analyticsAccount} setSelectedAccount={setAnalyticsAccount} />}
+                  {activeTab === 'challenges' && <ChallengesView challenges={challenges} trades={trades} accounts={accounts} onUpdate={updateChallenge} onDelete={deleteChallenge} />}
                   {activeTab === 'journal' && <JournalView trades={trades} accounts={accounts} filterAccount={filterAccount} setFilterAccount={setFilterAccount} onSelectTrade={setSelectedTrade} />}
-                  {activeTab === 'propfirm' && <PropFirmView challenges={challenges} trades={trades} accounts={accounts} onUpdate={updateChallenge} onDelete={deleteChallenge} onAddChallenge={() => setShowNewChallenge(true)} />}
                   {activeTab === 'accounts' && <AccountsView accounts={accounts} onUpdate={updateAccount} onDelete={deleteAccount} />}
                   {activeTab === 'calendar' && <CalendarView trades={trades} />}
                 </>
@@ -596,10 +655,10 @@ export default function TradingJournal() {
           </main>
         </div>
 
-        {showNewTrade && <NewTradeModal onClose={() => setShowNewTrade(false)} onSave={(trade) => { addTrade(trade); setShowNewTrade(false); }} accounts={accounts} challenges={challenges} />}
+        {showNewTrade && <NewTradeModal onClose={() => setShowNewTrade(false)} onSave={(trade) => { addTrade(trade); setShowNewTrade(false); }} accounts={accounts} />}
         {showNewAccount && <NewAccountModal onClose={() => setShowNewAccount(false)} onSave={(acc) => { addAccount(acc); setShowNewAccount(false); }} />}
-        {showNewChallenge && <NewChallengeModal onClose={() => setShowNewChallenge(false)} onSave={(ch) => { addChallenge(ch); setShowNewChallenge(false); }} accounts={accounts} />}
         {showImport && <ImportModal onClose={() => setShowImport(false)} onImport={importTrades} accounts={accounts} />}
+        {showNewChallenge && <NewChallengeModal onClose={() => setShowNewChallenge(false)} onSave={(ch) => { addChallenge(ch); setShowNewChallenge(false); }} accounts={accounts} />}
         {selectedTrade && <TradeDetailModal trade={selectedTrade} onClose={() => setSelectedTrade(null)} onDelete={(id) => { deleteTrade(id); setSelectedTrade(null); }} onEdit={(trade) => { setSelectedTrade(null); setEditingTrade(trade); }} />}
         {editingTrade && <EditTradeModal trade={editingTrade} onClose={() => setEditingTrade(null)} onSave={(trade) => { updateTrade(trade); setEditingTrade(null); }} accounts={accounts} />}
       </div>
@@ -607,350 +666,69 @@ export default function TradingJournal() {
   );
 }
 
-// ===== PROP FIRM VIEW =====
-function PropFirmView({ challenges, trades, accounts, onUpdate, onDelete, onAddChallenge }) {
+// ==================== CHALLENGES VIEW ====================
+function ChallengesView({ challenges, trades, accounts, onUpdate, onDelete }) {
   const theme = useTheme();
   const [selectedChallenge, setSelectedChallenge] = useState(null);
-  const [confirmDelete, setConfirmDelete] = useState(null);
+  const [deleteId, setDeleteId] = useState(null);
 
   const activeChallenges = challenges.filter(c => c.status === 'active');
   const completedChallenges = challenges.filter(c => c.status !== 'active');
 
-  const getChallengeStats = (challenge) => {
-    // Get trades linked to this challenge's account within the challenge date range
-    const challengeTrades = trades.filter(t => {
-      if (t.account !== challenge.account) return false;
-      if (challenge.startDate && t.date < challenge.startDate) return false;
-      if (challenge.endDate && t.date > challenge.endDate) return false;
-      return true;
-    }).sort((a, b) => new Date(a.date + ' ' + a.time) - new Date(b.date + ' ' + b.time));
-
-    const totalPnl = challengeTrades.reduce((s, t) => s + t.pnl, 0);
-    const profitTargetAmount = challenge.accountSize * (challenge.profitTarget / 100);
-    const profitProgress = challenge.profitTarget ? (totalPnl / profitTargetAmount) * 100 : 0;
-
-    // Daily P&L for drawdown calculation
-    const dailyPnl = {};
-    challengeTrades.forEach(t => {
-      if (!dailyPnl[t.date]) dailyPnl[t.date] = 0;
-      dailyPnl[t.date] += t.pnl;
-    });
-
-    const tradingDays = Object.keys(dailyPnl).length;
-    const dailyPnlValues = Object.values(dailyPnl);
-    const todayStr = new Date().toISOString().split('T')[0];
-    const todayPnl = dailyPnl[todayStr] || 0;
-
-    // Max daily loss (worst single day)
-    const worstDay = dailyPnlValues.length > 0 ? Math.min(...dailyPnlValues) : 0;
-    const maxDailyDrawdownAmount = challenge.accountSize * (challenge.maxDailyDrawdown / 100);
-    const dailyDrawdownUsed = todayPnl < 0 ? (Math.abs(todayPnl) / maxDailyDrawdownAmount) * 100 : 0;
-
-    // Total drawdown (cumulative low point)
-    let runningPnl = 0;
-    let maxDrawdown = 0;
-    const equityCurve = [];
-    Object.entries(dailyPnl).sort(([a], [b]) => a.localeCompare(b)).forEach(([date, pnl]) => {
-      runningPnl += pnl;
-      if (runningPnl < maxDrawdown) maxDrawdown = runningPnl;
-      equityCurve.push({ date: date.slice(5), equity: challenge.accountSize + runningPnl, pnl: runningPnl });
-    });
-
-    const maxTotalDrawdownAmount = challenge.accountSize * (challenge.maxTotalDrawdown / 100);
-    const totalDrawdownUsed = maxDrawdown < 0 ? (Math.abs(maxDrawdown) / maxTotalDrawdownAmount) * 100 : 0;
-
-    // Days remaining
-    let daysRemaining = null;
-    if (challenge.maxTradingDays && challenge.startDate) {
-      const start = new Date(challenge.startDate);
-      const end = new Date(start);
-      end.setDate(end.getDate() + challenge.maxTradingDays);
-      const today = new Date();
-      daysRemaining = Math.max(0, Math.ceil((end - today) / (1000 * 60 * 60 * 24)));
-    }
-
-    // Status alerts
-    const alerts = [];
-    if (dailyDrawdownUsed >= 80) alerts.push({ type: 'danger', message: `Daily drawdown at ${dailyDrawdownUsed.toFixed(0)}%` });
-    else if (dailyDrawdownUsed >= 60) alerts.push({ type: 'warning', message: `Daily drawdown at ${dailyDrawdownUsed.toFixed(0)}%` });
-    if (totalDrawdownUsed >= 80) alerts.push({ type: 'danger', message: `Total drawdown at ${totalDrawdownUsed.toFixed(0)}%` });
-    else if (totalDrawdownUsed >= 60) alerts.push({ type: 'warning', message: `Total drawdown at ${totalDrawdownUsed.toFixed(0)}%` });
-    if (daysRemaining !== null && daysRemaining <= 5) alerts.push({ type: 'warning', message: `${daysRemaining} days remaining` });
-
-    // Breach detection
-    const dailyBreached = todayPnl <= -maxDailyDrawdownAmount;
-    const totalBreached = totalPnl <= -maxTotalDrawdownAmount;
-
-    return {
-      challengeTrades, totalPnl, profitTargetAmount, profitProgress,
-      tradingDays, todayPnl, worstDay,
-      dailyDrawdownUsed, totalDrawdownUsed,
-      maxDailyDrawdownAmount, maxTotalDrawdownAmount,
-      daysRemaining, alerts, equityCurve,
-      dailyBreached, totalBreached,
-      dailyPnl
-    };
-  };
-
-  if (challenges.length === 0) {
-    return (
-      <div className="card-lg" style={{ padding: 60, textAlign: 'center' }}>
-        <Trophy size={48} style={{ color: theme.textFaint, margin: '0 auto 16px', opacity: 0.4 }} />
-        <p style={{ fontSize: 16, fontWeight: 500, color: theme.text, marginBottom: 4 }}>No challenges yet</p>
-        <p style={{ fontSize: 13, color: theme.textFaint, marginBottom: 20 }}>Start tracking your prop firm challenge to monitor drawdowns and profit targets</p>
-        <button onClick={onAddChallenge} className="btn-primary flex items-center gap-2" style={{ margin: '0 auto' }}><Plus size={16} />New Challenge</button>
-      </div>
-    );
-  }
-
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
       {/* Active Challenges */}
-      {activeChallenges.length > 0 && (
+      {activeChallenges.length === 0 && completedChallenges.length === 0 ? (
+        <div className="card-lg" style={{ padding: 60, textAlign: 'center' }}>
+          <Trophy size={44} style={{ color: theme.textFaint, margin: '0 auto 12px', opacity: 0.4 }} />
+          <p style={{ fontSize: 15, fontWeight: 500, color: theme.textMuted }}>No challenges yet</p>
+          <p style={{ fontSize: 13, color: theme.textFaint, marginTop: 4 }}>Click "New Challenge" to start tracking a prop firm evaluation</p>
+        </div>
+      ) : (
         <>
-          <div style={{ fontSize: 13, fontWeight: 600, color: theme.textMuted, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Active Challenges</div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(420px, 1fr))', gap: 16 }}>
-            {activeChallenges.map(challenge => {
-              const stats = getChallengeStats(challenge);
-              const preset = PROP_FIRM_PRESETS[challenge.preset] || PROP_FIRM_PRESETS.CUSTOM;
-              const firmColor = challenge.firmColor || preset.color;
-
-              return (
-                <div key={challenge.id} className="card-lg" style={{ overflow: 'hidden' }}>
-                  {/* Header */}
-                  <div style={{ padding: '16px 20px', borderBottom: `1px solid ${theme.cardBorder}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <div className="flex items-center gap-3">
-                      <div style={{ width: 40, height: 40, borderRadius: 10, background: `${firmColor}15`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                        <Trophy size={20} style={{ color: firmColor }} />
-                      </div>
-                      <div>
-                        <div style={{ fontSize: 15, fontWeight: 600, color: theme.text }}>{challenge.name}</div>
-                        <div style={{ fontSize: 12, color: theme.textFaint }}>{challenge.firmName} · ${challenge.accountSize?.toLocaleString()} · {challenge.phaseName}</div>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      {stats.alerts.map((alert, i) => (
-                        <div key={i} className={alert.type === 'danger' ? 'pulse-danger' : ''} style={{ padding: '4px 10px', borderRadius: 6, fontSize: 11, fontWeight: 600, background: alert.type === 'danger' ? 'rgba(239,68,68,0.15)' : 'rgba(245,158,11,0.15)', color: alert.type === 'danger' ? '#ef4444' : '#f59e0b' }}>
-                          {alert.message}
-                        </div>
-                      ))}
-                      <button onClick={() => setSelectedChallenge(selectedChallenge === challenge.id ? null : challenge.id)} style={{ padding: 6, borderRadius: 6, border: 'none', background: theme.hoverBg, cursor: 'pointer' }}>
-                        <ChevronDown size={16} style={{ color: theme.textMuted, transform: selectedChallenge === challenge.id ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }} />
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Stats Grid */}
-                  <div style={{ padding: 20 }}>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 20 }}>
-                      <div style={{ textAlign: 'center' }}>
-                        <div className="stat-label">Net P&L</div>
-                        <div style={{ fontSize: 18, fontWeight: 700, color: stats.totalPnl >= 0 ? '#10b981' : '#ef4444', marginTop: 4 }}>
-                          {stats.totalPnl >= 0 ? '+' : ''}${stats.totalPnl.toFixed(2)}
-                        </div>
-                      </div>
-                      <div style={{ textAlign: 'center' }}>
-                        <div className="stat-label">Today</div>
-                        <div style={{ fontSize: 18, fontWeight: 700, color: stats.todayPnl >= 0 ? '#10b981' : '#ef4444', marginTop: 4 }}>
-                          {stats.todayPnl >= 0 ? '+' : ''}${stats.todayPnl.toFixed(2)}
-                        </div>
-                      </div>
-                      <div style={{ textAlign: 'center' }}>
-                        <div className="stat-label">Trade Days</div>
-                        <div style={{ fontSize: 18, fontWeight: 700, color: theme.text, marginTop: 4 }}>
-                          {stats.tradingDays}{challenge.minTradingDays > 0 ? `/${challenge.minTradingDays}` : ''}
-                        </div>
-                      </div>
-                      <div style={{ textAlign: 'center' }}>
-                        <div className="stat-label">Days Left</div>
-                        <div style={{ fontSize: 18, fontWeight: 700, color: stats.daysRemaining !== null && stats.daysRemaining <= 5 ? '#f59e0b' : theme.text, marginTop: 4 }}>
-                          {stats.daysRemaining !== null ? stats.daysRemaining : '∞'}
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Profit Target Progress */}
-                    {challenge.profitTarget && (
-                      <div style={{ marginBottom: 16 }}>
-                        <div className="flex justify-between items-center" style={{ marginBottom: 6 }}>
-                          <span style={{ fontSize: 12, fontWeight: 500, color: theme.textMuted }}>Profit Target ({challenge.profitTarget}%)</span>
-                          <span style={{ fontSize: 12, fontWeight: 600, color: stats.profitProgress >= 100 ? '#10b981' : theme.text }}>
-                            ${stats.totalPnl.toFixed(2)} / ${stats.profitTargetAmount.toFixed(2)}
-                          </span>
-                        </div>
-                        <div className="progress-bar" style={{ background: theme.hoverBg }}>
-                          <div className="progress-fill" style={{ width: `${Math.min(Math.max(stats.profitProgress, 0), 100)}%`, background: stats.profitProgress >= 100 ? '#10b981' : `linear-gradient(90deg, ${firmColor}, ${firmColor}cc)` }} />
-                        </div>
-                        <div style={{ fontSize: 11, color: theme.textFaint, marginTop: 4, textAlign: 'right' }}>
-                          {stats.profitProgress.toFixed(1)}% complete
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Drawdown Meters */}
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                      {/* Daily Drawdown */}
-                      <div style={{ padding: 14, borderRadius: 10, background: stats.dailyBreached ? 'rgba(239,68,68,0.1)' : theme.hoverBg, border: stats.dailyDrawdownUsed >= 80 ? '1px solid rgba(239,68,68,0.3)' : 'none' }}>
-                        <div className="flex items-center gap-2" style={{ marginBottom: 8 }}>
-                          <Shield size={14} style={{ color: stats.dailyDrawdownUsed >= 80 ? '#ef4444' : stats.dailyDrawdownUsed >= 60 ? '#f59e0b' : '#10b981' }} />
-                          <span style={{ fontSize: 12, fontWeight: 500, color: theme.textMuted }}>Daily Drawdown</span>
-                        </div>
-                        <div className="flex justify-between items-center" style={{ marginBottom: 6 }}>
-                          <span style={{ fontSize: 16, fontWeight: 700, color: stats.todayPnl < 0 ? '#ef4444' : '#10b981' }}>
-                            ${Math.abs(stats.todayPnl).toFixed(2)}
-                          </span>
-                          <span style={{ fontSize: 12, color: theme.textFaint }}>
-                            / ${stats.maxDailyDrawdownAmount.toFixed(2)}
-                          </span>
-                        </div>
-                        <div className="progress-bar" style={{ background: darkMode ? '#1f1f1f' : '#e2e8f0' }}>
-                          <div className="progress-fill" style={{
-                            width: `${Math.min(stats.dailyDrawdownUsed, 100)}%`,
-                            background: stats.dailyDrawdownUsed >= 80 ? '#ef4444' : stats.dailyDrawdownUsed >= 60 ? '#f59e0b' : '#10b981'
-                          }} />
-                        </div>
-                        {stats.dailyBreached && <div style={{ fontSize: 11, color: '#ef4444', fontWeight: 600, marginTop: 4 }}>BREACHED</div>}
-                      </div>
-
-                      {/* Total Drawdown */}
-                      <div style={{ padding: 14, borderRadius: 10, background: stats.totalBreached ? 'rgba(239,68,68,0.1)' : theme.hoverBg, border: stats.totalDrawdownUsed >= 80 ? '1px solid rgba(239,68,68,0.3)' : 'none' }}>
-                        <div className="flex items-center gap-2" style={{ marginBottom: 8 }}>
-                          <Activity size={14} style={{ color: stats.totalDrawdownUsed >= 80 ? '#ef4444' : stats.totalDrawdownUsed >= 60 ? '#f59e0b' : '#10b981' }} />
-                          <span style={{ fontSize: 12, fontWeight: 500, color: theme.textMuted }}>Max Drawdown</span>
-                        </div>
-                        <div className="flex justify-between items-center" style={{ marginBottom: 6 }}>
-                          <span style={{ fontSize: 16, fontWeight: 700, color: stats.totalPnl < 0 ? '#ef4444' : '#10b981' }}>
-                            {stats.totalDrawdownUsed.toFixed(1)}%
-                          </span>
-                          <span style={{ fontSize: 12, color: theme.textFaint }}>
-                            / {challenge.maxTotalDrawdown}%
-                          </span>
-                        </div>
-                        <div className="progress-bar" style={{ background: darkMode ? '#1f1f1f' : '#e2e8f0' }}>
-                          <div className="progress-fill" style={{
-                            width: `${Math.min(stats.totalDrawdownUsed, 100)}%`,
-                            background: stats.totalDrawdownUsed >= 80 ? '#ef4444' : stats.totalDrawdownUsed >= 60 ? '#f59e0b' : '#10b981'
-                          }} />
-                        </div>
-                        {stats.totalBreached && <div style={{ fontSize: 11, color: '#ef4444', fontWeight: 600, marginTop: 4 }}>BREACHED</div>}
-                      </div>
-                    </div>
-
-                    {/* Expanded Details */}
-                    {selectedChallenge === challenge.id && (
-                      <div style={{ marginTop: 16, paddingTop: 16, borderTop: `1px solid ${theme.cardBorder}` }}>
-                        {/* Equity Curve */}
-                        {stats.equityCurve.length > 0 && (
-                          <div style={{ marginBottom: 16 }}>
-                            <div className="stat-label" style={{ marginBottom: 8 }}>Equity Curve</div>
-                            <div style={{ height: 140 }}>
-                              <ResponsiveContainer width="100%" height="100%">
-                                <AreaChart data={stats.equityCurve}>
-                                  <defs>
-                                    <linearGradient id={`eq-${challenge.id}`} x1="0" y1="0" x2="0" y2="1">
-                                      <stop offset="0%" stopColor={firmColor} stopOpacity={0.3} />
-                                      <stop offset="100%" stopColor={firmColor} stopOpacity={0} />
-                                    </linearGradient>
-                                  </defs>
-                                  <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: theme.textFaint }} />
-                                  <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: theme.textFaint }} tickFormatter={v => `$${(v/1000).toFixed(1)}k`} />
-                                  <Tooltip contentStyle={{ background: theme.card, border: `1px solid ${theme.cardBorder}`, borderRadius: 8, fontSize: 12 }} formatter={(v) => [`$${v.toLocaleString()}`, 'Equity']} />
-                                  <Area type="monotone" dataKey="equity" stroke={firmColor} fill={`url(#eq-${challenge.id})`} strokeWidth={2} />
-                                </AreaChart>
-                              </ResponsiveContainer>
-                            </div>
-                          </div>
-                        )}
-
-                        {/* Daily P&L Breakdown */}
-                        <div style={{ marginBottom: 16 }}>
-                          <div className="stat-label" style={{ marginBottom: 8 }}>Daily P&L</div>
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 160, overflow: 'auto' }} className="scrollbar">
-                            {Object.entries(stats.dailyPnl).sort(([a], [b]) => b.localeCompare(a)).map(([date, pnl]) => (
-                              <div key={date} className="flex justify-between items-center" style={{ padding: '8px 12px', borderRadius: 6, background: theme.hoverBg }}>
-                                <span style={{ fontSize: 12, color: theme.textMuted }}>{date}</span>
-                                <span style={{ fontSize: 13, fontWeight: 600, color: pnl >= 0 ? '#10b981' : '#ef4444' }}>{pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}</span>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-
-                        {/* Challenge Rules */}
-                        <div style={{ padding: 14, borderRadius: 10, background: theme.hoverBg }}>
-                          <div className="stat-label" style={{ marginBottom: 8 }}>Rules</div>
-                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, fontSize: 12 }}>
-                            {challenge.profitTarget && <div><span style={{ color: theme.textFaint }}>Profit Target:</span> <span style={{ color: theme.text, fontWeight: 500 }}>{challenge.profitTarget}%</span></div>}
-                            <div><span style={{ color: theme.textFaint }}>Daily DD:</span> <span style={{ color: theme.text, fontWeight: 500 }}>{challenge.maxDailyDrawdown}%</span></div>
-                            <div><span style={{ color: theme.textFaint }}>Max DD:</span> <span style={{ color: theme.text, fontWeight: 500 }}>{challenge.maxTotalDrawdown}%</span></div>
-                            <div><span style={{ color: theme.textFaint }}>DD Type:</span> <span style={{ color: theme.text, fontWeight: 500 }}>{challenge.drawdownType}</span></div>
-                            {challenge.minTradingDays > 0 && <div><span style={{ color: theme.textFaint }}>Min Days:</span> <span style={{ color: theme.text, fontWeight: 500 }}>{challenge.minTradingDays}</span></div>}
-                            {challenge.maxTradingDays && <div><span style={{ color: theme.textFaint }}>Max Days:</span> <span style={{ color: theme.text, fontWeight: 500 }}>{challenge.maxTradingDays}</span></div>}
-                          </div>
-                        </div>
-
-                        {/* Actions */}
-                        <div className="flex gap-2" style={{ marginTop: 12 }}>
-                          <button onClick={() => onUpdate({ ...challenge, status: 'passed' })} style={{ flex: 1, padding: 10, borderRadius: 8, border: 'none', background: 'rgba(16,185,129,0.1)', color: '#10b981', fontSize: 13, fontWeight: 500, cursor: 'pointer' }}>
-                            Mark Passed
-                          </button>
-                          <button onClick={() => onUpdate({ ...challenge, status: 'failed' })} style={{ flex: 1, padding: 10, borderRadius: 8, border: 'none', background: 'rgba(239,68,68,0.1)', color: '#ef4444', fontSize: 13, fontWeight: 500, cursor: 'pointer' }}>
-                            Mark Failed
-                          </button>
-                          <button onClick={() => setConfirmDelete(challenge.id)} style={{ padding: 10, borderRadius: 8, border: 'none', background: theme.hoverBg, cursor: 'pointer' }}>
-                            <Trash2 size={16} style={{ color: theme.textFaint }} />
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </>
-      )}
-
-      {/* Completed/Failed Challenges */}
-      {completedChallenges.length > 0 && (
-        <>
-          <div style={{ fontSize: 13, fontWeight: 600, color: theme.textMuted, textTransform: 'uppercase', letterSpacing: '0.5px', marginTop: 8 }}>Completed</div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {completedChallenges.map(challenge => (
-              <div key={challenge.id} className="card" style={{ padding: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center', opacity: 0.7 }}>
-                <div className="flex items-center gap-3">
-                  <div style={{ width: 36, height: 36, borderRadius: 8, background: challenge.status === 'passed' ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    {challenge.status === 'passed' ? <CheckCircle size={18} style={{ color: '#10b981' }} /> : <X size={18} style={{ color: '#ef4444' }} />}
-                  </div>
-                  <div>
-                    <div style={{ fontSize: 14, fontWeight: 500, color: theme.text }}>{challenge.name}</div>
-                    <div style={{ fontSize: 12, color: theme.textFaint }}>{challenge.firmName} · ${challenge.accountSize?.toLocaleString()} · {challenge.phaseName}</div>
-                  </div>
-                </div>
-                <div className="flex items-center gap-3">
-                  <span className="badge" style={{ background: challenge.status === 'passed' ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)', color: challenge.status === 'passed' ? '#10b981' : '#ef4444' }}>
-                    {challenge.status === 'passed' ? 'Passed' : 'Failed'}
-                  </span>
-                  <button onClick={() => { onUpdate({ ...challenge, status: 'active' }); }} style={{ padding: 6, borderRadius: 6, border: 'none', background: theme.hoverBg, cursor: 'pointer', fontSize: 11, color: theme.textMuted }}>
-                    Reactivate
-                  </button>
-                  <button onClick={() => onDelete(challenge.id)} style={{ padding: 6, borderRadius: 6, border: 'none', background: 'transparent', cursor: 'pointer' }}>
-                    <Trash2 size={14} style={{ color: theme.textFaint }} />
-                  </button>
-                </div>
+          {activeChallenges.length > 0 && (
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 600, color: theme.textMuted, textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 12 }}>Active Challenges</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                {activeChallenges.map(challenge => (
+                  <ChallengeCard key={challenge.id} challenge={challenge} trades={trades} onSelect={() => setSelectedChallenge(challenge)} onUpdate={onUpdate} onDelete={() => setDeleteId(challenge.id)} />
+                ))}
               </div>
-            ))}
-          </div>
+            </div>
+          )}
+
+          {completedChallenges.length > 0 && (
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 600, color: theme.textMuted, textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 12 }}>Completed / Failed</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                {completedChallenges.map(challenge => (
+                  <ChallengeCard key={challenge.id} challenge={challenge} trades={trades} onSelect={() => setSelectedChallenge(challenge)} onUpdate={onUpdate} onDelete={() => setDeleteId(challenge.id)} compact />
+                ))}
+              </div>
+            </div>
+          )}
         </>
       )}
 
-      {confirmDelete && (
-        <Modal onClose={() => setConfirmDelete(null)}>
+      {/* Challenge Detail Modal */}
+      {selectedChallenge && (
+        <ChallengeDetailModal
+          challenge={selectedChallenge}
+          trades={trades}
+          onClose={() => setSelectedChallenge(null)}
+          onUpdate={(updated) => { onUpdate(updated); setSelectedChallenge(updated); }}
+        />
+      )}
+
+      {/* Delete Confirmation */}
+      {deleteId && (
+        <Modal onClose={() => setDeleteId(null)}>
           <div style={{ padding: 24 }}>
             <h3 style={{ fontSize: 16, fontWeight: 600, color: theme.text, marginBottom: 8 }}>Delete Challenge?</h3>
-            <p style={{ fontSize: 14, color: theme.textMuted, marginBottom: 20 }}>This will permanently remove this challenge. Your trades will not be affected.</p>
+            <p style={{ fontSize: 14, color: theme.textMuted, marginBottom: 20 }}>This will remove the challenge tracking. Your trades won't be affected.</p>
             <div className="flex gap-3">
-              <button onClick={() => setConfirmDelete(null)} className="input" style={{ flex: 1, textAlign: 'center', cursor: 'pointer' }}>Cancel</button>
-              <button onClick={() => { onDelete(confirmDelete); setConfirmDelete(null); }} className="btn-primary" style={{ flex: 1, background: '#ef4444' }}>Delete</button>
+              <button onClick={() => setDeleteId(null)} className="input" style={{ flex: 1, textAlign: 'center', cursor: 'pointer' }}>Cancel</button>
+              <button onClick={() => { onDelete(deleteId); setDeleteId(null); }} className="btn-primary" style={{ flex: 1, background: '#ef4444' }}>Delete</button>
             </div>
           </div>
         </Modal>
@@ -959,177 +737,598 @@ function PropFirmView({ challenges, trades, accounts, onUpdate, onDelete, onAddC
   );
 }
 
-// ===== NEW CHALLENGE MODAL =====
-function NewChallengeModal({ onClose, onSave, accounts }) {
+// ==================== CHALLENGE CARD ====================
+function ChallengeCard({ challenge, trades, onSelect, onUpdate, onDelete, compact }) {
   const theme = useTheme();
-  const [preset, setPreset] = useState('FTMO');
-  const [phaseIndex, setPhaseIndex] = useState(0);
-  const [challenge, setChallenge] = useState({
-    name: '', firmName: 'FTMO', firmColor: '#0ea5e9',
-    account: accounts[0]?.name || '',
-    accountSize: 100000,
-    phaseName: 'FTMO Challenge',
-    profitTarget: 10, maxDailyDrawdown: 5, maxTotalDrawdown: 10,
-    drawdownType: 'balance',
-    minTradingDays: 4, maxTradingDays: 30,
-    startDate: new Date().toISOString().split('T')[0],
-    endDate: '',
-    status: 'active',
-    preset: 'FTMO'
+
+  // Calculate challenge metrics
+  const accountTrades = trades.filter(t => t.account === challenge.account);
+  const challengeTrades = accountTrades.filter(t => {
+    if (!challenge.startDate) return true;
+    return t.date >= challenge.startDate;
   });
 
-  const applyPreset = (presetKey, phaseIdx = 0) => {
-    const p = PROP_FIRM_PRESETS[presetKey];
-    if (!p) return;
-    const phase = p.phases[phaseIdx];
-    setPreset(presetKey);
-    setPhaseIndex(phaseIdx);
+  const phase = challenge.phases?.[challenge.currentPhase] || challenge.phases?.[0] || {};
+  const accountSize = challenge.accountSize || 1; // prevent division by zero
+  const totalPnl = challengeTrades.reduce((s, t) => s + (parseFloat(t.pnl) || 0), 0);
+  const profitPct = (totalPnl / accountSize) * 100;
+  const profitTargetPct = phase.profitTarget ?? 10;
+  const profitProgress = profitTargetPct ? Math.min((profitPct / profitTargetPct) * 100, 100) : 0;
+
+  // Daily drawdown calculation
+  const today = new Date().toISOString().split('T')[0];
+  const todayTrades = challengeTrades.filter(t => t.date === today);
+  const todayPnl = todayTrades.reduce((s, t) => s + t.pnl, 0);
+  const dailyDrawdownPct = accountSize > 0 ? Math.abs(Math.min(todayPnl, 0)) / accountSize * 100 : 0;
+  const maxDailyDD = phase.maxDailyDrawdown || 5;
+  const dailyDDUsed = maxDailyDD > 0 ? (dailyDrawdownPct / maxDailyDD) * 100 : 0;
+
+  // Max total drawdown
+  let lowestEquity = accountSize;
+  let runningPnl = 0;
+  const sortedTrades = [...challengeTrades].sort((a, b) => new Date(a.date + ' ' + a.time) - new Date(b.date + ' ' + b.time));
+  sortedTrades.forEach(t => {
+    runningPnl += t.pnl;
+    const equity = accountSize + runningPnl;
+    if (equity < lowestEquity) lowestEquity = equity;
+  });
+  const maxDrawdownPct = accountSize > 0 ? ((accountSize - lowestEquity) / accountSize) * 100 : 0;
+  const maxTotalDD = phase.maxTotalDrawdown || 10;
+  const totalDDUsed = maxTotalDD > 0 ? (maxDrawdownPct / maxTotalDD) * 100 : 0;
+
+  // Trading days
+  const tradingDays = new Set(challengeTrades.map(t => t.date)).size;
+  const minTradingDays = phase?.minTradingDays || 0;
+
+  // Drawdown danger levels
+  const isDailyDanger = dailyDDUsed >= 70;
+  const isTotalDanger = totalDDUsed >= 70;
+  const isDailyCritical = dailyDDUsed >= 90;
+  const isTotalCritical = totalDDUsed >= 90;
+
+  const statusColors = {
+    active: { bg: 'rgba(99,102,241,0.1)', text: '#6366f1', label: 'Active' },
+    passed: { bg: 'rgba(16,185,129,0.1)', text: '#10b981', label: 'Passed' },
+    failed: { bg: 'rgba(239,68,68,0.1)', text: '#ef4444', label: 'Failed' },
+    funded: { bg: 'rgba(245,158,11,0.1)', text: '#f59e0b', label: 'Funded' }
+  };
+  const statusStyle = statusColors[challenge.status] || statusColors.active;
+
+  if (compact) {
+    return (
+      <div onClick={onSelect} className="card" style={{ padding: 16, cursor: 'pointer', transition: 'transform 0.15s' }} onMouseEnter={e => e.currentTarget.style.transform = 'translateY(-1px)'} onMouseLeave={e => e.currentTarget.style.transform = 'none'}>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div style={{ width: 36, height: 36, borderRadius: 8, background: statusStyle.bg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              {challenge.status === 'passed' ? <CheckCircle size={18} style={{ color: statusStyle.text }} /> :
+               challenge.status === 'funded' ? <Trophy size={18} style={{ color: statusStyle.text }} /> :
+               <X size={18} style={{ color: statusStyle.text }} />}
+            </div>
+            <div>
+              <div style={{ fontSize: 14, fontWeight: 500, color: theme.text }}>{challenge.name}</div>
+              <div style={{ fontSize: 12, color: theme.textFaint }}>{challenge.propFirm} · ${(challenge.accountSize || 0).toLocaleString()}</div>
+            </div>
+          </div>
+          <div className="flex items-center gap-3">
+            <span className="badge" style={{ background: statusStyle.bg, color: statusStyle.text }}>{statusStyle.label}</span>
+            <span style={{ fontSize: 14, fontWeight: 600, color: totalPnl >= 0 ? '#10b981' : '#ef4444' }}>{totalPnl >= 0 ? '+' : ''}${totalPnl.toFixed(2)}</span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="card-lg" style={{ overflow: 'hidden' }}>
+      {/* Header */}
+      <div style={{ padding: '18px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: `1px solid ${theme.cardBorder}` }}>
+        <div className="flex items-center gap-3">
+          <div style={{ width: 42, height: 42, borderRadius: 10, background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <Shield size={20} style={{ color: 'white' }} />
+          </div>
+          <div>
+            <div style={{ fontSize: 15, fontWeight: 600, color: theme.text }}>{challenge.name}</div>
+            <div style={{ fontSize: 12, color: theme.textFaint }}>
+              {challenge.propFirm} · ${(challenge.accountSize || 0).toLocaleString()} · {phase?.name || 'Phase 1'}
+            </div>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          {(isDailyCritical || isTotalCritical) && (
+            <div className="pulse-warn" style={{ padding: '6px 12px', borderRadius: 8, background: 'rgba(239,68,68,0.15)', display: 'flex', alignItems: 'center', gap: 6 }}>
+              <AlertTriangle size={14} style={{ color: '#ef4444' }} />
+              <span style={{ fontSize: 12, fontWeight: 600, color: '#ef4444' }}>DRAWDOWN WARNING</span>
+            </div>
+          )}
+          <span className="badge" style={{ background: statusStyle.bg, color: statusStyle.text, padding: '6px 12px' }}>{statusStyle.label}</span>
+          <button onClick={(e) => { e.stopPropagation(); onDelete(); }} style={{ padding: 6, borderRadius: 6, background: 'none', border: 'none', cursor: 'pointer' }}>
+            <Trash2 size={15} style={{ color: theme.textFaint }} />
+          </button>
+        </div>
+      </div>
+
+      {/* Metrics Grid */}
+      <div style={{ padding: 20 }} onClick={onSelect}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 20, cursor: 'pointer' }}>
+          {/* Current P&L */}
+          <div style={{ padding: 14, borderRadius: 10, background: theme.hoverBg }}>
+            <div className="stat-label">Current P&L</div>
+            <div style={{ fontSize: 20, fontWeight: 700, color: totalPnl >= 0 ? '#10b981' : '#ef4444', marginTop: 4 }}>
+              {totalPnl >= 0 ? '+' : ''}${totalPnl.toFixed(2)}
+            </div>
+            <div style={{ fontSize: 11, color: theme.textFaint, marginTop: 2 }}>
+              {profitPct >= 0 ? '+' : ''}{profitPct.toFixed(2)}%
+            </div>
+          </div>
+
+          {/* Profit Target */}
+          <div style={{ padding: 14, borderRadius: 10, background: theme.hoverBg }}>
+            <div className="stat-label">Profit Target</div>
+            <div style={{ fontSize: 20, fontWeight: 700, color: theme.text, marginTop: 4 }}>
+              {profitTargetPct ? `${profitTargetPct}%` : '—'}
+            </div>
+            <div style={{ fontSize: 11, color: theme.textFaint, marginTop: 2 }}>
+              ${profitTargetPct ? ((profitTargetPct / 100) * accountSize).toFixed(0) : '—'} target
+            </div>
+          </div>
+
+          {/* Trading Days */}
+          <div style={{ padding: 14, borderRadius: 10, background: theme.hoverBg }}>
+            <div className="stat-label">Trading Days</div>
+            <div style={{ fontSize: 20, fontWeight: 700, color: tradingDays >= minTradingDays ? '#10b981' : theme.text, marginTop: 4 }}>
+              {tradingDays}
+            </div>
+            <div style={{ fontSize: 11, color: theme.textFaint, marginTop: 2 }}>
+              {minTradingDays > 0 ? `Min: ${minTradingDays} days` : 'No minimum'}
+            </div>
+          </div>
+
+          {/* Today's P&L */}
+          <div style={{ padding: 14, borderRadius: 10, background: theme.hoverBg }}>
+            <div className="stat-label">Today's P&L</div>
+            <div style={{ fontSize: 20, fontWeight: 700, color: todayPnl >= 0 ? '#10b981' : '#ef4444', marginTop: 4 }}>
+              {todayPnl >= 0 ? '+' : ''}${todayPnl.toFixed(2)}
+            </div>
+            <div style={{ fontSize: 11, color: theme.textFaint, marginTop: 2 }}>
+              {todayTrades.length} trade{todayTrades.length !== 1 ? 's' : ''} today
+            </div>
+          </div>
+        </div>
+
+        {/* Progress Bars */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          {/* Profit Progress */}
+          {profitTargetPct && (
+            <div>
+              <div className="flex justify-between items-center" style={{ marginBottom: 6 }}>
+                <span style={{ fontSize: 12, fontWeight: 500, color: theme.textMuted }}>Profit Progress</span>
+                <span style={{ fontSize: 12, fontWeight: 600, color: profitPct >= profitTargetPct ? '#10b981' : theme.text }}>
+                  {profitPct.toFixed(2)}% / {profitTargetPct}%
+                </span>
+              </div>
+              <div style={{ height: 8, borderRadius: 4, background: theme.hoverBg, overflow: 'hidden' }}>
+                <div className="progress-bar-animate" style={{ height: '100%', borderRadius: 4, width: `${Math.max(profitProgress, 0)}%`, background: profitPct >= profitTargetPct ? 'linear-gradient(90deg, #10b981, #34d399)' : 'linear-gradient(90deg, #6366f1, #8b5cf6)' }} />
+              </div>
+            </div>
+          )}
+
+          {/* Daily Drawdown */}
+          <div>
+            <div className="flex justify-between items-center" style={{ marginBottom: 6 }}>
+              <span style={{ fontSize: 12, fontWeight: 500, color: isDailyDanger ? '#ef4444' : theme.textMuted }}>
+                Daily Drawdown {isDailyCritical && '⚠️'}
+              </span>
+              <span style={{ fontSize: 12, fontWeight: 600, color: isDailyDanger ? '#ef4444' : theme.text }}>
+                {dailyDrawdownPct.toFixed(2)}% / {maxDailyDD}%
+              </span>
+            </div>
+            <div style={{ height: 8, borderRadius: 4, background: theme.hoverBg, overflow: 'hidden' }}>
+              <div className="progress-bar-animate" style={{ height: '100%', borderRadius: 4, width: `${Math.min(dailyDDUsed, 100)}%`, background: isDailyCritical ? '#ef4444' : isDailyDanger ? 'linear-gradient(90deg, #f59e0b, #ef4444)' : 'linear-gradient(90deg, #10b981, #34d399)' }} />
+            </div>
+          </div>
+
+          {/* Max Drawdown */}
+          <div>
+            <div className="flex justify-between items-center" style={{ marginBottom: 6 }}>
+              <span style={{ fontSize: 12, fontWeight: 500, color: isTotalDanger ? '#ef4444' : theme.textMuted }}>
+                Max Drawdown {isTotalCritical && '⚠️'}
+              </span>
+              <span style={{ fontSize: 12, fontWeight: 600, color: isTotalDanger ? '#ef4444' : theme.text }}>
+                {maxDrawdownPct.toFixed(2)}% / {maxTotalDD}%
+              </span>
+            </div>
+            <div style={{ height: 8, borderRadius: 4, background: theme.hoverBg, overflow: 'hidden' }}>
+              <div className="progress-bar-animate" style={{ height: '100%', borderRadius: 4, width: `${Math.min(totalDDUsed, 100)}%`, background: isTotalCritical ? '#ef4444' : isTotalDanger ? 'linear-gradient(90deg, #f59e0b, #ef4444)' : 'linear-gradient(90deg, #10b981, #34d399)' }} />
+            </div>
+          </div>
+        </div>
+
+        {/* Quick Action Hint */}
+        <div style={{ marginTop: 16, textAlign: 'center', fontSize: 12, color: theme.textFaint, cursor: 'pointer' }}>
+          Click for detailed breakdown →
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ==================== CHALLENGE DETAIL MODAL ====================
+function ChallengeDetailModal({ challenge, trades, onClose, onUpdate }) {
+  const theme = useTheme();
+
+  const accountTrades = trades.filter(t => t.account === challenge.account);
+  const challengeTrades = accountTrades.filter(t => !challenge.startDate || t.date >= challenge.startDate);
+  const phase = challenge.phases?.[challenge.currentPhase] || challenge.phases?.[0] || {};
+  const accountSize = challenge.accountSize || 1;
+
+  // Detailed daily breakdown
+  const dailyData = {};
+  const sortedTrades = [...challengeTrades].sort((a, b) => new Date(a.date) - new Date(b.date));
+  sortedTrades.forEach(t => {
+    if (!dailyData[t.date]) dailyData[t.date] = { pnl: 0, trades: 0, wins: 0 };
+    dailyData[t.date].pnl += (parseFloat(t.pnl) || 0);
+    dailyData[t.date].trades++;
+    if (t.pnl > 0) dailyData[t.date].wins++;
+  });
+
+  const dailyEntries = Object.entries(dailyData).sort(([a], [b]) => a.localeCompare(b));
+  let cumPnl = 0;
+  const equityCurve = dailyEntries.map(([date, data]) => {
+    cumPnl += data.pnl;
+    return { date: date.slice(5), pnl: cumPnl, daily: data.pnl, equity: accountSize + cumPnl };
+  });
+
+  const totalPnl = challengeTrades.reduce((s, t) => s + (parseFloat(t.pnl) || 0), 0);
+  const profitPct = accountSize > 0 ? (totalPnl / accountSize) * 100 : 0;
+  const tradingDays = Object.keys(dailyData).length;
+  const worstDay = dailyEntries.length > 0 ? Math.min(...dailyEntries.map(([, d]) => d.pnl)) : 0;
+  const bestDay = dailyEntries.length > 0 ? Math.max(...dailyEntries.map(([, d]) => d.pnl)) : 0;
+  const avgDailyPnl = tradingDays > 0 ? totalPnl / tradingDays : 0;
+
+  // Max drawdown from peak
+  let peak = accountSize;
+  let maxDD = 0;
+  let running = accountSize;
+  sortedTrades.forEach(t => {
+    running += (parseFloat(t.pnl) || 0);
+    if (running > peak) peak = running;
+    const dd = peak > 0 ? ((peak - running) / peak) * 100 : 0;
+    if (dd > maxDD) maxDD = dd;
+  });
+
+  // Consistency check - max daily profit shouldn't exceed certain % of total
+  const maxDailyProfit = dailyEntries.length > 0 ? Math.max(...dailyEntries.map(([, d]) => d.pnl)) : 0;
+  const consistencyPct = totalPnl > 0 ? (maxDailyProfit / totalPnl) * 100 : 0;
+
+  const handlePhaseAdvance = () => {
+    if (challenge.currentPhase < challenge.phases.length - 1) {
+      onUpdate({ ...challenge, currentPhase: challenge.currentPhase + 1 });
+    } else {
+      onUpdate({ ...challenge, status: 'funded' });
+    }
+  };
+
+  const handleMarkPassed = () => onUpdate({ ...challenge, status: 'passed' });
+  const handleMarkFailed = () => onUpdate({ ...challenge, status: 'failed' });
+
+  return (
+    <Modal width={700} onClose={onClose}>
+      <div style={{ padding: 20, borderBottom: `1px solid ${theme.cardBorder}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div>
+          <h3 style={{ fontSize: 16, fontWeight: 600, color: theme.text }}>{challenge.name}</h3>
+          <p style={{ fontSize: 12, color: theme.textFaint }}>{challenge.propFirm} · {phase?.name} · ${accountSize.toLocaleString()}</p>
+        </div>
+        <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4 }}><X size={20} style={{ color: theme.textFaint }} /></button>
+      </div>
+
+      <div style={{ padding: 20, maxHeight: '70vh', overflow: 'auto' }} className="scrollbar">
+        {/* Summary Stats */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 20 }}>
+          <div style={{ padding: 14, borderRadius: 10, background: theme.hoverBg, textAlign: 'center' }}>
+            <div className="stat-label">Net P&L</div>
+            <div style={{ fontSize: 22, fontWeight: 700, color: totalPnl >= 0 ? '#10b981' : '#ef4444', marginTop: 4 }}>
+              {totalPnl >= 0 ? '+' : ''}${totalPnl.toFixed(2)}
+            </div>
+            <div style={{ fontSize: 11, color: theme.textFaint }}>{profitPct.toFixed(2)}%</div>
+          </div>
+          <div style={{ padding: 14, borderRadius: 10, background: theme.hoverBg, textAlign: 'center' }}>
+            <div className="stat-label">Max Drawdown</div>
+            <div style={{ fontSize: 22, fontWeight: 700, color: maxDD >= (phase?.maxTotalDrawdown || 10) * 0.7 ? '#ef4444' : theme.text, marginTop: 4 }}>
+              {maxDD.toFixed(2)}%
+            </div>
+            <div style={{ fontSize: 11, color: theme.textFaint }}>Limit: {phase?.maxTotalDrawdown || 10}%</div>
+          </div>
+          <div style={{ padding: 14, borderRadius: 10, background: theme.hoverBg, textAlign: 'center' }}>
+            <div className="stat-label">Trading Days</div>
+            <div style={{ fontSize: 22, fontWeight: 700, color: theme.text, marginTop: 4 }}>{tradingDays}</div>
+            <div style={{ fontSize: 11, color: theme.textFaint }}>Min: {phase?.minTradingDays || 0}</div>
+          </div>
+        </div>
+
+        {/* Additional Stats */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, marginBottom: 20 }}>
+          {[
+            { label: 'Best Day', value: `+$${bestDay.toFixed(2)}`, color: '#10b981' },
+            { label: 'Worst Day', value: `$${worstDay.toFixed(2)}`, color: '#ef4444' },
+            { label: 'Avg Daily', value: `$${avgDailyPnl.toFixed(2)}`, color: avgDailyPnl >= 0 ? '#10b981' : '#ef4444' },
+            { label: 'Consistency', value: `${consistencyPct.toFixed(0)}%`, color: consistencyPct <= 40 ? '#10b981' : '#f59e0b' }
+          ].map(stat => (
+            <div key={stat.label} style={{ padding: 12, borderRadius: 8, background: theme.hoverBg }}>
+              <div className="stat-label">{stat.label}</div>
+              <div style={{ fontSize: 15, fontWeight: 600, color: stat.color, marginTop: 4 }}>{stat.value}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Equity Curve */}
+        {equityCurve.length > 0 && (
+          <div style={{ marginBottom: 20 }}>
+            <div className="stat-label" style={{ marginBottom: 10 }}>Equity Curve</div>
+            <div style={{ height: 180, borderRadius: 10, background: theme.hoverBg, padding: '12px 8px' }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={equityCurve}>
+                  <defs>
+                    <linearGradient id="eqGreen" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#10b981" stopOpacity={0.3} />
+                      <stop offset="100%" stopColor="#10b981" stopOpacity={0} />
+                    </linearGradient>
+                    <linearGradient id="eqRed" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#ef4444" stopOpacity={0.3} />
+                      <stop offset="100%" stopColor="#ef4444" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: theme.textFaint }} />
+                  <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: theme.textFaint }} tickFormatter={v => `$${v.toLocaleString()}`} domain={['dataMin - 100', 'dataMax + 100']} />
+                  <Tooltip contentStyle={{ background: theme.card, border: `1px solid ${theme.cardBorder}`, borderRadius: 8, fontSize: 12 }} formatter={(v) => [`$${v.toLocaleString()}`, 'Equity']} />
+                  <Area type="monotone" dataKey="equity" stroke={totalPnl >= 0 ? '#10b981' : '#ef4444'} fill={totalPnl >= 0 ? 'url(#eqGreen)' : 'url(#eqRed)'} strokeWidth={2} />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        )}
+
+        {/* Daily Breakdown */}
+        {dailyEntries.length > 0 && (
+          <div>
+            <div className="stat-label" style={{ marginBottom: 10 }}>Daily Breakdown</div>
+            <div style={{ borderRadius: 10, border: `1px solid ${theme.cardBorder}`, overflow: 'hidden' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 80px 80px 80px', gap: 8, padding: '10px 14px', background: theme.hoverBg }}>
+                <span style={{ fontSize: 11, fontWeight: 600, color: theme.textMuted }}>DATE</span>
+                <span style={{ fontSize: 11, fontWeight: 600, color: theme.textMuted, textAlign: 'right' }}>TRADES</span>
+                <span style={{ fontSize: 11, fontWeight: 600, color: theme.textMuted, textAlign: 'right' }}>DAILY P&L</span>
+                <span style={{ fontSize: 11, fontWeight: 600, color: theme.textMuted, textAlign: 'right' }}>CUMULATIVE</span>
+              </div>
+              {(() => {
+                let cum = 0;
+                return dailyEntries.map(([date, data]) => {
+                  cum += data.pnl;
+                  const ddPct = (Math.abs(Math.min(data.pnl, 0)) / accountSize * 100);
+                  const isDDAlert = ddPct >= (phase?.maxDailyDrawdown || 5) * 0.7;
+                  return (
+                    <div key={date} style={{ display: 'grid', gridTemplateColumns: '1fr 80px 80px 80px', gap: 8, padding: '10px 14px', borderTop: `1px solid ${theme.cardBorder}`, background: isDDAlert ? 'rgba(239,68,68,0.05)' : 'transparent' }}>
+                      <span style={{ fontSize: 13, color: theme.text }}>{date} {isDDAlert && <AlertTriangle size={12} style={{ color: '#ef4444', verticalAlign: 'middle', marginLeft: 4 }} />}</span>
+                      <span style={{ fontSize: 13, color: theme.textMuted, textAlign: 'right' }}>{data.trades}</span>
+                      <span style={{ fontSize: 13, fontWeight: 600, color: data.pnl >= 0 ? '#10b981' : '#ef4444', textAlign: 'right' }}>
+                        {data.pnl >= 0 ? '+' : ''}${data.pnl.toFixed(2)}
+                      </span>
+                      <span style={{ fontSize: 13, fontWeight: 500, color: cum >= 0 ? '#10b981' : '#ef4444', textAlign: 'right' }}>
+                        {cum >= 0 ? '+' : ''}${cum.toFixed(2)}
+                      </span>
+                    </div>
+                  );
+                });
+              })()}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Footer Actions */}
+      {challenge.status === 'active' && (
+        <div style={{ padding: 20, borderTop: `1px solid ${theme.cardBorder}`, display: 'flex', justifyContent: 'space-between' }}>
+          <button onClick={handleMarkFailed} style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'none', border: 'none', fontSize: 14, color: '#ef4444', cursor: 'pointer' }}>
+            <X size={16} />Mark Failed
+          </button>
+          <div className="flex gap-2">
+            {challenge.currentPhase < challenge.phases.length - 1 ? (
+              <button onClick={handlePhaseAdvance} className="btn-primary" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <Flag size={16} />Advance to {challenge.phases[challenge.currentPhase + 1]?.name || 'Next Phase'}
+              </button>
+            ) : (
+              <button onClick={handleMarkPassed} className="btn-primary" style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'linear-gradient(135deg, #10b981, #34d399)' }}>
+                <Trophy size={16} />Mark as Passed
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+// ==================== NEW CHALLENGE MODAL ====================
+function NewChallengeModal({ onClose, onSave, accounts }) {
+  const theme = useTheme();
+  const [step, setStep] = useState(1);
+  const [selectedPreset, setSelectedPreset] = useState('FTMO');
+  const [challenge, setChallenge] = useState({
+    name: '', propFirm: 'FTMO', accountSize: 100000,
+    currentPhase: 0, phases: PROP_FIRM_PRESETS.FTMO.phases,
+    account: accounts[0]?.name || '', startDate: new Date().toISOString().split('T')[0],
+    status: 'active', profitSplit: 80, drawdownType: 'balance',
+    consistencyRule: null, notes: ''
+  });
+
+  const handlePresetChange = (preset) => {
+    setSelectedPreset(preset);
+    const config = PROP_FIRM_PRESETS[preset];
     setChallenge(prev => ({
       ...prev,
-      firmName: p.name, firmColor: p.color,
-      phaseName: phase.name,
-      profitTarget: phase.profitTarget || 0,
-      maxDailyDrawdown: phase.maxDailyDrawdown,
-      maxTotalDrawdown: phase.maxTotalDrawdown,
-      drawdownType: phase.drawdownType,
-      minTradingDays: phase.minTradingDays,
-      maxTradingDays: phase.maxTradingDays || 0,
-      preset: presetKey
+      propFirm: config.name,
+      phases: JSON.parse(JSON.stringify(config.phases)),
+      profitSplit: config.profitSplit,
+      consistencyRule: config.consistencyRule
     }));
   };
 
-  useEffect(() => { applyPreset('FTMO', 0); }, []);
+  const updatePhase = (idx, field, value) => {
+    setChallenge(prev => {
+      const phases = [...prev.phases];
+      phases[idx] = { ...phases[idx], [field]: value };
+      return { ...prev, phases };
+    });
+  };
 
-  const currentPreset = PROP_FIRM_PRESETS[preset];
+  const handleSave = () => {
+    if (!challenge.name) {
+      setChallenge(prev => ({ ...prev, name: `${challenge.propFirm} ${challenge.accountSize / 1000}K Challenge` }));
+    }
+    onSave({
+      ...challenge,
+      name: challenge.name || `${challenge.propFirm} ${challenge.accountSize / 1000}K Challenge`
+    });
+  };
 
   return (
-    <Modal width={520} onClose={onClose}>
+    <Modal width={560} onClose={onClose}>
       <div style={{ padding: 20, borderBottom: `1px solid ${theme.cardBorder}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div>
           <h3 style={{ fontSize: 16, fontWeight: 600, color: theme.text }}>New Challenge</h3>
-          <p style={{ fontSize: 12, color: theme.textFaint }}>Set up your prop firm challenge tracking</p>
+          <p style={{ fontSize: 12, color: theme.textFaint }}>Step {step} of 2 — {step === 1 ? 'Prop Firm & Account' : 'Rules & Limits'}</p>
         </div>
-        <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer' }}><X size={20} style={{ color: theme.textFaint }} /></button>
+        <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4 }}><X size={20} style={{ color: theme.textFaint }} /></button>
       </div>
 
-      <div style={{ padding: 20, maxHeight: '65vh', overflow: 'auto', display: 'flex', flexDirection: 'column', gap: 16 }} className="scrollbar">
-        {/* Firm Preset */}
-        <div>
-          <label className="label">Prop Firm</label>
-          <div className="flex gap-2">
-            {Object.entries(PROP_FIRM_PRESETS).map(([key, p]) => (
-              <button key={key} onClick={() => applyPreset(key, 0)} style={{
-                flex: 1, padding: 12, borderRadius: 10, fontSize: 13, fontWeight: 500,
-                border: `1px solid ${preset === key ? p.color : theme.cardBorder}`,
-                background: preset === key ? `${p.color}15` : 'transparent',
-                color: preset === key ? p.color : theme.textMuted, cursor: 'pointer'
-              }}>
-                {p.name}
-              </button>
+      <div style={{ padding: 20, maxHeight: '60vh', overflow: 'auto' }} className="scrollbar">
+        {step === 1 && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            {/* Prop Firm Preset */}
+            <div>
+              <label className="label">Prop Firm</label>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
+                {Object.entries(PROP_FIRM_PRESETS).map(([key, config]) => (
+                  <button key={key} onClick={() => handlePresetChange(key)} style={{
+                    padding: 14, borderRadius: 10, border: `1px solid ${selectedPreset === key ? '#6366f1' : theme.cardBorder}`,
+                    background: selectedPreset === key ? 'rgba(99,102,241,0.1)' : 'transparent', cursor: 'pointer', textAlign: 'center'
+                  }}>
+                    <div style={{ fontSize: 14, fontWeight: 500, color: selectedPreset === key ? '#6366f1' : theme.text }}>{config.name}</div>
+                    <div style={{ fontSize: 11, color: theme.textFaint, marginTop: 2 }}>{config.phases.length} phases</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <label className="label">Challenge Name</label>
+              <input value={challenge.name} onChange={(e) => setChallenge({ ...challenge, name: e.target.value })} placeholder={`${challenge.propFirm} 100K Challenge`} className="input" />
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+              <div>
+                <label className="label">Account Size ($)</label>
+                <select value={challenge.accountSize} onChange={(e) => setChallenge({ ...challenge, accountSize: parseInt(e.target.value) })} className="input">
+                  {[5000, 10000, 25000, 50000, 100000, 200000, 300000, 400000].map(size => (
+                    <option key={size} value={size}>${size.toLocaleString()}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="label">Linked Account</label>
+                <select value={challenge.account} onChange={(e) => setChallenge({ ...challenge, account: e.target.value })} className="input">
+                  {accounts.length === 0 ? <option>No accounts</option> : accounts.map(a => <option key={a.id} value={a.name}>{a.name}</option>)}
+                </select>
+              </div>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+              <div>
+                <label className="label">Start Date</label>
+                <input type="date" value={challenge.startDate} onChange={(e) => setChallenge({ ...challenge, startDate: e.target.value })} className="input" />
+              </div>
+              <div>
+                <label className="label">Profit Split (%)</label>
+                <input type="number" value={challenge.profitSplit} onChange={(e) => setChallenge({ ...challenge, profitSplit: parseInt(e.target.value) || 80 })} className="input" />
+              </div>
+            </div>
+          </div>
+        )}
+
+        {step === 2 && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            <div style={{ fontSize: 13, color: theme.textMuted, padding: 12, borderRadius: 8, background: theme.hoverBg }}>
+              Configure the rules for each phase. These determine your drawdown limits and profit targets.
+            </div>
+
+            {challenge.phases.map((phase, idx) => (
+              <div key={idx} style={{ padding: 16, borderRadius: 10, border: `1px solid ${theme.cardBorder}` }}>
+                <div className="flex items-center gap-2" style={{ marginBottom: 12 }}>
+                  <div style={{ width: 24, height: 24, borderRadius: 6, background: 'linear-gradient(135deg, #6366f1, #8b5cf6)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 600, color: 'white' }}>{idx + 1}</div>
+                  <input value={phase.name} onChange={(e) => updatePhase(idx, 'name', e.target.value)} className="input input-sm" style={{ fontWeight: 500 }} />
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 10 }}>
+                  <div>
+                    <label className="label">Profit Target (%)</label>
+                    <input type="number" step="0.5" value={phase.profitTarget || ''} onChange={(e) => updatePhase(idx, 'profitTarget', parseFloat(e.target.value) || null)} placeholder="None" className="input input-sm" />
+                  </div>
+                  <div>
+                    <label className="label">Max Daily DD (%)</label>
+                    <input type="number" step="0.5" value={phase.maxDailyDrawdown} onChange={(e) => updatePhase(idx, 'maxDailyDrawdown', parseFloat(e.target.value) || 5)} className="input input-sm" />
+                  </div>
+                  <div>
+                    <label className="label">Max Total DD (%)</label>
+                    <input type="number" step="0.5" value={phase.maxTotalDrawdown} onChange={(e) => updatePhase(idx, 'maxTotalDrawdown', parseFloat(e.target.value) || 10)} className="input input-sm" />
+                  </div>
+                  <div>
+                    <label className="label">Min Trading Days</label>
+                    <input type="number" value={phase.minTradingDays} onChange={(e) => updatePhase(idx, 'minTradingDays', parseInt(e.target.value) || 0)} className="input input-sm" />
+                  </div>
+                  <div>
+                    <label className="label">Max Calendar Days</label>
+                    <input type="number" value={phase.maxTradingDays || ''} onChange={(e) => updatePhase(idx, 'maxTradingDays', parseInt(e.target.value) || null)} placeholder="Unlimited" className="input input-sm" />
+                  </div>
+                  <div>
+                    <label className="label">DD Type</label>
+                    <select value={phase.drawdownType || 'balance'} onChange={(e) => updatePhase(idx, 'drawdownType', e.target.value)} className="input input-sm">
+                      <option value="balance">Balance-based</option>
+                      <option value="equity">Equity-based</option>
+                      <option value="trailing">Trailing</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
             ))}
-          </div>
-        </div>
 
-        {/* Phase Selection */}
-        <div>
-          <label className="label">Phase</label>
-          <div className="flex gap-2">
-            {currentPreset.phases.map((phase, i) => (
-              <button key={i} onClick={() => applyPreset(preset, i)} style={{
-                flex: 1, padding: 10, borderRadius: 8, fontSize: 12, fontWeight: 500,
-                border: `1px solid ${phaseIndex === i ? '#6366f1' : theme.cardBorder}`,
-                background: phaseIndex === i ? 'rgba(99,102,241,0.1)' : 'transparent',
-                color: phaseIndex === i ? '#6366f1' : theme.textMuted, cursor: 'pointer'
-              }}>
-                {phase.name}
+            {/* Add/Remove Phase */}
+            <div className="flex gap-2">
+              <button onClick={() => setChallenge(prev => ({
+                ...prev, phases: [...prev.phases, { name: `Phase ${prev.phases.length + 1}`, profitTarget: 5, maxDailyDrawdown: 5, maxTotalDrawdown: 10, minTradingDays: 1, maxTradingDays: 30, drawdownType: 'balance' }]
+              }))} style={{ flex: 1, padding: 10, borderRadius: 8, border: `1px dashed ${theme.cardBorder}`, background: 'none', cursor: 'pointer', fontSize: 13, color: theme.textMuted }}>
+                + Add Phase
               </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Challenge Name */}
-        <div>
-          <label className="label">Challenge Name</label>
-          <input value={challenge.name} onChange={(e) => setChallenge({...challenge, name: e.target.value})} placeholder="My FTMO Challenge" className="input" />
-        </div>
-
-        {/* Account & Size */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-          <div>
-            <label className="label">Linked Account</label>
-            <select value={challenge.account} onChange={(e) => setChallenge({...challenge, account: e.target.value})} className="input">
-              <option value="">None (manual)</option>
-              {accounts.map(a => <option key={a.id} value={a.name}>{a.name}</option>)}
-            </select>
-          </div>
-          <div>
-            <label className="label">Account Size ($)</label>
-            <select value={challenge.accountSize} onChange={(e) => setChallenge({...challenge, accountSize: parseInt(e.target.value)})} className="input">
-              {(currentPreset.accountSizes || [5000, 10000, 25000, 50000, 100000, 200000]).map(s => (
-                <option key={s} value={s}>${s.toLocaleString()}</option>
-              ))}
-            </select>
-          </div>
-        </div>
-
-        {/* Start Date */}
-        <div>
-          <label className="label">Start Date</label>
-          <input type="date" value={challenge.startDate} onChange={(e) => setChallenge({...challenge, startDate: e.target.value})} className="input" />
-        </div>
-
-        {/* Rules (editable for Custom) */}
-        <div style={{ padding: 16, borderRadius: 10, background: theme.hoverBg }}>
-          <div className="flex items-center gap-2" style={{ marginBottom: 12 }}>
-            <Settings size={14} style={{ color: theme.textMuted }} />
-            <span style={{ fontSize: 12, fontWeight: 500, color: theme.textMuted }}>Challenge Rules</span>
-            {preset !== 'CUSTOM' && <span style={{ fontSize: 10, color: theme.textFaint, marginLeft: 'auto' }}>Auto-filled from {currentPreset.name}</span>}
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 12 }}>
-            <div>
-              <label className="label">Profit Target (%)</label>
-              <input type="number" step="0.5" value={challenge.profitTarget} onChange={(e) => setChallenge({...challenge, profitTarget: parseFloat(e.target.value) || 0})} className="input input-sm" />
-            </div>
-            <div>
-              <label className="label">Daily Drawdown (%)</label>
-              <input type="number" step="0.5" value={challenge.maxDailyDrawdown} onChange={(e) => setChallenge({...challenge, maxDailyDrawdown: parseFloat(e.target.value) || 0})} className="input input-sm" />
-            </div>
-            <div>
-              <label className="label">Max Drawdown (%)</label>
-              <input type="number" step="0.5" value={challenge.maxTotalDrawdown} onChange={(e) => setChallenge({...challenge, maxTotalDrawdown: parseFloat(e.target.value) || 0})} className="input input-sm" />
-            </div>
-            <div>
-              <label className="label">Drawdown Type</label>
-              <select value={challenge.drawdownType} onChange={(e) => setChallenge({...challenge, drawdownType: e.target.value})} className="input input-sm">
-                <option value="balance">Balance-based</option>
-                <option value="equity">Equity-based</option>
-                <option value="trailing">Trailing</option>
-              </select>
-            </div>
-            <div>
-              <label className="label">Min Trading Days</label>
-              <input type="number" value={challenge.minTradingDays} onChange={(e) => setChallenge({...challenge, minTradingDays: parseInt(e.target.value) || 0})} className="input input-sm" />
-            </div>
-            <div>
-              <label className="label">Max Calendar Days</label>
-              <input type="number" value={challenge.maxTradingDays} onChange={(e) => setChallenge({...challenge, maxTradingDays: parseInt(e.target.value) || 0})} className="input input-sm" placeholder="0 = unlimited" />
+              {challenge.phases.length > 1 && (
+                <button onClick={() => setChallenge(prev => ({ ...prev, phases: prev.phases.slice(0, -1) }))} style={{ padding: 10, borderRadius: 8, border: `1px dashed ${theme.cardBorder}`, background: 'none', cursor: 'pointer', fontSize: 13, color: '#ef4444' }}>
+                  Remove Last
+                </button>
+              )}
             </div>
           </div>
-        </div>
+        )}
       </div>
 
-      <div style={{ padding: 20, borderTop: `1px solid ${theme.cardBorder}`, display: 'flex', justifyContent: 'flex-end', gap: 12 }}>
-        <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: 14, color: theme.textMuted, cursor: 'pointer' }}>Cancel</button>
-        <button onClick={() => onSave({
-          ...challenge,
-          name: challenge.name || `${challenge.firmName} ${challenge.phaseName}`
-        })} className="btn-primary">Create Challenge</button>
+      <div style={{ padding: 20, borderTop: `1px solid ${theme.cardBorder}`, display: 'flex', justifyContent: 'space-between' }}>
+        <button onClick={() => step > 1 ? setStep(step - 1) : onClose()} style={{ background: 'none', border: 'none', fontSize: 14, color: theme.textMuted, cursor: 'pointer' }}>
+          {step > 1 ? 'Back' : 'Cancel'}
+        </button>
+        <button onClick={() => step < 2 ? setStep(step + 1) : handleSave()} className="btn-primary">
+          {step < 2 ? 'Configure Rules →' : 'Create Challenge'}
+        </button>
       </div>
     </Modal>
   );
 }
 
-// ===== EXISTING COMPONENTS (kept intact with minor enhancements) =====
+// ==================== REST OF COMPONENTS (unchanged logic, integrated) ====================
 
 function ImportModal({ onClose, onImport, accounts }) {
   const theme = useTheme();
@@ -1152,46 +1351,87 @@ function ImportModal({ onClose, onImport, accounts }) {
       else if (file.name.endsWith('.html') || file.name.endsWith('.htm')) trades = platform === 'MT5' ? parseMT5Statement(text) : parseCTraderStatement(text);
       else if (text.includes('<html') || text.includes('<table')) trades = platform === 'MT5' ? parseMT5Statement(text) : parseCTraderStatement(text);
       else trades = parseCSV(text, platform);
-      if (trades.length === 0) setError('No trades found in file.');
+      if (trades.length === 0) setError('No trades found. Check the statement format.');
       else setParsedTrades(trades);
-    } catch (err) { setError('Failed to parse file: ' + err.message); }
+    } catch (err) { setError('Failed to parse: ' + err.message); }
   };
 
   const handleImport = async () => {
-    if (parsedTrades.length === 0 || !account) return;
+    if (!parsedTrades.length || !account) return;
     setImporting(true); setError('');
     try {
       const count = await onImport(parsedTrades, account);
-      setSuccess(`Successfully imported ${count} trades!`);
+      setSuccess(`Imported ${count} trades!`);
       setParsedTrades([]);
-      setTimeout(() => onClose(), 1500);
-    } catch (err) { setError('Failed to import: ' + err.message); }
+      setTimeout(onClose, 1500);
+    } catch (err) { setError('Import failed: ' + err.message); }
     setImporting(false);
   };
 
   return (
     <Modal width={600} onClose={onClose}>
       <div style={{ padding: 20, borderBottom: `1px solid ${theme.cardBorder}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <div><h3 style={{ fontSize: 16, fontWeight: 600, color: theme.text }}>Import Trades</h3><p style={{ fontSize: 12, color: theme.textFaint }}>Import from MT5 or cTrader statement</p></div>
+        <div>
+          <h3 style={{ fontSize: 16, fontWeight: 600, color: theme.text }}>Import Trades</h3>
+          <p style={{ fontSize: 12, color: theme.textFaint }}>Import from MT5 or cTrader statement</p>
+        </div>
         <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4 }}><X size={20} style={{ color: theme.textFaint }} /></button>
       </div>
       <div style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 16 }}>
-        <div><label className="label">Platform</label><div className="flex gap-2">{['MT5', 'cTrader'].map(p => (<button key={p} onClick={() => setPlatform(p)} style={{ flex: 1, padding: 12, borderRadius: 10, fontSize: 14, fontWeight: 500, border: `1px solid ${platform === p ? '#6366f1' : theme.cardBorder}`, background: platform === p ? 'rgba(99,102,241,0.1)' : 'transparent', color: platform === p ? '#6366f1' : theme.textMuted, cursor: 'pointer' }}>{p}</button>))}</div></div>
-        <div><label className="label">Import to Account</label><select value={account} onChange={(e) => setAccount(e.target.value)} className="input">{accounts.length === 0 ? <option>No accounts - create one first</option> : accounts.map(a => <option key={a.id} value={a.name}>{a.name}</option>)}</select></div>
-        <div><label className="label">Statement File</label><input type="file" ref={fileInputRef} onChange={handleFileSelect} accept=".html,.htm,.csv" style={{ display: 'none' }} /><button onClick={() => fileInputRef.current?.click()} style={{ width: '100%', padding: 24, borderRadius: 10, border: `2px dashed ${theme.cardBorder}`, background: 'transparent', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}><FileText size={32} style={{ color: theme.textMuted }} /><span style={{ fontSize: 14, color: theme.text }}>Click to select file</span><span style={{ fontSize: 12, color: theme.textFaint }}>HTML or CSV statement from {platform}</span></button></div>
-        <div style={{ padding: 14, borderRadius: 10, background: theme.hoverBg }}><div style={{ fontSize: 12, fontWeight: 500, color: theme.textMuted, marginBottom: 8 }}>How to export:</div>{platform === 'MT5' ? (<ol style={{ fontSize: 12, color: theme.textFaint, paddingLeft: 16, margin: 0 }}><li>Open MT5 → History tab</li><li>Right-click → Select period</li><li>Right-click → Report → HTML</li><li>Upload the HTML file here</li></ol>) : (<ol style={{ fontSize: 12, color: theme.textFaint, paddingLeft: 16, margin: 0 }}><li>Open cTrader → History</li><li>Set your date range</li><li>Click Export → HTML or CSV</li><li>Upload the file here</li></ol>)}</div>
+        <div>
+          <label className="label">Platform</label>
+          <div className="flex gap-2">
+            {['MT5', 'cTrader'].map(p => (
+              <button key={p} onClick={() => setPlatform(p)} style={{ flex: 1, padding: 12, borderRadius: 10, fontSize: 14, fontWeight: 500, border: `1px solid ${platform === p ? '#6366f1' : theme.cardBorder}`, background: platform === p ? 'rgba(99,102,241,0.1)' : 'transparent', color: platform === p ? '#6366f1' : theme.textMuted, cursor: 'pointer' }}>{p}</button>
+            ))}
+          </div>
+        </div>
+        <div>
+          <label className="label">Import to Account</label>
+          <select value={account} onChange={(e) => setAccount(e.target.value)} className="input">
+            {accounts.length === 0 ? <option>No accounts - create one first</option> : accounts.map(a => <option key={a.id} value={a.name}>{a.name}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="label">Statement File</label>
+          <input type="file" ref={fileInputRef} onChange={handleFileSelect} accept=".html,.htm,.csv" style={{ display: 'none' }} />
+          <button onClick={() => fileInputRef.current?.click()} style={{ width: '100%', padding: 24, borderRadius: 10, border: `2px dashed ${theme.cardBorder}`, background: 'transparent', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
+            <FileText size={32} style={{ color: theme.textMuted }} />
+            <span style={{ fontSize: 14, color: theme.text }}>Click to select file</span>
+            <span style={{ fontSize: 12, color: theme.textFaint }}>HTML or CSV from {platform}</span>
+          </button>
+        </div>
         {error && <div style={{ padding: 12, borderRadius: 10, background: 'rgba(239,68,68,0.1)', display: 'flex', alignItems: 'center', gap: 8 }}><AlertCircle size={16} style={{ color: '#ef4444' }} /><span style={{ fontSize: 13, color: '#ef4444' }}>{error}</span></div>}
         {success && <div style={{ padding: 12, borderRadius: 10, background: 'rgba(16,185,129,0.1)', display: 'flex', alignItems: 'center', gap: 8 }}><CheckCircle size={16} style={{ color: '#10b981' }} /><span style={{ fontSize: 13, color: '#10b981' }}>{success}</span></div>}
         {parsedTrades.length > 0 && (
           <div style={{ borderRadius: 10, border: `1px solid ${theme.cardBorder}`, overflow: 'hidden' }}>
-            <div style={{ padding: 12, background: theme.hoverBg, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}><span style={{ fontSize: 13, fontWeight: 500, color: theme.text }}>Preview ({parsedTrades.length} trades)</span><span style={{ fontSize: 12, color: parsedTrades.reduce((s, t) => s + t.pnl, 0) >= 0 ? '#10b981' : '#ef4444' }}>Total P&L: ${parsedTrades.reduce((s, t) => s + t.pnl, 0).toFixed(2)}</span></div>
-            <div style={{ maxHeight: 200, overflow: 'auto' }} className="scrollbar">{parsedTrades.slice(0, 10).map((t, i) => (<div key={i} style={{ padding: 10, borderBottom: `1px solid ${theme.cardBorder}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 12 }}><div className="flex items-center gap-3"><span style={{ fontWeight: 600, color: theme.text }}>{t.symbol}</span><span style={{ color: t.side === 'Long' ? '#10b981' : '#ef4444' }}>{t.side}</span><span style={{ color: theme.textFaint }}>{t.lots} lots</span></div><div className="flex items-center gap-3"><span style={{ color: theme.textFaint }}>{t.date}</span><span style={{ fontWeight: 600, color: t.pnl >= 0 ? '#10b981' : '#ef4444' }}>{t.pnl >= 0 ? '+' : ''}${t.pnl.toFixed(2)}</span></div></div>))}{parsedTrades.length > 10 && <div style={{ padding: 10, textAlign: 'center', fontSize: 12, color: theme.textFaint }}>... and {parsedTrades.length - 10} more trades</div>}</div>
+            <div style={{ padding: 12, background: theme.hoverBg, display: 'flex', justifyContent: 'space-between' }}>
+              <span style={{ fontSize: 13, fontWeight: 500, color: theme.text }}>Preview ({parsedTrades.length} trades)</span>
+              <span style={{ fontSize: 12, color: parsedTrades.reduce((s, t) => s + t.pnl, 0) >= 0 ? '#10b981' : '#ef4444' }}>Total: ${parsedTrades.reduce((s, t) => s + t.pnl, 0).toFixed(2)}</span>
+            </div>
+            <div style={{ maxHeight: 200, overflow: 'auto' }} className="scrollbar">
+              {parsedTrades.slice(0, 10).map((t, i) => (
+                <div key={i} style={{ padding: 10, borderBottom: `1px solid ${theme.cardBorder}`, display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
+                  <div className="flex items-center gap-3">
+                    <span style={{ fontWeight: 600, color: theme.text }}>{t.symbol}</span>
+                    <span style={{ color: t.side === 'Long' ? '#10b981' : '#ef4444' }}>{t.side}</span>
+                    <span style={{ color: theme.textFaint }}>{t.lots} lots</span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span style={{ color: theme.textFaint }}>{t.date}</span>
+                    <span style={{ fontWeight: 600, color: t.pnl >= 0 ? '#10b981' : '#ef4444' }}>{t.pnl >= 0 ? '+' : ''}${t.pnl.toFixed(2)}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         )}
       </div>
       <div style={{ padding: 20, borderTop: `1px solid ${theme.cardBorder}`, display: 'flex', justifyContent: 'flex-end', gap: 12 }}>
         <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: 14, color: theme.textMuted, cursor: 'pointer' }}>Cancel</button>
-        <button onClick={handleImport} disabled={parsedTrades.length === 0 || importing || !account || accounts.length === 0} className="btn-primary" style={{ opacity: (parsedTrades.length === 0 || importing || accounts.length === 0) ? 0.5 : 1 }}>{importing ? 'Importing...' : `Import ${parsedTrades.length} Trades`}</button>
+        <button onClick={handleImport} disabled={!parsedTrades.length || importing || !accounts.length} className="btn-primary" style={{ opacity: (!parsedTrades.length || importing || !accounts.length) ? 0.5 : 1 }}>
+          {importing ? 'Importing...' : `Import ${parsedTrades.length} Trades`}
+        </button>
       </div>
     </Modal>
   );
@@ -1205,15 +1445,17 @@ function JournalView({ trades, accounts, filterAccount, setFilterAccount, onSele
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
       <div className="flex items-center justify-between">
-        <div className="flex gap-3">
-          <select value={filterAccount} onChange={(e) => setFilterAccount(e.target.value)} className="input input-sm" style={{ width: 200 }}>
-            <option value="all">All Accounts</option>
-            {accounts.map(acc => <option key={acc.id} value={acc.name}>{acc.name}</option>)}
-          </select>
-        </div>
+        <select value={filterAccount} onChange={(e) => setFilterAccount(e.target.value)} className="input input-sm" style={{ width: 200 }}>
+          <option value="all">All Accounts</option>
+          {accounts.map(acc => <option key={acc.id} value={acc.name}>{acc.name}</option>)}
+        </select>
         <div className="flex" style={{ background: theme.hoverBg, borderRadius: 8, padding: 4 }}>
-          <button onClick={() => setViewMode('list')} style={{ padding: '6px 10px', borderRadius: 6, border: 'none', cursor: 'pointer', background: viewMode === 'list' ? theme.card : 'transparent', boxShadow: viewMode === 'list' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none' }}><LayoutList size={18} style={{ color: viewMode === 'list' ? theme.text : theme.textMuted }} /></button>
-          <button onClick={() => setViewMode('grid')} style={{ padding: '6px 10px', borderRadius: 6, border: 'none', cursor: 'pointer', background: viewMode === 'grid' ? theme.card : 'transparent', boxShadow: viewMode === 'grid' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none' }}><LayoutGrid size={18} style={{ color: viewMode === 'grid' ? theme.text : theme.textMuted }} /></button>
+          <button onClick={() => setViewMode('list')} style={{ padding: '6px 10px', borderRadius: 6, border: 'none', cursor: 'pointer', background: viewMode === 'list' ? theme.card : 'transparent', boxShadow: viewMode === 'list' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none' }}>
+            <LayoutList size={18} style={{ color: viewMode === 'list' ? theme.text : theme.textMuted }} />
+          </button>
+          <button onClick={() => setViewMode('grid')} style={{ padding: '6px 10px', borderRadius: 6, border: 'none', cursor: 'pointer', background: viewMode === 'grid' ? theme.card : 'transparent', boxShadow: viewMode === 'grid' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none' }}>
+            <LayoutGrid size={18} style={{ color: viewMode === 'grid' ? theme.text : theme.textMuted }} />
+          </button>
         </div>
       </div>
 
@@ -1233,8 +1475,17 @@ function JournalView({ trades, accounts, filterAccount, setFilterAccount, onSele
             return (
               <div key={trade.id} onClick={() => onSelectTrade(trade)} className="table-row" style={{ display: 'grid', gridTemplateColumns: '1.5fr 80px 100px 80px 100px 50px', gap: 12, alignItems: 'center' }}>
                 <div className="flex items-center gap-3">
-                  {chartImg ? (<div style={{ width: 48, height: 36, borderRadius: 6, overflow: 'hidden', flexShrink: 0, background: theme.hoverBg }}><img src={chartImg} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={(e) => e.target.style.display = 'none'} /></div>) : (<div style={{ width: 36, height: 36, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 600, background: trade.pnl >= 0 ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)', color: trade.pnl >= 0 ? '#10b981' : '#ef4444' }}>{trade.symbol?.slice(0, 2)}</div>)}
-                  <div><div style={{ fontSize: 14, fontWeight: 500, color: theme.text }}>{trade.symbol}</div><div style={{ fontSize: 12, color: theme.textFaint }}>{trade.date}</div></div>
+                  {chartImg ? (
+                    <div style={{ width: 48, height: 36, borderRadius: 6, overflow: 'hidden', flexShrink: 0, background: theme.hoverBg }}>
+                      <img src={chartImg} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={(e) => e.target.style.display = 'none'} />
+                    </div>
+                  ) : (
+                    <div style={{ width: 36, height: 36, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 600, background: trade.pnl >= 0 ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)', color: trade.pnl >= 0 ? '#10b981' : '#ef4444' }}>{trade.symbol?.slice(0, 2)}</div>
+                  )}
+                  <div>
+                    <div style={{ fontSize: 14, fontWeight: 500, color: theme.text }}>{trade.symbol}</div>
+                    <div style={{ fontSize: 12, color: theme.textFaint }}>{trade.date}</div>
+                  </div>
                 </div>
                 <span className="badge" style={{ background: trade.side === 'Long' ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)', color: trade.side === 'Long' ? '#10b981' : '#ef4444' }}>{trade.side}</span>
                 <span className="badge" style={{ background: MARKET_STRUCTURES[trade.marketStructure]?.color, color: 'white' }}>{trade.marketStructure?.replace('_', ' ').slice(0, 8)}</span>
@@ -1250,11 +1501,31 @@ function JournalView({ trades, accounts, filterAccount, setFilterAccount, onSele
           {filtered.map(trade => {
             const chartImg = getTradingViewImageUrl(trade.chartLink) || trade.chartImage;
             return (
-              <div key={trade.id} onClick={() => onSelectTrade(trade)} className="card" style={{ cursor: 'pointer', overflow: 'hidden', transition: 'transform 0.15s, box-shadow 0.15s' }} onMouseEnter={(e) => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.boxShadow = '0 8px 24px rgba(0,0,0,0.12)'; }} onMouseLeave={(e) => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = 'none'; }}>
-                {chartImg ? (<div style={{ width: '100%', height: 140, background: theme.hoverBg, position: 'relative' }}><img src={chartImg} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={(e) => { e.target.parentElement.style.display = 'none'; }} />{trade.chartLink && (<a href={trade.chartLink} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} style={{ position: 'absolute', top: 8, right: 8, padding: 6, borderRadius: 6, background: 'rgba(0,0,0,0.6)', color: 'white' }}><ExternalLink size={14} /></a>)}</div>) : (<div style={{ width: '100%', height: 80, background: trade.pnl >= 0 ? 'rgba(16,185,129,0.05)' : 'rgba(239,68,68,0.05)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><span style={{ fontSize: 28, fontWeight: 700, color: trade.pnl >= 0 ? '#10b981' : '#ef4444', opacity: 0.3 }}>{trade.symbol}</span></div>)}
+              <div key={trade.id} onClick={() => onSelectTrade(trade)} className="card" style={{ cursor: 'pointer', overflow: 'hidden', transition: 'transform 0.15s, box-shadow 0.15s' }}
+                onMouseEnter={(e) => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.boxShadow = '0 8px 24px rgba(0,0,0,0.12)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = 'none'; }}>
+                {chartImg ? (
+                  <div style={{ width: '100%', height: 140, background: theme.hoverBg, position: 'relative' }}>
+                    <img src={chartImg} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={(e) => e.target.parentElement.style.display = 'none'} />
+                  </div>
+                ) : (
+                  <div style={{ width: '100%', height: 80, background: trade.pnl >= 0 ? 'rgba(16,185,129,0.05)' : 'rgba(239,68,68,0.05)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <span style={{ fontSize: 28, fontWeight: 700, color: trade.pnl >= 0 ? '#10b981' : '#ef4444', opacity: 0.3 }}>{trade.symbol}</span>
+                  </div>
+                )}
                 <div style={{ padding: 16 }}>
-                  <div className="flex items-center justify-between" style={{ marginBottom: 12 }}><div><div style={{ fontSize: 15, fontWeight: 600, color: theme.text }}>{trade.symbol}</div><div style={{ fontSize: 12, color: theme.textFaint }}>{trade.date} · {trade.time}</div></div><span style={{ fontSize: 18, fontWeight: 700, color: trade.pnl >= 0 ? '#10b981' : '#ef4444' }}>{trade.pnl >= 0 ? '+' : ''}${trade.pnl?.toFixed(2)}</span></div>
-                  <div className="flex items-center gap-2" style={{ flexWrap: 'wrap' }}><span className="badge" style={{ background: trade.side === 'Long' ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)', color: trade.side === 'Long' ? '#10b981' : '#ef4444' }}>{trade.side}</span><span className="badge" style={{ background: MARKET_STRUCTURES[trade.marketStructure]?.color, color: 'white' }}>{MARKET_STRUCTURES[trade.marketStructure]?.label?.split(' ')[0]}</span><span style={{ fontSize: 12, color: theme.textMuted }}>{trade.lots} lots</span></div>
+                  <div className="flex items-center justify-between" style={{ marginBottom: 12 }}>
+                    <div>
+                      <div style={{ fontSize: 15, fontWeight: 600, color: theme.text }}>{trade.symbol}</div>
+                      <div style={{ fontSize: 12, color: theme.textFaint }}>{trade.date} · {trade.time}</div>
+                    </div>
+                    <span style={{ fontSize: 18, fontWeight: 700, color: trade.pnl >= 0 ? '#10b981' : '#ef4444' }}>{trade.pnl >= 0 ? '+' : ''}${trade.pnl?.toFixed(2)}</span>
+                  </div>
+                  <div className="flex items-center gap-2" style={{ flexWrap: 'wrap' }}>
+                    <span className="badge" style={{ background: trade.side === 'Long' ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)', color: trade.side === 'Long' ? '#10b981' : '#ef4444' }}>{trade.side}</span>
+                    <span className="badge" style={{ background: MARKET_STRUCTURES[trade.marketStructure]?.color, color: 'white' }}>{MARKET_STRUCTURES[trade.marketStructure]?.label?.split(' ')[0]}</span>
+                    <span style={{ fontSize: 12, color: theme.textMuted }}>{trade.lots} lots</span>
+                  </div>
                   {trade.notes && <p style={{ fontSize: 12, color: theme.textMuted, marginTop: 10, lineHeight: 1.4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{trade.notes}</p>}
                 </div>
               </div>
@@ -1266,13 +1537,10 @@ function JournalView({ trades, accounts, filterAccount, setFilterAccount, onSele
   );
 }
 
-function DashboardView({ trades, accounts, selectedAccount, setSelectedAccount, challenges }) {
+function DashboardView({ trades, accounts, challenges, selectedAccount, setSelectedAccount }) {
   const theme = useTheme();
   const [dashboardMonth, setDashboardMonth] = useState(new Date());
   const filtered = selectedAccount === 'all' ? trades : trades.filter(t => t.account === selectedAccount);
-  
-  const selectedAcc = accounts.find(a => a.name === selectedAccount);
-  const accountBalance = selectedAcc?.balance || accounts.reduce((s, a) => s + a.balance, 0);
   
   const totalTrades = filtered.length;
   const wins = filtered.filter(t => t.pnl > 0);
@@ -1281,31 +1549,29 @@ function DashboardView({ trades, accounts, selectedAccount, setSelectedAccount, 
   const winRate = totalTrades > 0 ? (wins.length / totalTrades) * 100 : 0;
   const avgWin = wins.length > 0 ? wins.reduce((s, t) => s + t.pnl, 0) / wins.length : 0;
   const avgLoss = losses.length > 0 ? Math.abs(losses.reduce((s, t) => s + t.pnl, 0) / losses.length) : 1;
-  
   const grossProfit = wins.reduce((s, t) => s + t.pnl, 0);
   const grossLoss = Math.abs(losses.reduce((s, t) => s + t.pnl, 0));
   const profitFactor = grossLoss > 0 ? grossProfit / grossLoss : grossProfit > 0 ? 99 : 0;
   const expectancy = totalTrades > 0 ? (winRate / 100 * avgWin) - ((100 - winRate) / 100 * avgLoss) : 0;
-  
   const avgWinLossRatio = avgLoss > 0 ? avgWin / avgLoss : avgWin > 0 ? 3 : 0;
+
+  // Ellipse Score
   const winRateScore = Math.min(winRate / 60 * 33, 33);
   const ratioScore = Math.min(avgWinLossRatio / 2 * 33, 33);
   const pfScore = Math.min(profitFactor / 2 * 34, 34);
   const ellipseScore = totalTrades >= 5 ? winRateScore + ratioScore + pfScore : 0;
-  
+
+  // Monthly calendar
   const monthStart = new Date(dashboardMonth.getFullYear(), dashboardMonth.getMonth(), 1);
   const monthEnd = new Date(dashboardMonth.getFullYear(), dashboardMonth.getMonth() + 1, 0);
   const startDay = monthStart.getDay();
   const daysInMonth = monthEnd.getDate();
-  
   const monthTrades = filtered.filter(t => { const d = new Date(t.date); return d.getMonth() === dashboardMonth.getMonth() && d.getFullYear() === dashboardMonth.getFullYear(); });
   const monthlyPnl = monthTrades.reduce((s, t) => s + t.pnl, 0);
   const monthlyTradeDays = new Set(monthTrades.map(t => t.date)).size;
-  
   const calendarDays = [];
   for (let i = 0; i < startDay; i++) calendarDays.push(null);
   for (let i = 1; i <= daysInMonth; i++) calendarDays.push(i);
-  
   const getDayData = (day) => {
     if (!day) return null;
     const dateStr = `${dashboardMonth.getFullYear()}-${String(dashboardMonth.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
@@ -1314,37 +1580,71 @@ function DashboardView({ trades, accounts, selectedAccount, setSelectedAccount, 
     return { trades: dayTrades.length, pnl: dayTrades.reduce((s, t) => s + t.pnl, 0) };
   };
 
+  // Chart data
   const dailyPnlData = [];
   const uniqueDates = [...new Set(filtered.map(t => t.date))].sort().slice(-14);
-  uniqueDates.forEach(date => { const dayTrades = filtered.filter(t => t.date === date); dailyPnlData.push({ date: date.slice(5), pnl: dayTrades.reduce((s, t) => s + t.pnl, 0) }); });
+  uniqueDates.forEach(date => {
+    const dayTrades = filtered.filter(t => t.date === date);
+    dailyPnlData.push({ date: date.slice(5), pnl: dayTrades.reduce((s, t) => s + t.pnl, 0) });
+  });
 
   let cumulative = 0;
   const cumulativePnlData = [];
-  const sortedByDate = [...filtered].sort((a, b) => new Date(a.date) - new Date(b.date));
   const dateGroups = {};
-  sortedByDate.forEach(t => { if (!dateGroups[t.date]) dateGroups[t.date] = 0; dateGroups[t.date] += t.pnl; });
-  Object.entries(dateGroups).slice(-14).forEach(([date, pnl]) => { cumulative += pnl; cumulativePnlData.push({ date: date.slice(5), pnl: cumulative }); });
+  [...filtered].sort((a, b) => new Date(a.date) - new Date(b.date)).forEach(t => {
+    if (!dateGroups[t.date]) dateGroups[t.date] = 0;
+    dateGroups[t.date] += t.pnl;
+  });
+  Object.entries(dateGroups).slice(-14).forEach(([date, pnl]) => {
+    cumulative += pnl;
+    cumulativePnlData.push({ date: date.slice(5), pnl: cumulative });
+  });
 
   const sortedTrades = [...filtered].sort((a, b) => new Date(b.date + ' ' + b.time) - new Date(a.date + ' ' + a.time));
   const recentTrades = sortedTrades.slice(0, 5);
 
-  // Active challenge alerts for dashboard
-  const activeChallenges = (challenges || []).filter(c => c.status === 'active');
+  // Active challenges summary
+  const activeChallenges = challenges.filter(c => c.status === 'active');
 
   const DonutChart = ({ value, size = 60, strokeWidth = 6, color = '#10b981' }) => {
     const radius = (size - strokeWidth) / 2;
     const circumference = 2 * Math.PI * radius;
     const offset = circumference - (value / 100) * circumference;
-    return (<svg width={size} height={size} style={{ transform: 'rotate(-90deg)' }}><circle cx={size/2} cy={size/2} r={radius} fill="none" stroke={theme.hoverBg} strokeWidth={strokeWidth} /><circle cx={size/2} cy={size/2} r={radius} fill="none" stroke={color} strokeWidth={strokeWidth} strokeDasharray={circumference} strokeDashoffset={offset} strokeLinecap="round" /></svg>);
+    return (
+      <svg width={size} height={size} style={{ transform: 'rotate(-90deg)' }}>
+        <circle cx={size/2} cy={size/2} r={radius} fill="none" stroke={theme.hoverBg} strokeWidth={strokeWidth} />
+        <circle cx={size/2} cy={size/2} r={radius} fill="none" stroke={color} strokeWidth={strokeWidth} strokeDasharray={circumference} strokeDashoffset={offset} strokeLinecap="round" />
+      </svg>
+    );
   };
 
   const RadarChart = ({ winRate: wr, avgRatio, pf, size = 180 }) => {
     const center = size / 2;
     const maxRadius = size * 0.38;
-    const wrNorm = Math.min(wr / 70, 1), ratioNorm = Math.min(avgRatio / 3, 1), pfNorm = Math.min(pf / 3, 1);
-    const points = [{ x: center, y: center - maxRadius * wrNorm }, { x: center - maxRadius * 0.866 * ratioNorm, y: center + maxRadius * 0.5 * ratioNorm }, { x: center + maxRadius * 0.866 * pfNorm, y: center + maxRadius * 0.5 * pfNorm }];
-    const outerPoints = [{ x: center, y: center - maxRadius }, { x: center - maxRadius * 0.866, y: center + maxRadius * 0.5 }, { x: center + maxRadius * 0.866, y: center + maxRadius * 0.5 }];
-    return (<svg width={size} height={size + 30}><polygon points={outerPoints.map(p => `${p.x},${p.y}`).join(' ')} fill="none" stroke={theme.cardBorder} strokeWidth="1" /><polygon points={outerPoints.map(p => `${center + (p.x - center) * 0.66},${center + (p.y - center) * 0.66}`).join(' ')} fill="none" stroke={theme.cardBorder} strokeWidth="1" opacity="0.5" /><polygon points={outerPoints.map(p => `${center + (p.x - center) * 0.33},${center + (p.y - center) * 0.33}`).join(' ')} fill="none" stroke={theme.cardBorder} strokeWidth="1" opacity="0.3" /><polygon points={points.map(p => `${p.x},${p.y}`).join(' ')} fill="rgba(99,102,241,0.3)" stroke="#6366f1" strokeWidth="2" /><rect x={center - 25} y={5} width={50} height={18} rx={9} fill={theme.hoverBg} /><text x={center} y={17} textAnchor="middle" fontSize="10" fill={theme.textMuted}>Win %</text><rect x={5} y={size - 15} width={55} height={18} rx={9} fill={theme.hoverBg} /><text x={32} y={size - 2} textAnchor="middle" fontSize="10" fill={theme.textMuted}>Avg win/loss</text><rect x={size - 60} y={size - 15} width={55} height={18} rx={9} fill={theme.hoverBg} /><text x={size - 32} y={size - 2} textAnchor="middle" fontSize="10" fill={theme.textMuted}>Profit factor</text></svg>);
+    const wrNorm = Math.min(wr / 70, 1);
+    const ratioNorm = Math.min(avgRatio / 3, 1);
+    const pfNorm = Math.min(pf / 3, 1);
+    const points = [
+      { x: center, y: center - maxRadius * wrNorm },
+      { x: center - maxRadius * 0.866 * ratioNorm, y: center + maxRadius * 0.5 * ratioNorm },
+      { x: center + maxRadius * 0.866 * pfNorm, y: center + maxRadius * 0.5 * pfNorm }
+    ];
+    const outerPoints = [
+      { x: center, y: center - maxRadius },
+      { x: center - maxRadius * 0.866, y: center + maxRadius * 0.5 },
+      { x: center + maxRadius * 0.866, y: center + maxRadius * 0.5 }
+    ];
+    return (
+      <svg width={size} height={size + 30}>
+        <polygon points={outerPoints.map(p => `${p.x},${p.y}`).join(' ')} fill="none" stroke={theme.cardBorder} strokeWidth="1" />
+        <polygon points={outerPoints.map(p => `${center + (p.x - center) * 0.66},${center + (p.y - center) * 0.66}`).join(' ')} fill="none" stroke={theme.cardBorder} strokeWidth="1" opacity="0.5" />
+        <polygon points={outerPoints.map(p => `${center + (p.x - center) * 0.33},${center + (p.y - center) * 0.33}`).join(' ')} fill="none" stroke={theme.cardBorder} strokeWidth="1" opacity="0.3" />
+        <polygon points={points.map(p => `${p.x},${p.y}`).join(' ')} fill="rgba(99,102,241,0.3)" stroke="#6366f1" strokeWidth="2" />
+        <rect x={center - 25} y={5} width={50} height={18} rx={9} fill={theme.hoverBg} /><text x={center} y={17} textAnchor="middle" fontSize="10" fill={theme.textMuted}>Win %</text>
+        <rect x={5} y={size - 15} width={55} height={18} rx={9} fill={theme.hoverBg} /><text x={32} y={size - 2} textAnchor="middle" fontSize="10" fill={theme.textMuted}>Avg win/loss</text>
+        <rect x={size - 60} y={size - 15} width={55} height={18} rx={9} fill={theme.hoverBg} /><text x={size - 32} y={size - 2} textAnchor="middle" fontSize="10" fill={theme.textMuted}>Profit factor</text>
+      </svg>
+    );
   };
 
   return (
@@ -1359,29 +1659,33 @@ function DashboardView({ trades, accounts, selectedAccount, setSelectedAccount, 
         </div>
       </div>
 
-      {/* Challenge Alert Banner */}
+      {/* Active Challenges Banner */}
       {activeChallenges.length > 0 && (
-        <div style={{ display: 'flex', gap: 12, overflowX: 'auto' }}>
-          {activeChallenges.map(ch => {
-            const todayStr = new Date().toISOString().split('T')[0];
-            const todayTrades = trades.filter(t => t.account === ch.account && t.date === todayStr);
-            const todayPnl = todayTrades.reduce((s, t) => s + t.pnl, 0);
-            const dailyLimit = ch.accountSize * (ch.maxDailyDrawdown / 100);
-            const dailyUsed = todayPnl < 0 ? (Math.abs(todayPnl) / dailyLimit) * 100 : 0;
-            const remaining = dailyLimit - Math.abs(Math.min(todayPnl, 0));
-            const isWarning = dailyUsed >= 60;
-            const isDanger = dailyUsed >= 80;
-
+        <div style={{ display: 'grid', gridTemplateColumns: `repeat(${Math.min(activeChallenges.length, 3)}, 1fr)`, gap: 12 }}>
+          {activeChallenges.slice(0, 3).map(ch => {
+            const chTrades = trades.filter(t => t.account === ch.account && (!ch.startDate || t.date >= ch.startDate));
+            const chPnl = chTrades.reduce((s, t) => s + (parseFloat(t.pnl) || 0), 0);
+            const chAccountSize = ch.accountSize || 1;
+            const chProfitPct = (chPnl / chAccountSize) * 100;
+            const phase = ch.phases?.[ch.currentPhase] || ch.phases?.[0] || {};
+            const targetPct = phase.profitTarget ?? 10;
+            const progress = targetPct ? Math.min((chProfitPct / targetPct) * 100, 100) : 0;
+            
             return (
-              <div key={ch.id} className="card" style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12, minWidth: 320, borderLeft: `3px solid ${isDanger ? '#ef4444' : isWarning ? '#f59e0b' : ch.firmColor || '#6366f1'}` }}>
-                <Trophy size={16} style={{ color: ch.firmColor || '#6366f1', flexShrink: 0 }} />
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 12, fontWeight: 600, color: theme.text }}>{ch.name}</div>
-                  <div style={{ fontSize: 11, color: theme.textFaint }}>Daily remaining: <span style={{ color: isDanger ? '#ef4444' : isWarning ? '#f59e0b' : '#10b981', fontWeight: 600 }}>${remaining.toFixed(2)}</span></div>
+              <div key={ch.id} className="card" style={{ padding: 16, borderLeft: '3px solid #6366f1' }}>
+                <div className="flex items-center justify-between" style={{ marginBottom: 8 }}>
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: theme.text }}>{ch.name}</div>
+                    <div style={{ fontSize: 11, color: theme.textFaint }}>{phase?.name}</div>
+                  </div>
+                  <Shield size={16} style={{ color: '#6366f1' }} />
                 </div>
-                <div style={{ width: 48, height: 48, position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <DonutChart value={dailyUsed} size={48} strokeWidth={4} color={isDanger ? '#ef4444' : isWarning ? '#f59e0b' : '#10b981'} />
-                  <span style={{ position: 'absolute', fontSize: 10, fontWeight: 700, color: isDanger ? '#ef4444' : isWarning ? '#f59e0b' : theme.text }}>{dailyUsed.toFixed(0)}%</span>
+                <div className="flex items-center justify-between" style={{ marginBottom: 6 }}>
+                  <span style={{ fontSize: 16, fontWeight: 700, color: chPnl >= 0 ? '#10b981' : '#ef4444' }}>{chProfitPct.toFixed(2)}%</span>
+                  <span style={{ fontSize: 12, color: theme.textFaint }}>/ {targetPct}%</span>
+                </div>
+                <div style={{ height: 6, borderRadius: 3, background: theme.hoverBg, overflow: 'hidden' }}>
+                  <div className="progress-bar-animate" style={{ height: '100%', borderRadius: 3, width: `${Math.max(progress, 0)}%`, background: progress >= 100 ? '#10b981' : '#6366f1' }} />
                 </div>
               </div>
             );
@@ -1389,13 +1693,40 @@ function DashboardView({ trades, accounts, selectedAccount, setSelectedAccount, 
         </div>
       )}
 
-      {/* Top Stats Row */}
+      {/* Top Stats */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 12 }}>
-        <div className="card" style={{ padding: 16 }}><div className="flex items-center gap-2"><div className="stat-label">Net P&L</div><div style={{ width: 18, height: 18, borderRadius: 4, background: theme.hoverBg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, color: theme.textFaint }}>{totalTrades}</div></div><div style={{ fontSize: 22, fontWeight: 700, color: totalPnl >= 0 ? '#10b981' : '#ef4444', marginTop: 6 }}>{totalPnl >= 0 ? '+' : ''}${totalPnl.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div></div>
-        <div className="card" style={{ padding: 16 }}><div className="stat-label">Trade Expectancy</div><div style={{ fontSize: 22, fontWeight: 700, color: expectancy >= 0 ? '#10b981' : '#ef4444', marginTop: 6 }}>${expectancy.toFixed(2)}</div></div>
-        <div className="card" style={{ padding: 16 }}><div className="stat-label">Profit Factor</div><div className="flex items-center gap-3" style={{ marginTop: 6 }}><span style={{ fontSize: 22, fontWeight: 700, color: profitFactor >= 1.5 ? '#10b981' : profitFactor >= 1 ? '#f59e0b' : '#ef4444' }}>{profitFactor >= 99 ? '∞' : profitFactor.toFixed(2)}</span><div style={{ position: 'relative', width: 40, height: 40 }}><DonutChart value={Math.min(profitFactor / 3 * 100, 100)} size={40} strokeWidth={4} color={profitFactor >= 1.5 ? '#10b981' : profitFactor >= 1 ? '#f59e0b' : '#ef4444'} /></div></div></div>
-        <div className="card" style={{ padding: 16 }}><div className="flex items-center gap-2"><div className="stat-label">Win %</div><div style={{ display: 'flex', gap: 4 }}><span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 4, background: '#10b981', color: 'white' }}>{wins.length}</span><span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 4, background: '#ef4444', color: 'white' }}>{losses.length}</span></div></div><div className="flex items-center gap-3" style={{ marginTop: 6 }}><span style={{ fontSize: 22, fontWeight: 700, color: theme.text }}>{winRate.toFixed(2)}%</span><div style={{ position: 'relative', width: 40, height: 40 }}><DonutChart value={winRate} size={40} strokeWidth={4} color={winRate >= 50 ? '#10b981' : '#ef4444'} /></div></div></div>
-        <div className="card" style={{ padding: 16 }}><div className="stat-label">Avg Win/Loss Trade</div><div className="flex items-center gap-2" style={{ marginTop: 6 }}><span style={{ fontSize: 22, fontWeight: 700, color: theme.text }}>{avgWinLossRatio.toFixed(1)}</span><div style={{ display: 'flex', flexDirection: 'column', fontSize: 11 }}><span style={{ color: '#10b981' }}>${avgWin.toFixed(2)}</span><span style={{ color: '#ef4444' }}>${avgLoss.toFixed(2)}</span></div></div></div>
+        <div className="card" style={{ padding: 16 }}>
+          <div className="flex items-center gap-2"><div className="stat-label">Net P&L</div><div style={{ width: 18, height: 18, borderRadius: 4, background: theme.hoverBg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, color: theme.textFaint }}>{totalTrades}</div></div>
+          <div style={{ fontSize: 22, fontWeight: 700, color: totalPnl >= 0 ? '#10b981' : '#ef4444', marginTop: 6 }}>{totalPnl >= 0 ? '+' : ''}${totalPnl.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+        </div>
+        <div className="card" style={{ padding: 16 }}>
+          <div className="stat-label">Trade Expectancy</div>
+          <div style={{ fontSize: 22, fontWeight: 700, color: expectancy >= 0 ? '#10b981' : '#ef4444', marginTop: 6 }}>${expectancy.toFixed(2)}</div>
+        </div>
+        <div className="card" style={{ padding: 16 }}>
+          <div className="stat-label">Profit Factor</div>
+          <div className="flex items-center gap-3" style={{ marginTop: 6 }}>
+            <span style={{ fontSize: 22, fontWeight: 700, color: profitFactor >= 1.5 ? '#10b981' : profitFactor >= 1 ? '#f59e0b' : '#ef4444' }}>{profitFactor >= 99 ? '∞' : profitFactor.toFixed(2)}</span>
+            <DonutChart value={Math.min(profitFactor / 3 * 100, 100)} size={40} strokeWidth={4} color={profitFactor >= 1.5 ? '#10b981' : profitFactor >= 1 ? '#f59e0b' : '#ef4444'} />
+          </div>
+        </div>
+        <div className="card" style={{ padding: 16 }}>
+          <div className="flex items-center gap-2"><div className="stat-label">Win %</div><div style={{ display: 'flex', gap: 4 }}><span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 4, background: '#10b981', color: 'white' }}>{wins.length}</span><span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 4, background: '#ef4444', color: 'white' }}>{losses.length}</span></div></div>
+          <div className="flex items-center gap-3" style={{ marginTop: 6 }}>
+            <span style={{ fontSize: 22, fontWeight: 700, color: theme.text }}>{winRate.toFixed(2)}%</span>
+            <DonutChart value={winRate} size={40} strokeWidth={4} color={winRate >= 50 ? '#10b981' : '#ef4444'} />
+          </div>
+        </div>
+        <div className="card" style={{ padding: 16 }}>
+          <div className="stat-label">Avg Win/Loss Trade</div>
+          <div className="flex items-center gap-2" style={{ marginTop: 6 }}>
+            <span style={{ fontSize: 22, fontWeight: 700, color: theme.text }}>{avgWinLossRatio.toFixed(1)}</span>
+            <div style={{ display: 'flex', flexDirection: 'column', fontSize: 11 }}>
+              <span style={{ color: '#10b981' }}>${avgWin.toFixed(2)}</span>
+              <span style={{ color: '#ef4444' }}>${avgLoss.toFixed(2)}</span>
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* Second Row */}
@@ -1404,21 +1735,44 @@ function DashboardView({ trades, accounts, selectedAccount, setSelectedAccount, 
           <div className="stat-label">Ellipse Score</div>
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginTop: 8 }}>
             <RadarChart winRate={winRate} avgRatio={avgWinLossRatio} pf={profitFactor} size={160} />
-            <div style={{ marginTop: 8, textAlign: 'center' }}><span style={{ fontSize: 14, color: theme.textMuted }}>Your Ellipse Score: </span><span style={{ fontSize: 24, fontWeight: 700, color: ellipseScore >= 70 ? '#10b981' : ellipseScore >= 40 ? '#f59e0b' : '#ef4444' }}>{totalTrades < 5 ? '--' : ellipseScore.toFixed(0)}</span></div>
+            <div style={{ marginTop: 8, textAlign: 'center' }}>
+              <span style={{ fontSize: 14, color: theme.textMuted }}>Your Score: </span>
+              <span style={{ fontSize: 24, fontWeight: 700, color: ellipseScore >= 70 ? '#10b981' : ellipseScore >= 40 ? '#f59e0b' : '#ef4444' }}>{totalTrades < 5 ? '--' : ellipseScore.toFixed(0)}</span>
+            </div>
           </div>
         </div>
-
         <div className="card" style={{ padding: 20 }}>
           <div className="stat-label">Daily Net Cumulative P&L</div>
           <div style={{ height: 180, marginTop: 12 }}>
-            {cumulativePnlData.length > 0 ? (<ResponsiveContainer width="100%" height="100%"><AreaChart data={cumulativePnlData}><defs><linearGradient id="cumGreen" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#10b981" stopOpacity={0.3} /><stop offset="100%" stopColor="#10b981" stopOpacity={0} /></linearGradient><linearGradient id="cumRed" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#ef4444" stopOpacity={0.3} /><stop offset="100%" stopColor="#ef4444" stopOpacity={0} /></linearGradient></defs><XAxis dataKey="date" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: theme.textFaint }} /><YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: theme.textFaint }} tickFormatter={v => `$${v}`} /><Tooltip contentStyle={{ background: theme.card, border: `1px solid ${theme.cardBorder}`, borderRadius: 8, fontSize: 12 }} formatter={(v) => [`$${v.toFixed(2)}`, 'Cumulative P&L']} /><Area type="monotone" dataKey="pnl" stroke={totalPnl >= 0 ? '#10b981' : '#ef4444'} fill={totalPnl >= 0 ? 'url(#cumGreen)' : 'url(#cumRed)'} strokeWidth={2} /></AreaChart></ResponsiveContainer>) : (<div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.textFaint, fontSize: 12 }}>No data yet</div>)}
+            {cumulativePnlData.length > 0 ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={cumulativePnlData}>
+                  <defs>
+                    <linearGradient id="cumGreen" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#10b981" stopOpacity={0.3} /><stop offset="100%" stopColor="#10b981" stopOpacity={0} /></linearGradient>
+                    <linearGradient id="cumRed" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#ef4444" stopOpacity={0.3} /><stop offset="100%" stopColor="#ef4444" stopOpacity={0} /></linearGradient>
+                  </defs>
+                  <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: theme.textFaint }} />
+                  <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: theme.textFaint }} tickFormatter={v => `$${v}`} />
+                  <Tooltip contentStyle={{ background: theme.card, border: `1px solid ${theme.cardBorder}`, borderRadius: 8, fontSize: 12 }} formatter={(v) => [`$${v.toFixed(2)}`, 'Cumulative']} />
+                  <Area type="monotone" dataKey="pnl" stroke={totalPnl >= 0 ? '#10b981' : '#ef4444'} fill={totalPnl >= 0 ? 'url(#cumGreen)' : 'url(#cumRed)'} strokeWidth={2} />
+                </AreaChart>
+              </ResponsiveContainer>
+            ) : <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.textFaint, fontSize: 12 }}>No data yet</div>}
           </div>
         </div>
-
         <div className="card" style={{ padding: 20 }}>
           <div className="stat-label">Net Daily P&L</div>
           <div style={{ height: 180, marginTop: 12 }}>
-            {dailyPnlData.length > 0 ? (<ResponsiveContainer width="100%" height="100%"><BarChart data={dailyPnlData}><XAxis dataKey="date" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: theme.textFaint }} /><YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: theme.textFaint }} tickFormatter={v => `$${v}`} /><Tooltip contentStyle={{ background: theme.card, border: `1px solid ${theme.cardBorder}`, borderRadius: 8, fontSize: 12 }} formatter={(v) => [`$${v.toFixed(2)}`, 'Daily P&L']} /><Bar dataKey="pnl" radius={[4, 4, 0, 0]}>{dailyPnlData.map((entry, index) => (<Cell key={index} fill={entry.pnl >= 0 ? '#10b981' : '#ef4444'} />))}</Bar></BarChart></ResponsiveContainer>) : (<div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.textFaint, fontSize: 12 }}>No data yet</div>)}
+            {dailyPnlData.length > 0 ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={dailyPnlData}>
+                  <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: theme.textFaint }} />
+                  <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: theme.textFaint }} tickFormatter={v => `$${v}`} />
+                  <Tooltip contentStyle={{ background: theme.card, border: `1px solid ${theme.cardBorder}`, borderRadius: 8, fontSize: 12 }} formatter={(v) => [`$${v.toFixed(2)}`, 'Daily']} />
+                  <Bar dataKey="pnl" radius={[4, 4, 0, 0]}>{dailyPnlData.map((entry, index) => <Cell key={index} fill={entry.pnl >= 0 ? '#10b981' : '#ef4444'} />)}</Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            ) : <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.textFaint, fontSize: 12 }}>No data yet</div>}
           </div>
         </div>
       </div>
@@ -1428,7 +1782,16 @@ function DashboardView({ trades, accounts, selectedAccount, setSelectedAccount, 
         <div className="card" style={{ padding: 20 }}>
           <div className="stat-label" style={{ marginBottom: 12 }}>Recent Trades</div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {recentTrades.length === 0 ? (<div style={{ padding: 20, textAlign: 'center', color: theme.textFaint, fontSize: 12 }}>No trades yet</div>) : recentTrades.map(t => (<div key={t.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: 10, borderRadius: 8, background: theme.hoverBg }}><div className="flex items-center gap-3"><div style={{ fontSize: 12, color: theme.textFaint }}>{t.date}</div><div style={{ fontSize: 13, fontWeight: 500, color: theme.text }}>{t.symbol}</div></div><span style={{ fontSize: 13, fontWeight: 600, color: t.pnl >= 0 ? '#10b981' : '#ef4444' }}>{t.pnl >= 0 ? '+' : ''}${t.pnl.toFixed(2)}</span></div>))}
+            {recentTrades.length === 0 ? <div style={{ padding: 20, textAlign: 'center', color: theme.textFaint, fontSize: 12 }}>No trades yet</div> :
+              recentTrades.map(t => (
+                <div key={t.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: 10, borderRadius: 8, background: theme.hoverBg }}>
+                  <div className="flex items-center gap-3">
+                    <div style={{ fontSize: 12, color: theme.textFaint }}>{t.date}</div>
+                    <div style={{ fontSize: 13, fontWeight: 500, color: theme.text }}>{t.symbol}</div>
+                  </div>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: t.pnl >= 0 ? '#10b981' : '#ef4444' }}>{t.pnl >= 0 ? '+' : ''}${t.pnl.toFixed(2)}</span>
+                </div>
+              ))}
           </div>
         </div>
 
@@ -1439,11 +1802,21 @@ function DashboardView({ trades, accounts, selectedAccount, setSelectedAccount, 
               <span style={{ fontSize: 14, fontWeight: 600, color: theme.text }}>{dashboardMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</span>
               <button onClick={() => setDashboardMonth(new Date(dashboardMonth.getFullYear(), dashboardMonth.getMonth() + 1))} style={{ padding: 6, borderRadius: 6, border: 'none', background: theme.hoverBg, cursor: 'pointer' }}><ChevronRight size={16} style={{ color: theme.textMuted }} /></button>
             </div>
-            <div className="flex items-center gap-3" style={{ fontSize: 12, color: theme.textMuted }}><span style={{ color: monthlyPnl >= 0 ? '#10b981' : '#ef4444', fontWeight: 600 }}>${monthlyPnl.toFixed(2)}</span><span>{monthlyTradeDays} days</span></div>
+            <div className="flex items-center gap-3" style={{ fontSize: 12, color: theme.textMuted }}>
+              <span style={{ color: monthlyPnl >= 0 ? '#10b981' : '#ef4444', fontWeight: 600 }}>${monthlyPnl.toFixed(2)}</span>
+              <span>{monthlyTradeDays} days</span>
+            </div>
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 4 }}>
-            {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(d => (<div key={d} style={{ padding: 6, textAlign: 'center', fontSize: 11, fontWeight: 500, color: theme.textFaint }}>{d}</div>))}
-            {calendarDays.map((day, i) => { const data = getDayData(day); return (<div key={i} style={{ minHeight: 50, padding: 4, borderRadius: 6, background: data ? (data.pnl >= 0 ? 'rgba(16,185,129,0.15)' : 'rgba(239,68,68,0.15)') : 'transparent', border: day ? `1px solid ${theme.cardBorder}` : 'none' }}>{day && (<><div style={{ fontSize: 11, color: theme.textMuted }}>{day}</div>{data && (<div style={{ marginTop: 2 }}><div style={{ fontSize: 11, fontWeight: 600, color: data.pnl >= 0 ? '#10b981' : '#ef4444' }}>{data.pnl >= 0 ? '+' : ''}{Math.abs(data.pnl) >= 1000 ? (data.pnl / 1000).toFixed(1) + 'K' : data.pnl.toFixed(0)}</div><div style={{ fontSize: 9, color: theme.textFaint }}>{data.trades} trade{data.trades > 1 ? 's' : ''}</div></div>)}</>)}</div>); })}
+            {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(d => <div key={d} style={{ padding: 6, textAlign: 'center', fontSize: 11, fontWeight: 500, color: theme.textFaint }}>{d}</div>)}
+            {calendarDays.map((day, i) => {
+              const data = getDayData(day);
+              return (
+                <div key={i} style={{ minHeight: 50, padding: 4, borderRadius: 6, background: data ? (data.pnl >= 0 ? 'rgba(16,185,129,0.15)' : 'rgba(239,68,68,0.15)') : 'transparent', border: day ? `1px solid ${theme.cardBorder}` : 'none' }}>
+                  {day && <><div style={{ fontSize: 11, color: theme.textMuted }}>{day}</div>{data && <div style={{ marginTop: 2 }}><div style={{ fontSize: 11, fontWeight: 600, color: data.pnl >= 0 ? '#10b981' : '#ef4444' }}>{data.pnl >= 0 ? '+' : ''}{Math.abs(data.pnl) >= 1000 ? (data.pnl / 1000).toFixed(1) + 'K' : data.pnl.toFixed(0)}</div><div style={{ fontSize: 9, color: theme.textFaint }}>{data.trades}t</div></div>}</>}
+                </div>
+              );
+            })}
           </div>
         </div>
       </div>
@@ -1464,9 +1837,10 @@ function AccountsView({ accounts, onUpdate, onDelete }) {
         <div className="card" style={{ padding: 20 }}><div className="stat-label">Total Equity</div><div className="stat-value" style={{ color: '#10b981', marginTop: 6 }}>${totals.equity.toLocaleString()}</div></div>
         <div className="card" style={{ padding: 20 }}><div className="stat-label">Accounts</div><div className="stat-value" style={{ marginTop: 6 }}>{accounts.length}</div></div>
       </div>
-
       <div className="card-lg" style={{ overflow: 'hidden' }}>
-        {accounts.length === 0 ? (<div style={{ padding: 60, textAlign: 'center' }}><Database size={40} style={{ color: theme.textFaint, margin: '0 auto 12px', opacity: 0.5 }} /><p style={{ fontSize: 14, color: theme.textMuted }}>No accounts yet</p></div>) : accounts.map(acc => (
+        {accounts.length === 0 ? (
+          <div style={{ padding: 60, textAlign: 'center' }}><Database size={40} style={{ color: theme.textFaint, margin: '0 auto 12px', opacity: 0.5 }} /><p style={{ fontSize: 14, color: theme.textMuted }}>No accounts yet</p></div>
+        ) : accounts.map(acc => (
           <div key={acc.id} className="table-row" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <div className="flex items-center gap-3">
               <div style={{ width: 44, height: 44, borderRadius: 10, background: acc.platform === 'MT5' ? 'rgba(59,130,246,0.1)' : 'rgba(139,92,246,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Database size={20} style={{ color: acc.platform === 'MT5' ? '#3b82f6' : '#8b5cf6' }} /></div>
@@ -1483,9 +1857,19 @@ function AccountsView({ accounts, onUpdate, onDelete }) {
           </div>
         ))}
       </div>
-
       {editAcc && <EditAccountModal account={editAcc} onClose={() => setEditAcc(null)} onSave={(updated) => { onUpdate(updated); setEditAcc(null); }} />}
-      {deleteId && (<Modal onClose={() => setDeleteId(null)}><div style={{ padding: 24 }}><h3 style={{ fontSize: 16, fontWeight: 600, color: theme.text, marginBottom: 8 }}>Remove Account?</h3><p style={{ fontSize: 14, color: theme.textMuted, marginBottom: 20 }}>This will remove {accounts.find(a => a.id === deleteId)?.name}</p><div className="flex gap-3"><button onClick={() => setDeleteId(null)} className="input" style={{ flex: 1, textAlign: 'center', cursor: 'pointer' }}>Cancel</button><button onClick={() => { onDelete(deleteId); setDeleteId(null); }} className="btn-primary" style={{ flex: 1, background: '#ef4444' }}>Remove</button></div></div></Modal>)}
+      {deleteId && (
+        <Modal onClose={() => setDeleteId(null)}>
+          <div style={{ padding: 24 }}>
+            <h3 style={{ fontSize: 16, fontWeight: 600, color: theme.text, marginBottom: 8 }}>Remove Account?</h3>
+            <p style={{ fontSize: 14, color: theme.textMuted, marginBottom: 20 }}>This will remove {accounts.find(a => a.id === deleteId)?.name}</p>
+            <div className="flex gap-3">
+              <button onClick={() => setDeleteId(null)} className="input" style={{ flex: 1, textAlign: 'center', cursor: 'pointer' }}>Cancel</button>
+              <button onClick={() => { onDelete(deleteId); setDeleteId(null); }} className="btn-primary" style={{ flex: 1, background: '#ef4444' }}>Remove</button>
+            </div>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }
@@ -1498,7 +1882,11 @@ function CalendarView({ trades }) {
   const daysInMonth = new Date(month.getFullYear(), month.getMonth() + 1, 0).getDate();
   for (let i = 0; i < firstDay; i++) days.push(null);
   for (let i = 1; i <= daysInMonth; i++) days.push(i);
-  const getTradesForDay = (day) => { if (!day) return []; const dateStr = `${month.getFullYear()}-${String(month.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`; return trades.filter(t => t.date === dateStr); };
+  const getTradesForDay = (day) => {
+    if (!day) return [];
+    const dateStr = `${month.getFullYear()}-${String(month.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    return trades.filter(t => t.date === dateStr);
+  };
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
@@ -1511,8 +1899,20 @@ function CalendarView({ trades }) {
         </div>
       </div>
       <div className="card-lg" style={{ overflow: 'hidden' }}>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)' }}>{['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(d => (<div key={d} className="table-header" style={{ textAlign: 'center', padding: 12 }}>{d}</div>))}</div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)' }}>{days.map((day, i) => { const dayTrades = getTradesForDay(day); const pnl = dayTrades.reduce((s, t) => s + t.pnl, 0); return (<div key={i} style={{ minHeight: 90, padding: 10, borderBottom: `1px solid ${theme.cardBorder}`, borderRight: `1px solid ${theme.cardBorder}`, background: !day ? (theme.dark ? '#0a0a0a' : '#f8fafc') : 'transparent' }}>{day && <><div style={{ fontSize: 13, color: theme.textMuted }}>{day}</div>{dayTrades.length > 0 && (<div style={{ marginTop: 6 }}><div style={{ fontSize: 13, fontWeight: 600, color: pnl >= 0 ? '#10b981' : '#ef4444' }}>{pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}</div><div style={{ fontSize: 11, color: theme.textFaint }}>{dayTrades.length} trade{dayTrades.length > 1 ? 's' : ''}</div></div>)}</>}</div>); })}</div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)' }}>
+          {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(d => <div key={d} className="table-header" style={{ textAlign: 'center', padding: 12 }}>{d}</div>)}
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)' }}>
+          {days.map((day, i) => {
+            const dayTrades = getTradesForDay(day);
+            const pnl = dayTrades.reduce((s, t) => s + t.pnl, 0);
+            return (
+              <div key={i} style={{ minHeight: 90, padding: 10, borderBottom: `1px solid ${theme.cardBorder}`, borderRight: `1px solid ${theme.cardBorder}`, background: !day ? (theme.dark ? '#0a0a0a' : '#f8fafc') : 'transparent' }}>
+                {day && <><div style={{ fontSize: 13, color: theme.textMuted }}>{day}</div>{dayTrades.length > 0 && <div style={{ marginTop: 6 }}><div style={{ fontSize: 13, fontWeight: 600, color: pnl >= 0 ? '#10b981' : '#ef4444' }}>{pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}</div><div style={{ fontSize: 11, color: theme.textFaint }}>{dayTrades.length} trade{dayTrades.length > 1 ? 's' : ''}</div></div>}</>}
+              </div>
+            );
+          })}
+        </div>
       </div>
     </div>
   );
@@ -1520,20 +1920,22 @@ function CalendarView({ trades }) {
 
 function Modal({ children, onClose, width = 420 }) {
   const theme = useTheme();
-  return (<div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: 16 }}><div className="card-lg" style={{ width: '100%', maxWidth: width, maxHeight: '90vh', overflow: 'auto' }}>{children}</div></div>);
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: 16 }} onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="card-lg scrollbar" style={{ width: '100%', maxWidth: width, maxHeight: '90vh', overflow: 'auto' }}>{children}</div>
+    </div>
+  );
 }
 
-function NewTradeModal({ onClose, onSave, accounts, challenges }) {
+function NewTradeModal({ onClose, onSave, accounts }) {
   const theme = useTheme();
   const [step, setStep] = useState(1);
   const [trade, setTrade] = useState({
     date: new Date().toISOString().split('T')[0], time: new Date().toTimeString().slice(0, 5),
     symbol: '', side: 'Long', entry: '', exit: '', lots: '', stopLoss: '', takeProfit: '',
-    commission: '', swap: '', pnl: 0,
-    marketStructure: '', candleType: '', liquidityTaken: [], liquidityTarget: [], notes: '',
-    account: accounts[0]?.name || '',
-    chartLink: '', chartImage: '',
-    challengeId: ''
+    commission: '', swap: '', pnl: 0, marketStructure: '', candleType: '',
+    liquidityTaken: [], liquidityTarget: [], notes: '', account: accounts[0]?.name || '',
+    chartLink: '', chartImage: ''
   });
 
   useEffect(() => {
@@ -1551,11 +1953,9 @@ function NewTradeModal({ onClose, onSave, accounts, challenges }) {
     }
   }, [trade.entry, trade.exit, trade.lots, trade.symbol, trade.side, trade.commission, trade.swap]);
 
-  // Auto-link challenge when account matches
-  const activeChallenges = (challenges || []).filter(c => c.status === 'active' && c.account === trade.account);
-
   const handleSave = () => {
-    const rr = trade.stopLoss && trade.takeProfit && trade.entry ? `1:${Math.abs((parseFloat(trade.takeProfit) - parseFloat(trade.entry)) / (parseFloat(trade.entry) - parseFloat(trade.stopLoss))).toFixed(1)}` : '-';
+    const rr = trade.stopLoss && trade.takeProfit && trade.entry
+      ? `1:${Math.abs((parseFloat(trade.takeProfit) - parseFloat(trade.entry)) / (parseFloat(trade.entry) - parseFloat(trade.stopLoss))).toFixed(1)}` : '-';
     onSave({ ...trade, entry: parseFloat(trade.entry), exit: parseFloat(trade.exit), lots: parseFloat(trade.lots), stopLoss: parseFloat(trade.stopLoss) || 0, takeProfit: parseFloat(trade.takeProfit) || 0, commission: parseFloat(trade.commission) || 0, swap: parseFloat(trade.swap) || 0, riskReward: rr });
   };
 
@@ -1570,7 +1970,6 @@ function NewTradeModal({ onClose, onSave, accounts, challenges }) {
         <div><h3 style={{ fontSize: 16, fontWeight: 600, color: theme.text }}>Log Trade</h3><p style={{ fontSize: 12, color: theme.textFaint }}>Step {step} of 3</p></div>
         <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4 }}><X size={20} style={{ color: theme.textFaint }} /></button>
       </div>
-
       <div style={{ padding: 20, maxHeight: '60vh', overflow: 'auto' }} className="scrollbar">
         {step === 1 && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -1582,16 +1981,12 @@ function NewTradeModal({ onClose, onSave, accounts, challenges }) {
               <div><label className="label">Symbol</label><input value={trade.symbol} onChange={(e) => setTrade({...trade, symbol: e.target.value.toUpperCase()})} placeholder="EURUSD" className="input" /></div>
               <div><label className="label">Account</label><select value={trade.account} onChange={(e) => setTrade({...trade, account: e.target.value})} className="input">{accounts.length === 0 ? <option>No accounts</option> : accounts.map(a => <option key={a.id} value={a.name}>{a.name}</option>)}</select></div>
             </div>
-            
-            {/* Challenge Link Alert */}
-            {activeChallenges.length > 0 && (
-              <div style={{ padding: 10, borderRadius: 8, background: `${activeChallenges[0].firmColor || '#6366f1'}10`, border: `1px solid ${activeChallenges[0].firmColor || '#6366f1'}30`, display: 'flex', alignItems: 'center', gap: 8 }}>
-                <Trophy size={14} style={{ color: activeChallenges[0].firmColor || '#6366f1' }} />
-                <span style={{ fontSize: 12, color: theme.text }}>This trade will count toward <strong>{activeChallenges[0].name}</strong></span>
-              </div>
-            )}
-
-            <div><label className="label">Side</label><div className="flex gap-2">{['Long', 'Short'].map(s => (<button key={s} onClick={() => setTrade({...trade, side: s})} style={{ flex: 1, padding: 12, borderRadius: 10, fontSize: 14, fontWeight: 500, border: 'none', cursor: 'pointer', background: trade.side === s ? (s === 'Long' ? '#10b981' : '#ef4444') : theme.hoverBg, color: trade.side === s ? 'white' : theme.textMuted }}>{s}</button>))}</div></div>
+            <div>
+              <label className="label">Side</label>
+              <div className="flex gap-2">{['Long', 'Short'].map(s => (
+                <button key={s} onClick={() => setTrade({...trade, side: s})} style={{ flex: 1, padding: 12, borderRadius: 10, fontSize: 14, fontWeight: 500, border: 'none', cursor: 'pointer', background: trade.side === s ? (s === 'Long' ? '#10b981' : '#ef4444') : theme.hoverBg, color: trade.side === s ? 'white' : theme.textMuted }}>{s}</button>
+              ))}</div>
+            </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
               <div><label className="label">Entry</label><input type="number" step="any" value={trade.entry} onChange={(e) => setTrade({...trade, entry: e.target.value})} className="input" /></div>
               <div><label className="label">Exit</label><input type="number" step="any" value={trade.exit} onChange={(e) => setTrade({...trade, exit: e.target.value})} className="input" /></div>
@@ -1609,32 +2004,58 @@ function NewTradeModal({ onClose, onSave, accounts, challenges }) {
               </div>
             </div>
             <div style={{ padding: 16, borderRadius: 10, background: trade.pnl >= 0 ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)' }}>
-              <div className="flex justify-between items-center"><span style={{ fontSize: 13, color: theme.textMuted }}>Calculated P&L</span><span style={{ fontSize: 20, fontWeight: 700, color: trade.pnl >= 0 ? '#10b981' : '#ef4444' }}>{trade.pnl >= 0 ? '+' : ''}${trade.pnl.toFixed(2)}</span></div>
+              <div className="flex justify-between items-center">
+                <span style={{ fontSize: 13, color: theme.textMuted }}>Calculated P&L</span>
+                <span style={{ fontSize: 20, fontWeight: 700, color: trade.pnl >= 0 ? '#10b981' : '#ef4444' }}>{trade.pnl >= 0 ? '+' : ''}${trade.pnl.toFixed(2)}</span>
+              </div>
             </div>
           </div>
         )}
-
         {step === 2 && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-            <div><label className="label" style={{ marginBottom: 12 }}>Market Structure</label><div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>{Object.entries(MARKET_STRUCTURES).map(([key, val]) => (<button key={key} onClick={() => setTrade({...trade, marketStructure: key})} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: 14, borderRadius: 10, border: `1px solid ${trade.marketStructure === key ? '#6366f1' : theme.cardBorder}`, background: trade.marketStructure === key ? 'rgba(99,102,241,0.1)' : 'transparent', cursor: 'pointer' }}><div className="flex items-center gap-3"><div style={{ width: 32, height: 32, borderRadius: 8, background: val.color + '20', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><div style={{ width: 10, height: 10, borderRadius: 5, background: val.color }}></div></div><div style={{ textAlign: 'left' }}><div style={{ fontSize: 14, fontWeight: 500, color: theme.text }}>{val.label}</div><div style={{ fontSize: 12, color: theme.textFaint }}>{val.description}</div></div></div>{trade.marketStructure === key && <CheckCircle size={20} style={{ color: '#6366f1' }} />}</button>))}</div></div>
-            <div><label className="label" style={{ marginBottom: 12 }}>Candle Type</label><div className="flex gap-3">{Object.entries(CANDLE_TYPES).map(([key, val]) => (<button key={key} onClick={() => setTrade({...trade, candleType: key})} style={{ flex: 1, padding: 14, borderRadius: 10, border: `1px solid ${trade.candleType === key ? '#6366f1' : theme.cardBorder}`, background: trade.candleType === key ? 'rgba(99,102,241,0.1)' : 'transparent', textAlign: 'left', cursor: 'pointer' }}><div style={{ fontSize: 14, fontWeight: 500, color: theme.text }}>{val.label}</div><div style={{ fontSize: 12, color: theme.textFaint }}>{val.description}</div></button>))}</div></div>
+            <div>
+              <label className="label" style={{ marginBottom: 12 }}>Market Structure</label>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {Object.entries(MARKET_STRUCTURES).map(([key, val]) => (
+                  <button key={key} onClick={() => setTrade({...trade, marketStructure: key})} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: 14, borderRadius: 10, border: `1px solid ${trade.marketStructure === key ? '#6366f1' : theme.cardBorder}`, background: trade.marketStructure === key ? 'rgba(99,102,241,0.1)' : 'transparent', cursor: 'pointer' }}>
+                    <div className="flex items-center gap-3">
+                      <div style={{ width: 32, height: 32, borderRadius: 8, background: val.color + '20', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><div style={{ width: 10, height: 10, borderRadius: 5, background: val.color }}></div></div>
+                      <div style={{ textAlign: 'left' }}><div style={{ fontSize: 14, fontWeight: 500, color: theme.text }}>{val.label}</div><div style={{ fontSize: 12, color: theme.textFaint }}>{val.description}</div></div>
+                    </div>
+                    {trade.marketStructure === key && <CheckCircle size={20} style={{ color: '#6366f1' }} />}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <label className="label" style={{ marginBottom: 12 }}>Candle Type</label>
+              <div className="flex gap-3">{Object.entries(CANDLE_TYPES).map(([key, val]) => (
+                <button key={key} onClick={() => setTrade({...trade, candleType: key})} style={{ flex: 1, padding: 14, borderRadius: 10, border: `1px solid ${trade.candleType === key ? '#6366f1' : theme.cardBorder}`, background: trade.candleType === key ? 'rgba(99,102,241,0.1)' : 'transparent', textAlign: 'left', cursor: 'pointer' }}>
+                  <div style={{ fontSize: 14, fontWeight: 500, color: theme.text }}>{val.label}</div><div style={{ fontSize: 12, color: theme.textFaint }}>{val.description}</div>
+                </button>
+              ))}</div>
+            </div>
           </div>
         )}
-
         {step === 3 && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-            <div><label className="label" style={{ marginBottom: 8 }}>Liquidity Taken</label><div className="flex flex-wrap gap-2">{LIQUIDITY_LEVELS.map(l => (<button key={l.key} onClick={() => toggleLiq(l.key, 'taken')} style={{ padding: '8px 14px', borderRadius: 8, fontSize: 12, fontWeight: 500, border: 'none', cursor: 'pointer', background: trade.liquidityTaken.includes(l.key) ? '#f59e0b' : theme.hoverBg, color: trade.liquidityTaken.includes(l.key) ? 'white' : theme.textMuted }}>{l.abbr}</button>))}</div></div>
-            <div><label className="label" style={{ marginBottom: 8 }}>Liquidity Target</label><div className="flex flex-wrap gap-2">{LIQUIDITY_LEVELS.map(l => (<button key={l.key} onClick={() => toggleLiq(l.key, 'target')} style={{ padding: '8px 14px', borderRadius: 8, fontSize: 12, fontWeight: 500, border: 'none', cursor: 'pointer', background: trade.liquidityTarget.includes(l.key) ? '#3b82f6' : theme.hoverBg, color: trade.liquidityTarget.includes(l.key) ? 'white' : theme.textMuted }}>{l.abbr}</button>))}</div></div>
+            <div><label className="label" style={{ marginBottom: 8 }}>Liquidity Taken</label><div className="flex flex-wrap gap-2">{LIQUIDITY_LEVELS.map(l => (
+              <button key={l.key} onClick={() => toggleLiq(l.key, 'taken')} style={{ padding: '8px 14px', borderRadius: 8, fontSize: 12, fontWeight: 500, border: 'none', cursor: 'pointer', background: trade.liquidityTaken.includes(l.key) ? '#f59e0b' : theme.hoverBg, color: trade.liquidityTaken.includes(l.key) ? 'white' : theme.textMuted }}>{l.abbr}</button>
+            ))}</div></div>
+            <div><label className="label" style={{ marginBottom: 8 }}>Liquidity Target</label><div className="flex flex-wrap gap-2">{LIQUIDITY_LEVELS.map(l => (
+              <button key={l.key} onClick={() => toggleLiq(l.key, 'target')} style={{ padding: '8px 14px', borderRadius: 8, fontSize: 12, fontWeight: 500, border: 'none', cursor: 'pointer', background: trade.liquidityTarget.includes(l.key) ? '#3b82f6' : theme.hoverBg, color: trade.liquidityTarget.includes(l.key) ? 'white' : theme.textMuted }}>{l.abbr}</button>
+            ))}</div></div>
             <div style={{ padding: 16, borderRadius: 10, background: theme.hoverBg }}>
               <div className="flex items-center gap-2" style={{ marginBottom: 12 }}><Link size={14} style={{ color: theme.textMuted }} /><span style={{ fontSize: 12, fontWeight: 500, color: theme.textMuted }}>Chart Reference</span></div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}><div><label className="label">TradingView Link</label><input value={trade.chartLink} onChange={(e) => setTrade({...trade, chartLink: e.target.value})} placeholder="https://www.tradingview.com/chart/..." className="input" /></div><div><label className="label">Chart Image URL</label><input value={trade.chartImage} onChange={(e) => setTrade({...trade, chartImage: e.target.value})} placeholder="https://i.imgur.com/..." className="input" /></div></div>
-              {trade.chartImage && <div style={{ marginTop: 12, borderRadius: 8, overflow: 'hidden', border: `1px solid ${theme.cardBorder}` }}><img src={trade.chartImage} alt="Chart" style={{ width: '100%', height: 150, objectFit: 'cover' }} onError={(e) => e.target.style.display = 'none'} /></div>}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                <div><label className="label">TradingView Link</label><input value={trade.chartLink} onChange={(e) => setTrade({...trade, chartLink: e.target.value})} placeholder="https://www.tradingview.com/chart/..." className="input" /></div>
+                <div><label className="label">Chart Image URL</label><input value={trade.chartImage} onChange={(e) => setTrade({...trade, chartImage: e.target.value})} placeholder="https://i.imgur.com/..." className="input" /></div>
+              </div>
             </div>
             <div><label className="label">Notes</label><textarea value={trade.notes} onChange={(e) => setTrade({...trade, notes: e.target.value})} rows={3} className="input" placeholder="Trade thesis, observations..." style={{ resize: 'none' }} /></div>
           </div>
         )}
       </div>
-
       <div style={{ padding: 20, borderTop: `1px solid ${theme.cardBorder}`, display: 'flex', justifyContent: 'space-between' }}>
         <button onClick={() => step > 1 ? setStep(step - 1) : onClose()} style={{ background: 'none', border: 'none', fontSize: 14, color: theme.textMuted, cursor: 'pointer' }}>{step > 1 ? 'Back' : 'Cancel'}</button>
         <button onClick={() => step < 3 ? setStep(step + 1) : handleSave()} className="btn-primary">{step < 3 ? 'Continue' : 'Save Trade'}</button>
@@ -1669,7 +2090,8 @@ function EditTradeModal({ trade: initialTrade, onClose, onSave, accounts }) {
   }, [trade.entry, trade.exit, trade.lots, trade.symbol, trade.side, trade.commission, trade.swap]);
 
   const handleSave = () => {
-    const rr = trade.stopLoss && trade.takeProfit && trade.entry ? `1:${Math.abs((parseFloat(trade.takeProfit) - parseFloat(trade.entry)) / (parseFloat(trade.entry) - parseFloat(trade.stopLoss))).toFixed(1)}` : trade.riskReward || '-';
+    const rr = trade.stopLoss && trade.takeProfit && trade.entry
+      ? `1:${Math.abs((parseFloat(trade.takeProfit) - parseFloat(trade.entry)) / (parseFloat(trade.entry) - parseFloat(trade.stopLoss))).toFixed(1)}` : trade.riskReward || '-';
     onSave({ ...trade, entry: parseFloat(trade.entry), exit: parseFloat(trade.exit), lots: parseFloat(trade.lots), stopLoss: parseFloat(trade.stopLoss) || 0, takeProfit: parseFloat(trade.takeProfit) || 0, commission: parseFloat(trade.commission) || 0, swap: parseFloat(trade.swap) || 0, riskReward: rr });
   };
 
@@ -1679,7 +2101,6 @@ function EditTradeModal({ trade: initialTrade, onClose, onSave, accounts }) {
   };
 
   const chartPreview = getTradingViewImageUrl(trade.chartLink) || trade.chartImage;
-  const darkMode = theme.dark;
 
   return (
     <Modal width={520} onClose={onClose}>
@@ -1689,16 +2110,51 @@ function EditTradeModal({ trade: initialTrade, onClose, onSave, accounts }) {
       </div>
       <div style={{ padding: 20, maxHeight: '65vh', overflow: 'auto' }} className="scrollbar">
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}><div><label className="label">Date</label><input type="date" value={trade.date} onChange={(e) => setTrade({...trade, date: e.target.value})} className="input" /></div><div><label className="label">Time</label><input type="time" value={trade.time} onChange={(e) => setTrade({...trade, time: e.target.value})} className="input" /></div></div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}><div><label className="label">Symbol</label><input value={trade.symbol} onChange={(e) => setTrade({...trade, symbol: e.target.value.toUpperCase()})} className="input" /></div><div><label className="label">Account</label><select value={trade.account} onChange={(e) => setTrade({...trade, account: e.target.value})} className="input">{accounts.map(a => <option key={a.id} value={a.name}>{a.name}</option>)}</select></div></div>
-          <div><label className="label">Side</label><div className="flex gap-2">{['Long', 'Short'].map(s => (<button key={s} onClick={() => setTrade({...trade, side: s})} style={{ flex: 1, padding: 12, borderRadius: 10, fontSize: 14, fontWeight: 500, border: 'none', cursor: 'pointer', background: trade.side === s ? (s === 'Long' ? '#10b981' : '#ef4444') : theme.hoverBg, color: trade.side === s ? 'white' : theme.textMuted }}>{s}</button>))}</div></div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}><div><label className="label">Entry</label><input type="number" step="any" value={trade.entry} onChange={(e) => setTrade({...trade, entry: e.target.value})} className="input" /></div><div><label className="label">Exit</label><input type="number" step="any" value={trade.exit} onChange={(e) => setTrade({...trade, exit: e.target.value})} className="input" /></div><div><label className="label">Lots</label><input type="number" step="0.01" value={trade.lots} onChange={(e) => setTrade({...trade, lots: e.target.value})} className="input" /></div></div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}><div><label className="label">Stop Loss</label><input type="number" step="any" value={trade.stopLoss} onChange={(e) => setTrade({...trade, stopLoss: e.target.value})} className="input" /></div><div><label className="label">Take Profit</label><input type="number" step="any" value={trade.takeProfit} onChange={(e) => setTrade({...trade, takeProfit: e.target.value})} className="input" /></div></div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}><div><label className="label">Commission ($)</label><input type="number" step="0.01" value={trade.commission} onChange={(e) => setTrade({...trade, commission: e.target.value})} className="input" /></div><div><label className="label">Swap ($)</label><input type="number" step="0.01" value={trade.swap} onChange={(e) => setTrade({...trade, swap: e.target.value})} className="input" /></div></div>
-          <div style={{ padding: 16, borderRadius: 10, background: trade.pnl >= 0 ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)' }}><div className="flex justify-between items-center"><span style={{ fontSize: 13, color: theme.textMuted }}>Calculated P&L</span><span style={{ fontSize: 20, fontWeight: 700, color: trade.pnl >= 0 ? '#10b981' : '#ef4444' }}>{trade.pnl >= 0 ? '+' : ''}${trade.pnl?.toFixed(2)}</span></div></div>
-          <div><label className="label" style={{ marginBottom: 8 }}>Market Structure</label><div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8 }}>{Object.entries(MARKET_STRUCTURES).map(([key, val]) => (<button key={key} onClick={() => setTrade({...trade, marketStructure: key})} style={{ padding: 10, borderRadius: 8, fontSize: 12, border: `1px solid ${trade.marketStructure === key ? '#6366f1' : theme.cardBorder}`, background: trade.marketStructure === key ? 'rgba(99,102,241,0.1)' : 'transparent', color: theme.text, cursor: 'pointer', textAlign: 'left' }}><span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: 4, background: val.color, marginRight: 8 }}></span>{val.label}</button>))}</div></div>
-          <div><label className="label" style={{ marginBottom: 8 }}>Liquidity Taken</label><div className="flex flex-wrap gap-2">{LIQUIDITY_LEVELS.map(l => (<button key={l.key} onClick={() => toggleLiq(l.key, 'taken')} style={{ padding: '6px 12px', borderRadius: 6, fontSize: 11, fontWeight: 500, border: 'none', cursor: 'pointer', background: trade.liquidityTaken.includes(l.key) ? '#f59e0b' : theme.hoverBg, color: trade.liquidityTaken.includes(l.key) ? 'white' : theme.textMuted }}>{l.abbr}</button>))}</div></div>
-          <div style={{ padding: 16, borderRadius: 10, background: theme.hoverBg }}><div className="flex items-center gap-2" style={{ marginBottom: 12 }}><Link size={14} style={{ color: theme.textMuted }} /><span style={{ fontSize: 12, fontWeight: 500, color: theme.textMuted }}>Chart Reference</span></div><div><label className="label">TradingView Link</label><input value={trade.chartLink} onChange={(e) => setTrade({...trade, chartLink: e.target.value})} placeholder="https://www.tradingview.com/x/..." className="input" /></div>{chartPreview && <div style={{ marginTop: 12, borderRadius: 8, overflow: 'hidden' }}><img src={chartPreview} alt="Chart" style={{ width: '100%', height: 120, objectFit: 'cover' }} onError={(e) => e.target.style.display = 'none'} /></div>}</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div><label className="label">Date</label><input type="date" value={trade.date} onChange={(e) => setTrade({...trade, date: e.target.value})} className="input" /></div>
+            <div><label className="label">Time</label><input type="time" value={trade.time} onChange={(e) => setTrade({...trade, time: e.target.value})} className="input" /></div>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div><label className="label">Symbol</label><input value={trade.symbol} onChange={(e) => setTrade({...trade, symbol: e.target.value.toUpperCase()})} className="input" /></div>
+            <div><label className="label">Account</label><select value={trade.account} onChange={(e) => setTrade({...trade, account: e.target.value})} className="input">{accounts.map(a => <option key={a.id} value={a.name}>{a.name}</option>)}</select></div>
+          </div>
+          <div><label className="label">Side</label><div className="flex gap-2">{['Long', 'Short'].map(s => (
+            <button key={s} onClick={() => setTrade({...trade, side: s})} style={{ flex: 1, padding: 12, borderRadius: 10, fontSize: 14, fontWeight: 500, border: 'none', cursor: 'pointer', background: trade.side === s ? (s === 'Long' ? '#10b981' : '#ef4444') : theme.hoverBg, color: trade.side === s ? 'white' : theme.textMuted }}>{s}</button>
+          ))}</div></div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+            <div><label className="label">Entry</label><input type="number" step="any" value={trade.entry} onChange={(e) => setTrade({...trade, entry: e.target.value})} className="input" /></div>
+            <div><label className="label">Exit</label><input type="number" step="any" value={trade.exit} onChange={(e) => setTrade({...trade, exit: e.target.value})} className="input" /></div>
+            <div><label className="label">Lots</label><input type="number" step="0.01" value={trade.lots} onChange={(e) => setTrade({...trade, lots: e.target.value})} className="input" /></div>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div><label className="label">Stop Loss</label><input type="number" step="any" value={trade.stopLoss} onChange={(e) => setTrade({...trade, stopLoss: e.target.value})} className="input" /></div>
+            <div><label className="label">Take Profit</label><input type="number" step="any" value={trade.takeProfit} onChange={(e) => setTrade({...trade, takeProfit: e.target.value})} className="input" /></div>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div><label className="label">Commission ($)</label><input type="number" step="0.01" value={trade.commission} onChange={(e) => setTrade({...trade, commission: e.target.value})} className="input" /></div>
+            <div><label className="label">Swap ($)</label><input type="number" step="0.01" value={trade.swap} onChange={(e) => setTrade({...trade, swap: e.target.value})} className="input" /></div>
+          </div>
+          <div style={{ padding: 16, borderRadius: 10, background: trade.pnl >= 0 ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)' }}>
+            <div className="flex justify-between items-center">
+              <span style={{ fontSize: 13, color: theme.textMuted }}>Calculated P&L</span>
+              <span style={{ fontSize: 20, fontWeight: 700, color: trade.pnl >= 0 ? '#10b981' : '#ef4444' }}>{trade.pnl >= 0 ? '+' : ''}${trade.pnl?.toFixed(2)}</span>
+            </div>
+          </div>
+          <div><label className="label" style={{ marginBottom: 8 }}>Market Structure</label><div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8 }}>
+            {Object.entries(MARKET_STRUCTURES).map(([key, val]) => (
+              <button key={key} onClick={() => setTrade({...trade, marketStructure: key})} style={{ padding: 10, borderRadius: 8, fontSize: 12, border: `1px solid ${trade.marketStructure === key ? '#6366f1' : theme.cardBorder}`, background: trade.marketStructure === key ? 'rgba(99,102,241,0.1)' : 'transparent', color: theme.text, cursor: 'pointer', textAlign: 'left' }}>
+                <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: 4, background: val.color, marginRight: 8 }}></span>{val.label}
+              </button>
+            ))}
+          </div></div>
+          <div><label className="label" style={{ marginBottom: 8 }}>Liquidity Taken</label><div className="flex flex-wrap gap-2">{LIQUIDITY_LEVELS.map(l => (
+            <button key={l.key} onClick={() => toggleLiq(l.key, 'taken')} style={{ padding: '6px 12px', borderRadius: 6, fontSize: 11, fontWeight: 500, border: 'none', cursor: 'pointer', background: trade.liquidityTaken.includes(l.key) ? '#f59e0b' : theme.hoverBg, color: trade.liquidityTaken.includes(l.key) ? 'white' : theme.textMuted }}>{l.abbr}</button>
+          ))}</div></div>
+          <div style={{ padding: 16, borderRadius: 10, background: theme.hoverBg }}>
+            <div className="flex items-center gap-2" style={{ marginBottom: 12 }}><Link size={14} style={{ color: theme.textMuted }} /><span style={{ fontSize: 12, fontWeight: 500, color: theme.textMuted }}>Chart Reference</span></div>
+            <div><label className="label">TradingView Link</label><input value={trade.chartLink} onChange={(e) => setTrade({...trade, chartLink: e.target.value})} placeholder="https://www.tradingview.com/x/..." className="input" /></div>
+            {chartPreview && <div style={{ marginTop: 12, borderRadius: 8, overflow: 'hidden' }}><img src={chartPreview} alt="Chart" style={{ width: '100%', height: 120, objectFit: 'cover' }} onError={(e) => e.target.style.display = 'none'} /></div>}
+          </div>
           <div><label className="label">Notes</label><textarea value={trade.notes} onChange={(e) => setTrade({...trade, notes: e.target.value})} rows={3} className="input" style={{ resize: 'none' }} /></div>
         </div>
       </div>
@@ -1715,14 +2171,28 @@ function NewAccountModal({ onClose, onSave }) {
   const [acc, setAcc] = useState({ name: '', platform: 'MT5', broker: '', server: '', balance: '', equity: '' });
   return (
     <Modal onClose={onClose}>
-      <div style={{ padding: 20, borderBottom: `1px solid ${theme.cardBorder}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}><h3 style={{ fontSize: 16, fontWeight: 600, color: theme.text }}>Add Account</h3><button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer' }}><X size={20} style={{ color: theme.textFaint }} /></button></div>
-      <div style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 16 }}>
-        <div><label className="label">Platform</label><div className="flex gap-2">{['MT5', 'cTrader'].map(p => (<button key={p} onClick={() => setAcc({...acc, platform: p})} style={{ flex: 1, padding: 12, borderRadius: 10, fontSize: 14, fontWeight: 500, border: 'none', cursor: 'pointer', background: acc.platform === p ? (p === 'MT5' ? '#3b82f6' : '#8b5cf6') : theme.hoverBg, color: acc.platform === p ? 'white' : theme.textMuted }}>{p}</button>))}</div></div>
-        <div><label className="label">Account Name</label><input value={acc.name} onChange={(e) => setAcc({...acc, name: e.target.value})} placeholder="Main Account" className="input" /></div>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}><div><label className="label">Broker</label><input value={acc.broker} onChange={(e) => setAcc({...acc, broker: e.target.value})} placeholder="ICMarkets" className="input" /></div><div><label className="label">Server</label><input value={acc.server} onChange={(e) => setAcc({...acc, server: e.target.value})} placeholder="Live-01" className="input" /></div></div>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}><div><label className="label">Balance</label><input type="number" value={acc.balance} onChange={(e) => setAcc({...acc, balance: e.target.value})} placeholder="10000" className="input" /></div><div><label className="label">Equity</label><input type="number" value={acc.equity} onChange={(e) => setAcc({...acc, equity: e.target.value})} placeholder="10000" className="input" /></div></div>
+      <div style={{ padding: 20, borderBottom: `1px solid ${theme.cardBorder}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <h3 style={{ fontSize: 16, fontWeight: 600, color: theme.text }}>Add Account</h3>
+        <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer' }}><X size={20} style={{ color: theme.textFaint }} /></button>
       </div>
-      <div style={{ padding: 20, borderTop: `1px solid ${theme.cardBorder}`, display: 'flex', justifyContent: 'flex-end', gap: 12 }}><button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: 14, color: theme.textMuted, cursor: 'pointer' }}>Cancel</button><button onClick={() => onSave({ ...acc, balance: parseFloat(acc.balance) || 0, equity: parseFloat(acc.equity) || 0, connected: true })} className="btn-primary">Add Account</button></div>
+      <div style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <div><label className="label">Platform</label><div className="flex gap-2">{['MT5', 'cTrader'].map(p => (
+          <button key={p} onClick={() => setAcc({...acc, platform: p})} style={{ flex: 1, padding: 12, borderRadius: 10, fontSize: 14, fontWeight: 500, border: 'none', cursor: 'pointer', background: acc.platform === p ? (p === 'MT5' ? '#3b82f6' : '#8b5cf6') : theme.hoverBg, color: acc.platform === p ? 'white' : theme.textMuted }}>{p}</button>
+        ))}</div></div>
+        <div><label className="label">Account Name</label><input value={acc.name} onChange={(e) => setAcc({...acc, name: e.target.value})} placeholder="Main Account" className="input" /></div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <div><label className="label">Broker</label><input value={acc.broker} onChange={(e) => setAcc({...acc, broker: e.target.value})} placeholder="ICMarkets" className="input" /></div>
+          <div><label className="label">Server</label><input value={acc.server} onChange={(e) => setAcc({...acc, server: e.target.value})} placeholder="Live-01" className="input" /></div>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <div><label className="label">Balance</label><input type="number" value={acc.balance} onChange={(e) => setAcc({...acc, balance: e.target.value})} placeholder="10000" className="input" /></div>
+          <div><label className="label">Equity</label><input type="number" value={acc.equity} onChange={(e) => setAcc({...acc, equity: e.target.value})} placeholder="10000" className="input" /></div>
+        </div>
+      </div>
+      <div style={{ padding: 20, borderTop: `1px solid ${theme.cardBorder}`, display: 'flex', justifyContent: 'flex-end', gap: 12 }}>
+        <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: 14, color: theme.textMuted, cursor: 'pointer' }}>Cancel</button>
+        <button onClick={() => onSave({ ...acc, balance: parseFloat(acc.balance) || 0, equity: parseFloat(acc.equity) || 0, connected: true })} className="btn-primary">Add Account</button>
+      </div>
     </Modal>
   );
 }
@@ -1732,9 +2202,21 @@ function EditAccountModal({ account, onClose, onSave }) {
   const [data, setData] = useState({ ...account, balance: account.balance.toString(), equity: account.equity.toString() });
   return (
     <Modal onClose={onClose}>
-      <div style={{ padding: 20, borderBottom: `1px solid ${theme.cardBorder}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}><h3 style={{ fontSize: 16, fontWeight: 600, color: theme.text }}>Edit Account</h3><button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer' }}><X size={20} style={{ color: theme.textFaint }} /></button></div>
-      <div style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 16 }}><div><label className="label">Name</label><input value={data.name} onChange={(e) => setData({...data, name: e.target.value})} className="input" /></div><div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}><div><label className="label">Balance</label><input type="number" value={data.balance} onChange={(e) => setData({...data, balance: e.target.value})} className="input" /></div><div><label className="label">Equity</label><input type="number" value={data.equity} onChange={(e) => setData({...data, equity: e.target.value})} className="input" /></div></div></div>
-      <div style={{ padding: 20, borderTop: `1px solid ${theme.cardBorder}`, display: 'flex', justifyContent: 'flex-end', gap: 12 }}><button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: 14, color: theme.textMuted, cursor: 'pointer' }}>Cancel</button><button onClick={() => onSave({ ...data, balance: parseFloat(data.balance) || 0, equity: parseFloat(data.equity) || 0 })} className="btn-primary">Save</button></div>
+      <div style={{ padding: 20, borderBottom: `1px solid ${theme.cardBorder}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <h3 style={{ fontSize: 16, fontWeight: 600, color: theme.text }}>Edit Account</h3>
+        <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer' }}><X size={20} style={{ color: theme.textFaint }} /></button>
+      </div>
+      <div style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <div><label className="label">Name</label><input value={data.name} onChange={(e) => setData({...data, name: e.target.value})} className="input" /></div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <div><label className="label">Balance</label><input type="number" value={data.balance} onChange={(e) => setData({...data, balance: e.target.value})} className="input" /></div>
+          <div><label className="label">Equity</label><input type="number" value={data.equity} onChange={(e) => setData({...data, equity: e.target.value})} className="input" /></div>
+        </div>
+      </div>
+      <div style={{ padding: 20, borderTop: `1px solid ${theme.cardBorder}`, display: 'flex', justifyContent: 'flex-end', gap: 12 }}>
+        <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: 14, color: theme.textMuted, cursor: 'pointer' }}>Cancel</button>
+        <button onClick={() => onSave({ ...data, balance: parseFloat(data.balance) || 0, equity: parseFloat(data.equity) || 0 })} className="btn-primary">Save</button>
+      </div>
     </Modal>
   );
 }
@@ -1748,26 +2230,56 @@ function TradeDetailModal({ trade, onClose, onDelete, onEdit }) {
     <Modal width={520} onClose={onClose}>
       <div style={{ padding: 20, borderBottom: `1px solid ${theme.cardBorder}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div className="flex items-center gap-3">
-          <div style={{ width: 44, height: 44, borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', background: trade.pnl >= 0 ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)' }}><span style={{ fontSize: 14, fontWeight: 600, color: trade.pnl >= 0 ? '#10b981' : '#ef4444' }}>{trade.symbol?.slice(0, 2)}</span></div>
+          <div style={{ width: 44, height: 44, borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', background: trade.pnl >= 0 ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)' }}>
+            <span style={{ fontSize: 14, fontWeight: 600, color: trade.pnl >= 0 ? '#10b981' : '#ef4444' }}>{trade.symbol?.slice(0, 2)}</span>
+          </div>
           <div><div style={{ fontSize: 16, fontWeight: 600, color: theme.text }}>{trade.symbol}</div><div style={{ fontSize: 12, color: theme.textFaint }}>{trade.date} · {trade.time}</div></div>
         </div>
         <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer' }}><X size={20} style={{ color: theme.textFaint }} /></button>
       </div>
       <div style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 16 }}>
-        <div className="flex justify-between items-center"><span className="badge" style={{ background: trade.side === 'Long' ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)', color: trade.side === 'Long' ? '#10b981' : '#ef4444', padding: '8px 14px', fontSize: 13 }}>{trade.side}</span><span style={{ fontSize: 24, fontWeight: 700, color: trade.pnl >= 0 ? '#10b981' : '#ef4444' }}>{trade.pnl >= 0 ? '+' : ''}${trade.pnl?.toFixed(2)}</span></div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10 }}>{[{ l: 'Entry', v: trade.entry }, { l: 'Exit', v: trade.exit }, { l: 'Lots', v: trade.lots }, { l: 'R:R', v: trade.riskReward }].map(x => (<div key={x.l} style={{ padding: 14, borderRadius: 10, background: theme.hoverBg, textAlign: 'center' }}><div className="stat-label">{x.l}</div><div style={{ fontSize: 14, fontWeight: 600, color: theme.text, marginTop: 4 }}>{x.v}</div></div>))}</div>
-        {(trade.commission || trade.swap) && (<div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}><div style={{ padding: 14, borderRadius: 10, background: theme.hoverBg }}><div className="stat-label">Commission</div><div style={{ fontSize: 14, fontWeight: 600, color: '#ef4444', marginTop: 4 }}>-${trade.commission?.toFixed(2)}</div></div><div style={{ padding: 14, borderRadius: 10, background: theme.hoverBg }}><div className="stat-label">Swap</div><div style={{ fontSize: 14, fontWeight: 600, color: trade.swap >= 0 ? '#10b981' : '#ef4444', marginTop: 4 }}>{trade.swap >= 0 ? '+' : ''}${trade.swap?.toFixed(2)}</div></div></div>)}
-        <div style={{ padding: 14, borderRadius: 10, background: theme.hoverBg, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}><span style={{ fontSize: 13, color: theme.textMuted }}>Structure</span><span className="badge" style={{ background: MARKET_STRUCTURES[trade.marketStructure]?.color, color: 'white' }}>{MARKET_STRUCTURES[trade.marketStructure]?.label}</span></div>
-        {(chartImg || trade.chartLink) && (<div style={{ borderRadius: 10, overflow: 'hidden', border: `1px solid ${theme.cardBorder}` }}>{chartImg && <img src={chartImg} alt="Chart" style={{ width: '100%', height: 200, objectFit: 'cover' }} onError={(e) => e.target.style.display = 'none'} />}{trade.chartLink && (<a href={trade.chartLink} target="_blank" rel="noopener noreferrer" style={{ display: 'flex', alignItems: 'center', gap: 8, padding: 14, fontSize: 13, color: '#6366f1', textDecoration: 'none', background: theme.hoverBg }}><ExternalLink size={14} />Open in TradingView</a>)}</div>)}
-        {trade.notes && (<div><div className="stat-label" style={{ marginBottom: 8 }}>Notes</div><p style={{ fontSize: 14, color: theme.text, padding: 14, borderRadius: 10, background: theme.hoverBg }}>{trade.notes}</p></div>)}
+        <div className="flex justify-between items-center">
+          <span className="badge" style={{ background: trade.side === 'Long' ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)', color: trade.side === 'Long' ? '#10b981' : '#ef4444', padding: '8px 14px', fontSize: 13 }}>{trade.side}</span>
+          <span style={{ fontSize: 24, fontWeight: 700, color: trade.pnl >= 0 ? '#10b981' : '#ef4444' }}>{trade.pnl >= 0 ? '+' : ''}${trade.pnl?.toFixed(2)}</span>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10 }}>
+          {[{ l: 'Entry', v: trade.entry }, { l: 'Exit', v: trade.exit }, { l: 'Lots', v: trade.lots }, { l: 'R:R', v: trade.riskReward }].map(x => (
+            <div key={x.l} style={{ padding: 14, borderRadius: 10, background: theme.hoverBg, textAlign: 'center' }}>
+              <div className="stat-label">{x.l}</div><div style={{ fontSize: 14, fontWeight: 600, color: theme.text, marginTop: 4 }}>{x.v}</div>
+            </div>
+          ))}
+        </div>
+        {(trade.commission || trade.swap) && (
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+            <div style={{ padding: 14, borderRadius: 10, background: theme.hoverBg }}><div className="stat-label">Commission</div><div style={{ fontSize: 14, fontWeight: 600, color: '#ef4444', marginTop: 4 }}>-${trade.commission?.toFixed(2)}</div></div>
+            <div style={{ padding: 14, borderRadius: 10, background: theme.hoverBg }}><div className="stat-label">Swap</div><div style={{ fontSize: 14, fontWeight: 600, color: trade.swap >= 0 ? '#10b981' : '#ef4444', marginTop: 4 }}>{trade.swap >= 0 ? '+' : ''}${trade.swap?.toFixed(2)}</div></div>
+          </div>
+        )}
+        <div style={{ padding: 14, borderRadius: 10, background: theme.hoverBg, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <span style={{ fontSize: 13, color: theme.textMuted }}>Structure</span>
+          <span className="badge" style={{ background: MARKET_STRUCTURES[trade.marketStructure]?.color, color: 'white' }}>{MARKET_STRUCTURES[trade.marketStructure]?.label}</span>
+        </div>
+        {(chartImg || trade.chartLink) && (
+          <div style={{ borderRadius: 10, overflow: 'hidden', border: `1px solid ${theme.cardBorder}` }}>
+            {chartImg && <img src={chartImg} alt="Chart" style={{ width: '100%', height: 200, objectFit: 'cover' }} onError={(e) => e.target.style.display = 'none'} />}
+            {trade.chartLink && <a href={trade.chartLink} target="_blank" rel="noopener noreferrer" style={{ display: 'flex', alignItems: 'center', gap: 8, padding: 14, fontSize: 13, color: '#6366f1', textDecoration: 'none', background: theme.hoverBg }}><ExternalLink size={14} />Open in TradingView</a>}
+          </div>
+        )}
+        {trade.notes && <div><div className="stat-label" style={{ marginBottom: 8 }}>Notes</div><p style={{ fontSize: 14, color: theme.text, padding: 14, borderRadius: 10, background: theme.hoverBg }}>{trade.notes}</p></div>}
       </div>
       <div style={{ padding: 20, borderTop: `1px solid ${theme.cardBorder}`, display: 'flex', justifyContent: 'space-between' }}>
         {!confirmDelete ? <>
           <button onClick={() => setConfirmDelete(true)} style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'none', border: 'none', fontSize: 14, color: '#ef4444', cursor: 'pointer' }}><Trash2 size={16} />Delete</button>
-          <div className="flex gap-2"><button onClick={() => onEdit(trade)} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '10px 16px', borderRadius: 10, border: `1px solid ${theme.cardBorder}`, background: 'none', fontSize: 14, color: theme.text, cursor: 'pointer' }}><Edit3 size={16} />Edit</button><button onClick={onClose} className="btn-primary">Close</button></div>
+          <div className="flex gap-2">
+            <button onClick={() => onEdit(trade)} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '10px 16px', borderRadius: 10, border: `1px solid ${theme.cardBorder}`, background: 'none', fontSize: 14, color: theme.text, cursor: 'pointer' }}><Edit3 size={16} />Edit</button>
+            <button onClick={onClose} className="btn-primary">Close</button>
+          </div>
         </> : <>
           <span style={{ fontSize: 14, color: theme.textMuted }}>Delete this trade?</span>
-          <div className="flex gap-2"><button onClick={() => setConfirmDelete(false)} style={{ background: 'none', border: 'none', fontSize: 14, color: theme.textMuted, cursor: 'pointer' }}>Cancel</button><button onClick={() => onDelete(trade.id)} className="btn-primary" style={{ background: '#ef4444' }}>Delete</button></div>
+          <div className="flex gap-2">
+            <button onClick={() => setConfirmDelete(false)} style={{ background: 'none', border: 'none', fontSize: 14, color: theme.textMuted, cursor: 'pointer' }}>Cancel</button>
+            <button onClick={() => onDelete(trade.id)} className="btn-primary" style={{ background: '#ef4444' }}>Delete</button>
+          </div>
         </>}
       </div>
     </Modal>
