@@ -2231,7 +2231,6 @@ function NewsCalendarView() {
   }, [viewMode]);
 
   const loadEvents = async (mode) => {
-    // Check localStorage cache first
     const cacheKey = `ellipse_news_${mode}`;
     const cacheTimeKey = `ellipse_news_${mode}_time`;
     const cached = localStorage.getItem(cacheKey);
@@ -2250,55 +2249,52 @@ function NewsCalendarView() {
 
     setLoading(true);
     setError('');
-    try {
-      const endpoint = mode === 'today'
-        ? 'https://nfs.faireconomy.media/ff_calendar_thisweek.json'
-        : 'https://nfs.faireconomy.media/ff_calendar_thisweek.json';
-      
-      const res = await fetch(endpoint);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      
-      // Normalize the data
-      const normalized = (Array.isArray(data) ? data : []).map(e => ({
-        title: e.title || e.event || e.name || '',
-        country: e.country || e.currency || '',
-        date: e.date || '',
-        impact: e.impact || e.importance || 'Low',
-        forecast: e.forecast ?? '',
-        previous: e.previous ?? '',
-        actual: e.actual ?? '',
-      }));
-      
-      setEvents(normalized);
-      setLastFetched(new Date());
-      
-      // Cache it
-      localStorage.setItem(cacheKey, JSON.stringify(normalized));
-      localStorage.setItem(cacheTimeKey, now.toString());
-    } catch (err) {
-      console.warn('News fetch failed, trying fallback:', err.message);
-      // Try fallback with Forex Factory public JSON
+
+    const normalize = (data) => (Array.isArray(data) ? data : []).map(e => ({
+      title: e.title || e.event || e.name || '',
+      country: e.country || e.currency || '',
+      date: e.date || '',
+      impact: e.impact || e.importance || 'Low',
+      forecast: e.forecast ?? '',
+      previous: e.previous ?? '',
+      actual: e.actual ?? '',
+    }));
+
+    // Try multiple sources in order
+    const sources = [
+      // 1. Supabase Edge Function proxy (if you deploy it)
+      `https://ksbhbhjnrrkcnunehksx.supabase.co/functions/v1/forex-calendar`,
+      // 2. Direct Forex Factory CDN (may work in some environments)
+      'https://cdn-nfs.faireconomy.media/ff_calendar_thisweek.json',
+      // 3. Non-CDN variant
+      'https://nfs.faireconomy.media/ff_calendar_thisweek.json',
+    ];
+
+    for (const url of sources) {
       try {
-        const res = await fetch('https://nfs.faireconomy.media/ff_calendar_thisweek.json');
+        const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+        if (!res.ok) continue;
+        const contentType = res.headers.get('content-type') || '';
+        // Skip if we got an HTML error page instead of JSON
+        if (contentType.includes('html')) continue;
         const data = await res.json();
-        const normalized = (Array.isArray(data) ? data : []).map(e => ({
-          title: e.title || '',
-          country: e.country || '',
-          date: e.date || '',
-          impact: e.impact || 'Low',
-          forecast: e.forecast ?? '',
-          previous: e.previous ?? '',
-          actual: e.actual ?? '',
-        }));
+        if (!Array.isArray(data) || data.length === 0) continue;
+
+        const normalized = normalize(data);
         setEvents(normalized);
         setLastFetched(new Date());
         localStorage.setItem(cacheKey, JSON.stringify(normalized));
-        localStorage.setItem(`${cacheKey}_time`, now.toString());
-      } catch (err2) {
-        setError('Unable to load economic calendar. Check your connection.');
+        localStorage.setItem(cacheTimeKey, now.toString());
+        setLoading(false);
+        return; // success
+      } catch (err) {
+        console.warn(`News source failed (${url}):`, err.message);
+        continue;
       }
     }
+
+    // All sources failed
+    setError('Unable to load economic calendar. You may need to deploy the Supabase Edge Function proxy (see docs).');
     setLoading(false);
   };
 
