@@ -140,34 +140,78 @@ const parseMT5Statement = (html) => {
 // Parse cTrader HTML statement  
 const parseCTraderStatement = (html) => {
   const trades = [];
+  const phaseSplits = [];
   const parser = new DOMParser();
   const doc = parser.parseFromString(html, 'text/html');
   
-  // Helper: parse numbers with space as thousands separator (e.g. "2 749.78", "-4 668.45", "50 000.00")
   const parseNum = (text) => {
     if (!text) return 0;
-    // Remove non-breaking spaces, regular spaces between digits, currency symbols, and "Lots"
     const cleaned = text.replace(/\u00a0/g, '').replace(/(\d)\s+(\d)/g, '$1$2').replace(/[^\d.\-]/g, '');
     return parseFloat(cleaned) || 0;
   };
   
-  // Helper: parse DD/MM/YYYY HH:MM:SS.mmm date format
   const parseDate = (text) => {
     if (!text) return { date: new Date().toISOString().split('T')[0], time: '00:00' };
     const match = text.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{2}):(\d{2})/);
     if (match) {
       const [, day, month, year, hour, min] = match;
-      return { 
-        date: `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`, 
-        time: `${hour}:${min}` 
-      };
+      return { date: `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`, time: `${hour}:${min}` };
     }
     return { date: new Date().toISOString().split('T')[0], time: '00:00' };
   };
   
-  // Find all tables and look for the History table specifically
   const tables = doc.querySelectorAll('table');
   
+  // ---- PASS 1: Parse Transactions table to detect phase transitions ----
+  for (const table of tables) {
+    const rows = table.querySelectorAll('tr');
+    let isTransactionsTable = false;
+    let txnColumnMap = {};
+    
+    for (const row of rows) {
+      const cells = row.querySelectorAll('td');
+      const rowText = row.textContent.trim();
+      
+      if (rowText === 'Transactions') { isTransactionsTable = true; continue; }
+      if (isTransactionsTable && /^(Summary|Positions|Orders|History)$/.test(rowText)) break;
+      if (!isTransactionsTable) continue;
+      
+      if (cells.length >= 4 && Object.keys(txnColumnMap).length === 0) {
+        const hTexts = Array.from(cells).map(c => c.textContent.trim().toLowerCase());
+        if (hTexts.some(h => h.includes('type'))) {
+          hTexts.forEach((h, i) => {
+            if ((h === 'id' || h.includes('id')) && !h.includes('time')) txnColumnMap.id = i;
+            if (h.includes('time')) txnColumnMap.time = i;
+            if (h === 'type') txnColumnMap.type = i;
+            if (h.includes('amount')) txnColumnMap.amount = i;
+            if (h.includes('note')) txnColumnMap.note = i;
+          });
+          continue;
+        }
+      }
+      
+      if (Object.keys(txnColumnMap).length === 0 || cells.length < 4) continue;
+      
+      const getText = (idx) => idx !== undefined && cells[idx] ? cells[idx].textContent.trim() : '';
+      const txnType = getText(txnColumnMap.type).toLowerCase();
+      const txnNote = getText(txnColumnMap.note).toUpperCase();
+      const txnTime = getText(txnColumnMap.time);
+      
+      // Detect phase markers: withdrawals with notes containing PHASE, FUNDED, VERIFICATION, EVALUATION, INITIAL BALANCE
+      if ((txnType === 'withdraw' || txnType === 'withdrawal') && 
+          (txnNote.includes('PHASE') || txnNote.includes('FUNDED') || txnNote.includes('VERIFICATION') || 
+           txnNote.includes('EVALUATION') || txnNote.includes('INITIAL BALANCE'))) {
+        const { date, time } = parseDate(txnTime);
+        const phaseName = txnNote.includes('PHASE3') ? 'Phase 3' :
+                          txnNote.includes('PHASE2') ? 'Phase 2' :
+                          txnNote.includes('FUNDED') ? 'Funded' :
+                          txnNote.includes('VERIFICATION') ? 'Verification' : 'Next Phase';
+        phaseSplits.push({ splitDate: date, splitTime: time, phaseName, note: getText(txnColumnMap.note) });
+      }
+    }
+  }
+  
+  // ---- PASS 2: Parse History table for trades ----
   for (const table of tables) {
     const rows = table.querySelectorAll('tr');
     let isHistoryTable = false;
@@ -177,23 +221,13 @@ const parseCTraderStatement = (html) => {
       const cells = row.querySelectorAll('td');
       const rowText = row.textContent.trim();
       
-      // Detect "History" section header
-      if (rowText === 'History') {
-        isHistoryTable = true;
-        continue;
-      }
-      
-      // Detect if we've left the History table (hit Positions, Orders, Transactions, Summary)
-      if (isHistoryTable && /^(Positions|Orders|Transactions|Summary)$/.test(rowText)) {
-        break;
-      }
-      
+      if (rowText === 'History') { isHistoryTable = true; continue; }
+      if (isHistoryTable && /^(Positions|Orders|Transactions|Summary)$/.test(rowText)) break;
       if (!isHistoryTable) continue;
       
-      // Detect column headers row (contains "Symbol" and "Opening direction")
-      if (cells.length >= 10) {
+      if (cells.length >= 10 && Object.keys(columnMap).length === 0) {
         const headerTexts = Array.from(cells).map(c => c.textContent.trim().toLowerCase());
-        if (headerTexts.some(h => h.includes('symbol')) && headerTexts.some(h => h.includes('direction') || h.includes('opening direction'))) {
+        if (headerTexts.some(h => h.includes('symbol')) && headerTexts.some(h => h.includes('direction'))) {
           headerTexts.forEach((h, i) => {
             if (h.includes('symbol')) columnMap.symbol = i;
             if (h.includes('opening direction') || h === 'direction') columnMap.direction = i;
@@ -211,15 +245,10 @@ const parseCTraderStatement = (html) => {
         }
       }
       
-      // Skip if we haven't found headers yet
       if (Object.keys(columnMap).length === 0) continue;
-      
-      // Skip totals row and empty rows
       if (rowText.startsWith('Totals') || cells.length < 10) continue;
       
-      // Extract trade data by column position
       const getText = (idx) => idx !== undefined && cells[idx] ? cells[idx].textContent.trim() : '';
-      
       const symbol = getText(columnMap.symbol);
       const directionText = getText(columnMap.direction).toLowerCase();
       const openTimeText = getText(columnMap.openTime);
@@ -230,44 +259,36 @@ const parseCTraderStatement = (html) => {
       const swap = parseNum(getText(columnMap.swap));
       const commission = Math.abs(parseNum(getText(columnMap.commission)));
       const netPnl = parseNum(getText(columnMap.net));
-      
-      // Parse volume from "2.40 Lots" or "0.20 Lots"  
       const lotsMatch = quantityText.match(/([\d.]+)\s*Lots?/i);
       const lots = lotsMatch ? parseFloat(lotsMatch[1]) : parseNum(quantityText);
       
-      // Validate this is a real trade row
       if (!symbol || symbol.length < 3 || symbol.length > 10) continue;
       if (!directionText.includes('buy') && !directionText.includes('sell')) continue;
       if (lots === 0) continue;
       
-      // Parse closing time for the trade date (use close time as the trade date)
       const { date, time } = parseDate(closeTimeText || openTimeText);
       
+      // Tag trade with its phase based on split dates
+      let phase = 'Phase 1';
+      for (const split of phaseSplits) {
+        if (date > split.splitDate || (date === split.splitDate && time >= split.splitTime)) {
+          phase = split.phaseName;
+        }
+      }
+      
       trades.push({
-        date,
-        time,
-        symbol: symbol.replace('/', '').toUpperCase(),
+        date, time, symbol: symbol.replace('/', '').toUpperCase(),
         side: directionText.includes('buy') ? 'Long' : 'Short',
-        entry: entryPrice,
-        exit: closePrice,
-        lots,
-        pnl: netPnl, // Use the actual Net USD from the statement, not calculated
-        commission,
-        swap,
-        stopLoss: 0,
-        takeProfit: 0,
-        marketStructure: '',
-        candleType: '',
-        liquidityTaken: [],
-        liquidityTarget: [],
-        notes: 'Imported from cTrader',
-        chartLink: '',
-        chartImage: ''
+        entry: entryPrice, exit: closePrice, lots, pnl: netPnl, commission, swap,
+        stopLoss: 0, takeProfit: 0, marketStructure: '', candleType: '',
+        liquidityTaken: [], liquidityTarget: [],
+        notes: 'Imported from cTrader', chartLink: '', chartImage: '',
+        _phase: phase
       });
     }
   }
   
-  return trades;
+  return { trades, phaseSplits };
 };
 
 // Parse CSV file
@@ -1414,6 +1435,8 @@ function ImportModal({ onClose, onImport, accounts }) {
   const [platform, setPlatform] = useState('MT5');
   const [account, setAccount] = useState(accounts[0]?.name || '');
   const [parsedTrades, setParsedTrades] = useState([]);
+  const [phaseSplits, setPhaseSplits] = useState([]);
+  const [phaseAccounts, setPhaseAccounts] = useState({}); // { 'Phase 1': 'accountName', 'Phase 2': 'accountName' }
   const [importing, setImporting] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
@@ -1421,33 +1444,86 @@ function ImportModal({ onClose, onImport, accounts }) {
   const handleFileSelect = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    setError(''); setParsedTrades([]);
+    setError(''); setParsedTrades([]); setPhaseSplits([]);
     try {
       const text = await file.text();
       let trades = [];
-      if (file.name.endsWith('.csv')) trades = parseCSV(text, platform);
-      else if (file.name.endsWith('.html') || file.name.endsWith('.htm')) trades = platform === 'MT5' ? parseMT5Statement(text) : parseCTraderStatement(text);
-      else if (text.includes('<html') || text.includes('<table')) trades = platform === 'MT5' ? parseMT5Statement(text) : parseCTraderStatement(text);
-      else trades = parseCSV(text, platform);
+      let splits = [];
+      if (file.name.endsWith('.csv')) {
+        trades = parseCSV(text, platform);
+      } else if (file.name.endsWith('.html') || file.name.endsWith('.htm')) {
+        if (platform === 'MT5') {
+          trades = parseMT5Statement(text);
+        } else {
+          const result = parseCTraderStatement(text);
+          trades = result.trades;
+          splits = result.phaseSplits || [];
+        }
+      } else if (text.includes('<html') || text.includes('<table')) {
+        if (platform === 'MT5') {
+          trades = parseMT5Statement(text);
+        } else {
+          const result = parseCTraderStatement(text);
+          trades = result.trades;
+          splits = result.phaseSplits || [];
+        }
+      } else {
+        trades = parseCSV(text, platform);
+      }
       if (trades.length === 0) setError('No trades found. Check the statement format.');
-      else setParsedTrades(trades);
+      else {
+        setParsedTrades(trades);
+        setPhaseSplits(splits);
+        // Auto-set default account for each phase
+        if (splits.length > 0) {
+          const phases = ['Phase 1', ...splits.map(s => s.phaseName)];
+          const defaults = {};
+          phases.forEach(p => { defaults[p] = accounts[0]?.name || ''; });
+          setPhaseAccounts(defaults);
+        }
+      }
     } catch (err) { setError('Failed to parse: ' + err.message); }
   };
 
+  // Get unique phases from trades
+  const detectedPhases = phaseSplits.length > 0 
+    ? [...new Set(parsedTrades.map(t => t._phase || 'Phase 1'))]
+    : [];
+
   const handleImport = async () => {
-    if (!parsedTrades.length || !account) return;
+    if (!parsedTrades.length) return;
     setImporting(true); setError('');
     try {
-      const count = await onImport(parsedTrades, account);
-      setSuccess(`Imported ${count} trades!`);
+      let totalImported = 0;
+      
+      if (phaseSplits.length > 0 && detectedPhases.length > 1) {
+        // Import each phase to its designated account
+        for (const phase of detectedPhases) {
+          const phaseTrades = parsedTrades.filter(t => (t._phase || 'Phase 1') === phase);
+          const targetAccount = phaseAccounts[phase] || account;
+          if (phaseTrades.length > 0 && targetAccount) {
+            // Strip _phase from trades before importing
+            const cleanTrades = phaseTrades.map(({ _phase, ...rest }) => rest);
+            const count = await onImport(cleanTrades, targetAccount);
+            totalImported += count;
+          }
+        }
+      } else {
+        // Single phase — import all to one account
+        const cleanTrades = parsedTrades.map(({ _phase, ...rest }) => rest);
+        totalImported = await onImport(cleanTrades, account);
+      }
+      
+      setSuccess(`Imported ${totalImported} trades${detectedPhases.length > 1 ? ` across ${detectedPhases.length} phases` : ''}!`);
       setParsedTrades([]);
+      setPhaseSplits([]);
       setTimeout(onClose, 1500);
     } catch (err) { setError('Import failed: ' + err.message); }
     setImporting(false);
   };
 
   return (
-    <Modal width={600} onClose={onClose}>
+    <Modal width={640} onClose={onClose}>
       <div style={{ padding: 20, borderBottom: `1px solid ${theme.cardBorder}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div>
           <h3 style={{ fontSize: 16, fontWeight: 600, color: theme.text }}>Import Trades</h3>
@@ -1464,12 +1540,43 @@ function ImportModal({ onClose, onImport, accounts }) {
             ))}
           </div>
         </div>
-        <div>
-          <label className="label">Import to Account</label>
-          <select value={account} onChange={(e) => setAccount(e.target.value)} className="input">
-            {accounts.length === 0 ? <option>No accounts - create one first</option> : accounts.map(a => <option key={a.id} value={a.name}>{a.name}</option>)}
-          </select>
-        </div>
+
+        {/* Account selection — show per-phase if phases detected, otherwise single */}
+        {phaseSplits.length > 0 && detectedPhases.length > 1 ? (
+          <div>
+            <label className="label">Import to Accounts (per phase)</label>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {detectedPhases.map(phase => {
+                const phaseTrades = parsedTrades.filter(t => (t._phase || 'Phase 1') === phase);
+                const phasePnl = phaseTrades.reduce((s, t) => s + t.pnl, 0);
+                return (
+                  <div key={phase} style={{ padding: 12, borderRadius: 10, border: `1px solid ${theme.cardBorder}`, display: 'flex', alignItems: 'center', gap: 12 }}>
+                    <div style={{ flex: 1 }}>
+                      <div className="flex items-center gap-2">
+                        <span style={{ fontSize: 13, fontWeight: 600, color: theme.text }}>{phase}</span>
+                        <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, background: 'rgba(99,102,241,0.1)', color: '#6366f1' }}>{phaseTrades.length} trades</span>
+                      </div>
+                      <div style={{ fontSize: 12, color: phasePnl >= 0 ? '#10b981' : '#ef4444', marginTop: 2 }}>
+                        P&L: {phasePnl >= 0 ? '+' : ''}${phasePnl.toFixed(2)}
+                      </div>
+                    </div>
+                    <select value={phaseAccounts[phase] || ''} onChange={(e) => setPhaseAccounts(prev => ({ ...prev, [phase]: e.target.value }))} className="input input-sm" style={{ width: 180 }}>
+                      {accounts.length === 0 ? <option>No accounts</option> : accounts.map(a => <option key={a.id} value={a.name}>{a.name}</option>)}
+                    </select>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ) : (
+          <div>
+            <label className="label">Import to Account</label>
+            <select value={account} onChange={(e) => setAccount(e.target.value)} className="input">
+              {accounts.length === 0 ? <option>No accounts - create one first</option> : accounts.map(a => <option key={a.id} value={a.name}>{a.name}</option>)}
+            </select>
+          </div>
+        )}
+
         <div>
           <label className="label">Statement File</label>
           <input type="file" ref={fileInputRef} onChange={handleFileSelect} accept=".html,.htm,.csv" style={{ display: 'none' }} />
@@ -1479,28 +1586,79 @@ function ImportModal({ onClose, onImport, accounts }) {
             <span style={{ fontSize: 12, color: theme.textFaint }}>HTML or CSV from {platform}</span>
           </button>
         </div>
+
+        {/* Phase Detection Banner */}
+        {phaseSplits.length > 0 && (
+          <div style={{ padding: 14, borderRadius: 10, background: 'rgba(99,102,241,0.08)', border: '1px solid rgba(99,102,241,0.2)', display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+            <Flag size={18} style={{ color: '#6366f1', marginTop: 2, flexShrink: 0 }} />
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 600, color: '#6366f1' }}>Phase transition detected</div>
+              <div style={{ fontSize: 12, color: theme.textMuted, marginTop: 4 }}>
+                {phaseSplits.map((s, i) => (
+                  <div key={i}>→ <strong>{s.phaseName}</strong> starting {s.splitDate} ({s.note})</div>
+                ))}
+              </div>
+              <div style={{ fontSize: 11, color: theme.textFaint, marginTop: 6 }}>
+                Trades will be split and imported to separate accounts per phase. You can assign different accounts above.
+              </div>
+            </div>
+          </div>
+        )}
+
         {error && <div style={{ padding: 12, borderRadius: 10, background: 'rgba(239,68,68,0.1)', display: 'flex', alignItems: 'center', gap: 8 }}><AlertCircle size={16} style={{ color: '#ef4444' }} /><span style={{ fontSize: 13, color: '#ef4444' }}>{error}</span></div>}
         {success && <div style={{ padding: 12, borderRadius: 10, background: 'rgba(16,185,129,0.1)', display: 'flex', alignItems: 'center', gap: 8 }}><CheckCircle size={16} style={{ color: '#10b981' }} /><span style={{ fontSize: 13, color: '#10b981' }}>{success}</span></div>}
+
+        {/* Trade Preview — grouped by phase if phases detected */}
         {parsedTrades.length > 0 && (
           <div style={{ borderRadius: 10, border: `1px solid ${theme.cardBorder}`, overflow: 'hidden' }}>
             <div style={{ padding: 12, background: theme.hoverBg, display: 'flex', justifyContent: 'space-between' }}>
               <span style={{ fontSize: 13, fontWeight: 500, color: theme.text }}>Preview ({parsedTrades.length} trades)</span>
               <span style={{ fontSize: 12, color: parsedTrades.reduce((s, t) => s + t.pnl, 0) >= 0 ? '#10b981' : '#ef4444' }}>Total: ${parsedTrades.reduce((s, t) => s + t.pnl, 0).toFixed(2)}</span>
             </div>
-            <div style={{ maxHeight: 200, overflow: 'auto' }} className="scrollbar">
-              {parsedTrades.slice(0, 10).map((t, i) => (
-                <div key={i} style={{ padding: 10, borderBottom: `1px solid ${theme.cardBorder}`, display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
-                  <div className="flex items-center gap-3">
-                    <span style={{ fontWeight: 600, color: theme.text }}>{t.symbol}</span>
-                    <span style={{ color: t.side === 'Long' ? '#10b981' : '#ef4444' }}>{t.side}</span>
-                    <span style={{ color: theme.textFaint }}>{t.lots} lots</span>
+            <div style={{ maxHeight: 240, overflow: 'auto' }} className="scrollbar">
+              {detectedPhases.length > 1 ? (
+                // Grouped by phase
+                detectedPhases.map(phase => {
+                  const phaseTrades = parsedTrades.filter(t => (t._phase || 'Phase 1') === phase);
+                  const phasePnl = phaseTrades.reduce((s, t) => s + t.pnl, 0);
+                  return (
+                    <div key={phase}>
+                      <div style={{ padding: '8px 10px', background: theme.hoverBg, borderBottom: `1px solid ${theme.cardBorder}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ fontSize: 12, fontWeight: 600, color: '#6366f1' }}>{phase} ({phaseTrades.length} trades)</span>
+                        <span style={{ fontSize: 11, fontWeight: 600, color: phasePnl >= 0 ? '#10b981' : '#ef4444' }}>{phasePnl >= 0 ? '+' : ''}${phasePnl.toFixed(2)}</span>
+                      </div>
+                      {phaseTrades.map((t, i) => (
+                        <div key={i} style={{ padding: 10, borderBottom: `1px solid ${theme.cardBorder}`, display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
+                          <div className="flex items-center gap-3">
+                            <span style={{ fontWeight: 600, color: theme.text }}>{t.symbol}</span>
+                            <span style={{ color: t.side === 'Long' ? '#10b981' : '#ef4444' }}>{t.side}</span>
+                            <span style={{ color: theme.textFaint }}>{t.lots} lots</span>
+                          </div>
+                          <div className="flex items-center gap-3">
+                            <span style={{ color: theme.textFaint }}>{t.date}</span>
+                            <span style={{ fontWeight: 600, color: t.pnl >= 0 ? '#10b981' : '#ef4444' }}>{t.pnl >= 0 ? '+' : ''}${t.pnl.toFixed(2)}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })
+              ) : (
+                // Flat list
+                parsedTrades.map((t, i) => (
+                  <div key={i} style={{ padding: 10, borderBottom: `1px solid ${theme.cardBorder}`, display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
+                    <div className="flex items-center gap-3">
+                      <span style={{ fontWeight: 600, color: theme.text }}>{t.symbol}</span>
+                      <span style={{ color: t.side === 'Long' ? '#10b981' : '#ef4444' }}>{t.side}</span>
+                      <span style={{ color: theme.textFaint }}>{t.lots} lots</span>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <span style={{ color: theme.textFaint }}>{t.date}</span>
+                      <span style={{ fontWeight: 600, color: t.pnl >= 0 ? '#10b981' : '#ef4444' }}>{t.pnl >= 0 ? '+' : ''}${t.pnl.toFixed(2)}</span>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-3">
-                    <span style={{ color: theme.textFaint }}>{t.date}</span>
-                    <span style={{ fontWeight: 600, color: t.pnl >= 0 ? '#10b981' : '#ef4444' }}>{t.pnl >= 0 ? '+' : ''}${t.pnl.toFixed(2)}</span>
-                  </div>
-                </div>
-              ))}
+                ))
+              )}
             </div>
           </div>
         )}
