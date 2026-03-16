@@ -2221,10 +2221,38 @@ function NewsCalendarView() {
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [filterCurrency, setFilterCurrency] = useState('All');
+  const [selectedCurrencies, setSelectedCurrencies] = useState(new Set()); // empty = All
   const [filterImpact, setFilterImpact] = useState('All');
-  const [viewMode, setViewMode] = useState('week'); // 'today' or 'week'
+  const [viewMode, setViewMode] = useState('week');
   const [lastFetched, setLastFetched] = useState(null);
+
+  // Preset currency groups
+  const CURRENCY_GROUPS = {
+    'All': [],
+    'Majors': ['USD', 'EUR', 'GBP', 'JPY'],
+    'Commodity': ['AUD', 'CAD', 'NZD'],
+    'USD Pairs': ['USD'],
+    'JPY Pairs': ['JPY', 'USD'],
+    'EUR Pairs': ['EUR', 'USD'],
+    'GBP Pairs': ['GBP', 'USD'],
+  };
+
+  const toggleCurrency = (ccy) => {
+    setSelectedCurrencies(prev => {
+      const next = new Set(prev);
+      if (next.has(ccy)) next.delete(ccy); else next.add(ccy);
+      return next;
+    });
+  };
+
+  const applyGroup = (groupName) => {
+    const currencies = CURRENCY_GROUPS[groupName];
+    if (!currencies || currencies.length === 0) {
+      setSelectedCurrencies(new Set()); // All
+    } else {
+      setSelectedCurrencies(new Set(currencies));
+    }
+  };
 
   useEffect(() => {
     loadEvents(viewMode);
@@ -2301,7 +2329,7 @@ function NewsCalendarView() {
   // Filter events
   const today = new Date().toISOString().split('T')[0];
   const filtered = events.filter(e => {
-    if (filterCurrency !== 'All' && e.country !== filterCurrency) return false;
+    if (selectedCurrencies.size > 0 && !selectedCurrencies.has(e.country)) return false;
     if (filterImpact !== 'All' && e.impact !== filterImpact) return false;
     if (viewMode === 'today') {
       const eventDate = e.date ? new Date(e.date).toISOString().split('T')[0] : '';
@@ -2329,45 +2357,77 @@ function NewsCalendarView() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       {/* Filter Bar */}
-      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10 }}>
-        {/* View mode toggle */}
-        <div className="flex" style={{ background: theme.hoverBg, borderRadius: 8, padding: 3 }}>
-          {['today', 'week'].map(m => (
-            <button key={m} onClick={() => setViewMode(m)} style={{ padding: '6px 16px', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 500, background: viewMode === m ? theme.card : 'transparent', color: viewMode === m ? theme.text : theme.textMuted, boxShadow: viewMode === m ? '0 1px 3px rgba(0,0,0,0.1)' : 'none' }}>
-              {m === 'today' ? 'Today' : 'This Week'}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {/* Row 1: View mode + Impact + Status */}
+        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10 }}>
+          {/* View mode toggle */}
+          <div className="flex" style={{ background: theme.hoverBg, borderRadius: 8, padding: 3 }}>
+            {['today', 'week'].map(m => (
+              <button key={m} onClick={() => setViewMode(m)} style={{ padding: '6px 16px', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 500, background: viewMode === m ? theme.card : 'transparent', color: viewMode === m ? theme.text : theme.textMuted, boxShadow: viewMode === m ? '0 1px 3px rgba(0,0,0,0.1)' : 'none' }}>
+                {m === 'today' ? 'Today' : 'This Week'}
+              </button>
+            ))}
+          </div>
+
+          {/* Impact filter */}
+          <div className="flex" style={{ background: theme.hoverBg, borderRadius: 8, padding: 3 }}>
+            {['All', 'High', 'Medium', 'Low'].map(imp => (
+              <button key={imp} onClick={() => setFilterImpact(imp)} style={{ padding: '5px 12px', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: 11, fontWeight: 500, background: filterImpact === imp ? theme.card : 'transparent', color: filterImpact === imp ? (IMPACT_COLORS[imp] || theme.text) : theme.textMuted, boxShadow: filterImpact === imp ? '0 1px 3px rgba(0,0,0,0.1)' : 'none' }}>
+                {imp}
+              </button>
+            ))}
+          </div>
+
+          <div style={{ flex: 1 }} />
+
+          {/* Status */}
+          <div style={{ fontSize: 11, color: theme.textFaint }}>
+            {highImpactToday > 0 && <span style={{ color: '#ef4444', fontWeight: 600, marginRight: 8 }}>🔴 {highImpactToday} high-impact today</span>}
+            {lastFetched && <span>Updated {lastFetched.toLocaleTimeString()}</span>}
+          </div>
+
+          <button onClick={() => { localStorage.removeItem(`ellipse_news_${viewMode}`); localStorage.removeItem(`ellipse_news_${viewMode}_time`); loadEvents(viewMode); }} style={{ padding: '6px 12px', borderRadius: 8, border: `1px solid ${theme.cardBorder}`, background: 'none', fontSize: 12, color: theme.textMuted, cursor: 'pointer' }}>
+            Refresh
+          </button>
+        </div>
+
+        {/* Row 2: Currency Groups + Individual Currencies */}
+        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
+          {/* Group presets */}
+          <span style={{ fontSize: 11, color: theme.textFaint, marginRight: 2 }}>Groups:</span>
+          <div className="flex" style={{ background: theme.hoverBg, borderRadius: 8, padding: 3 }}>
+            {Object.keys(CURRENCY_GROUPS).map(group => {
+              const groupCcys = CURRENCY_GROUPS[group];
+              const isActive = group === 'All'
+                ? selectedCurrencies.size === 0
+                : groupCcys.length > 0 && groupCcys.every(c => selectedCurrencies.has(c)) && selectedCurrencies.size === groupCcys.length;
+              return (
+                <button key={group} onClick={() => applyGroup(group)} style={{ padding: '4px 10px', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: 11, fontWeight: 500, background: isActive ? '#6366f1' : 'transparent', color: isActive ? 'white' : theme.textMuted }}>
+                  {group}
+                </button>
+              );
+            })}
+          </div>
+
+          <div style={{ width: 1, height: 20, background: theme.cardBorder, margin: '0 4px' }} />
+
+          {/* Individual currency toggles */}
+          <span style={{ fontSize: 11, color: theme.textFaint, marginRight: 2 }}>Currencies:</span>
+          {NEWS_CURRENCIES.filter(c => c !== 'All').map(ccy => {
+            const isSelected = selectedCurrencies.has(ccy);
+            return (
+              <button key={ccy} onClick={() => toggleCurrency(ccy)} style={{ padding: '4px 10px', borderRadius: 6, fontSize: 11, fontWeight: 600, border: `1px solid ${isSelected ? '#6366f1' : theme.cardBorder}`, background: isSelected ? 'rgba(99,102,241,0.15)' : 'transparent', color: isSelected ? '#6366f1' : theme.textMuted, cursor: 'pointer', transition: 'all 0.15s' }}>
+                {ccy}
+              </button>
+            );
+          })}
+
+          {selectedCurrencies.size > 0 && (
+            <button onClick={() => setSelectedCurrencies(new Set())} style={{ padding: '4px 8px', borderRadius: 6, border: 'none', background: 'none', cursor: 'pointer', fontSize: 11, color: theme.textFaint, textDecoration: 'underline' }}>
+              Clear
             </button>
-          ))}
+          )}
         </div>
-
-        {/* Currency filter */}
-        <div className="flex" style={{ background: theme.hoverBg, borderRadius: 8, padding: 3 }}>
-          {NEWS_CURRENCIES.map(c => (
-            <button key={c} onClick={() => setFilterCurrency(c)} style={{ padding: '5px 10px', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: 11, fontWeight: 500, background: filterCurrency === c ? theme.card : 'transparent', color: filterCurrency === c ? theme.text : theme.textMuted, boxShadow: filterCurrency === c ? '0 1px 3px rgba(0,0,0,0.1)' : 'none' }}>
-              {c}
-            </button>
-          ))}
-        </div>
-
-        {/* Impact filter */}
-        <div className="flex" style={{ background: theme.hoverBg, borderRadius: 8, padding: 3 }}>
-          {['All', 'High', 'Medium', 'Low'].map(imp => (
-            <button key={imp} onClick={() => setFilterImpact(imp)} style={{ padding: '5px 12px', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: 11, fontWeight: 500, background: filterImpact === imp ? theme.card : 'transparent', color: filterImpact === imp ? (IMPACT_COLORS[imp] || theme.text) : theme.textMuted, boxShadow: filterImpact === imp ? '0 1px 3px rgba(0,0,0,0.1)' : 'none' }}>
-              {imp}
-            </button>
-          ))}
-        </div>
-
-        <div style={{ flex: 1 }} />
-
-        {/* Status */}
-        <div style={{ fontSize: 11, color: theme.textFaint }}>
-          {highImpactToday > 0 && <span style={{ color: '#ef4444', fontWeight: 600, marginRight: 8 }}>🔴 {highImpactToday} high-impact today</span>}
-          {lastFetched && <span>Updated {lastFetched.toLocaleTimeString()}</span>}
-        </div>
-        
-        <button onClick={() => { localStorage.removeItem(`ellipse_news_${viewMode}`); localStorage.removeItem(`ellipse_news_${viewMode}_time`); loadEvents(viewMode); }} style={{ padding: '6px 12px', borderRadius: 8, border: `1px solid ${theme.cardBorder}`, background: 'none', fontSize: 12, color: theme.textMuted, cursor: 'pointer' }}>
-          Refresh
-        </button>
       </div>
 
       {/* Loading */}
