@@ -462,6 +462,33 @@ export default function TradingJournal() {
             setChallenges(localChallenges);
           } catch {}
         }
+
+        // Load journal entries separately — table may not exist yet
+        try {
+          const journalRes = await supabase.from('journal_entries').select('*').order('date', { ascending: false });
+          if (journalRes.data) {
+            setJournalEntries(journalRes.data.map(e => ({
+              id: e.id,
+              date: e.date,
+              instrument: e.instrument || '',
+              timeframe: e.timeframe || 'Daily',
+              bias: e.bias || 'Neutral',
+              idea: e.idea || '',
+              keyLevels: e.key_levels || '',
+              confluences: Array.isArray(e.confluences) ? e.confluences : [],
+              notes: e.notes || '',
+              chartImage: e.chart_image || '',
+              createdAt: e.created_at,
+              updatedAt: e.updated_at
+            })));
+          }
+        } catch (journalErr) {
+          console.warn('Journal entries table not available, using localStorage:', journalErr.message);
+          try {
+            const localEntries = JSON.parse(localStorage.getItem('ellipse_journal_entries') || '[]');
+            setJournalEntries(localEntries);
+          } catch {}
+        }
         
         setSynced(true);
       } catch (err) {
@@ -480,26 +507,48 @@ export default function TradingJournal() {
     }
   }, [challenges]);
 
-  // Load/save journal entries from localStorage
+  // Save journal entries to localStorage as fallback
   useEffect(() => {
-    try {
-      const saved = JSON.parse(localStorage.getItem('ellipse_journal_entries') || '[]');
-      setJournalEntries(saved);
-    } catch {}
-  }, []);
-  useEffect(() => {
-    localStorage.setItem('ellipse_journal_entries', JSON.stringify(journalEntries));
+    if (journalEntries.length > 0) {
+      localStorage.setItem('ellipse_journal_entries', JSON.stringify(journalEntries));
+    }
   }, [journalEntries]);
 
-  // Journal entry CRUD
-  const addJournalEntry = (entry) => {
+  // Journal entry CRUD — Supabase with localStorage fallback
+  const addJournalEntry = async (entry) => {
+    try {
+      const dbEntry = {
+        date: entry.date, instrument: entry.instrument, timeframe: entry.timeframe,
+        bias: entry.bias, idea: entry.idea, key_levels: entry.keyLevels,
+        confluences: entry.confluences, notes: entry.notes, chart_image: entry.chartImage
+      };
+      const { data, error } = await supabase.from('journal_entries').insert(dbEntry).select().single();
+      if (!error && data) {
+        setJournalEntries(prev => [{ ...entry, id: data.id, createdAt: data.created_at }, ...prev]);
+        return;
+      }
+    } catch {}
+    // Fallback to local
     const id = 'je_' + Date.now();
     setJournalEntries(prev => [{ ...entry, id, createdAt: new Date().toISOString() }, ...prev]);
   };
-  const updateJournalEntry = (entry) => {
+
+  const updateJournalEntry = async (entry) => {
+    try {
+      const { error } = await supabase.from('journal_entries').update({
+        date: entry.date, instrument: entry.instrument, timeframe: entry.timeframe,
+        bias: entry.bias, idea: entry.idea, key_levels: entry.keyLevels,
+        confluences: entry.confluences, notes: entry.notes, chart_image: entry.chartImage
+      }).eq('id', entry.id);
+      if (error) throw error;
+    } catch {}
     setJournalEntries(prev => prev.map(e => e.id === entry.id ? { ...entry, updatedAt: new Date().toISOString() } : e));
   };
-  const deleteJournalEntry = (id) => {
+
+  const deleteJournalEntry = async (id) => {
+    try {
+      await supabase.from('journal_entries').delete().eq('id', id);
+    } catch {}
     setJournalEntries(prev => prev.filter(e => e.id !== id));
   };
 
