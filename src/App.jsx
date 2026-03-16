@@ -400,6 +400,7 @@ export default function TradingJournal() {
   const [analyticsAccount, setAnalyticsAccount] = useState('all');
   const [loading, setLoading] = useState(true);
   const [synced, setSynced] = useState(false);
+  const [journalEntries, setJournalEntries] = useState([]);
 
   useEffect(() => { localStorage.setItem('ellipse_darkMode', darkMode); }, [darkMode]);
 
@@ -478,6 +479,29 @@ export default function TradingJournal() {
       localStorage.setItem('ellipse_challenges', JSON.stringify(challenges));
     }
   }, [challenges]);
+
+  // Load/save journal entries from localStorage
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem('ellipse_journal_entries') || '[]');
+      setJournalEntries(saved);
+    } catch {}
+  }, []);
+  useEffect(() => {
+    localStorage.setItem('ellipse_journal_entries', JSON.stringify(journalEntries));
+  }, [journalEntries]);
+
+  // Journal entry CRUD
+  const addJournalEntry = (entry) => {
+    const id = 'je_' + Date.now();
+    setJournalEntries(prev => [{ ...entry, id, createdAt: new Date().toISOString() }, ...prev]);
+  };
+  const updateJournalEntry = (entry) => {
+    setJournalEntries(prev => prev.map(e => e.id === entry.id ? { ...entry, updatedAt: new Date().toISOString() } : e));
+  };
+  const deleteJournalEntry = (id) => {
+    setJournalEntries(prev => prev.filter(e => e.id !== id));
+  };
 
   // CRUD functions
   const addTrade = async (trade) => {
@@ -664,6 +688,7 @@ export default function TradingJournal() {
                 { id: 'dashboard', label: 'Dashboard', icon: BarChart3 },
                 { id: 'challenges', label: 'Challenges', icon: Trophy },
                 { id: 'journal', label: 'Journal', icon: BookOpen },
+                { id: 'history', label: 'History', icon: Clock },
                 { id: 'accounts', label: 'Accounts', icon: Wallet },
                 { id: 'calendar', label: 'Calendar', icon: Calendar },
               ].map(item => (
@@ -705,14 +730,16 @@ export default function TradingJournal() {
                   <h1 style={{ fontSize: 18, fontWeight: 600, color: theme.text }}>
                     {activeTab === 'dashboard' && 'Dashboard'}
                     {activeTab === 'challenges' && 'Prop Firm Challenges'}
-                    {activeTab === 'journal' && 'Trading Journal'}
+                    {activeTab === 'journal' && 'Journal'}
+                    {activeTab === 'history' && 'Trade History'}
                     {activeTab === 'accounts' && 'Accounts'}
                     {activeTab === 'calendar' && 'Calendar'}
                   </h1>
                   <p style={{ fontSize: 13, color: theme.textMuted, marginTop: 2 }}>
                     {activeTab === 'dashboard' && 'Performance metrics and insights'}
                     {activeTab === 'challenges' && 'Track challenge phases, drawdown limits & profit targets'}
-                    {activeTab === 'journal' && 'Document and analyze your trades'}
+                    {activeTab === 'journal' && 'Trade ideas, bias analysis & market notes'}
+                    {activeTab === 'history' && 'Document and analyze your trades'}
                     {activeTab === 'accounts' && 'Manage trading accounts'}
                     {activeTab === 'calendar' && 'Visual trade history'}
                   </p>
@@ -722,7 +749,7 @@ export default function TradingJournal() {
                     {darkMode ? <Sun size={18} style={{ color: theme.textMuted }} /> : <Moon size={18} style={{ color: theme.textMuted }} />}
                   </button>
                   
-                  {activeTab === 'journal' && (
+                  {activeTab === 'history' && (
                     <>
                       <button onClick={() => setShowImport(true)} style={{ padding: 10, borderRadius: 10, border: `1px solid ${theme.cardBorder}`, background: theme.card, cursor: 'pointer' }} title="Import trades">
                         <Upload size={18} style={{ color: theme.textMuted }} />
@@ -730,6 +757,7 @@ export default function TradingJournal() {
                       <button onClick={() => setShowNewTrade(true)} className="btn-primary flex items-center gap-2"><Plus size={16} />Log Trade</button>
                     </>
                   )}
+                  {activeTab === 'journal' && <button onClick={() => setActiveTab('journal-new')} className="btn-primary flex items-center gap-2"><Plus size={16} />New Entry</button>}
                   {activeTab === 'accounts' && <button onClick={() => setShowNewAccount(true)} className="btn-primary flex items-center gap-2"><Plus size={16} />Add Account</button>}
                   {activeTab === 'challenges' && <button onClick={() => setShowNewChallenge(true)} className="btn-primary flex items-center gap-2"><Plus size={16} />New Challenge</button>}
                 </div>
@@ -745,7 +773,9 @@ export default function TradingJournal() {
                 <>
                   {activeTab === 'dashboard' && <DashboardView trades={trades} accounts={accounts} challenges={challenges} selectedAccount={analyticsAccount} setSelectedAccount={setAnalyticsAccount} />}
                   {activeTab === 'challenges' && <ChallengesView challenges={challenges} trades={trades} accounts={accounts} onUpdate={updateChallenge} onDelete={deleteChallenge} />}
-                  {activeTab === 'journal' && <JournalView trades={trades} accounts={accounts} filterAccount={filterAccount} setFilterAccount={setFilterAccount} onSelectTrade={setSelectedTrade} onDeleteTrades={async (ids) => { for (const id of ids) await deleteTrade(id); }} />}
+                  {activeTab === 'journal' && <JournalIdeasView entries={journalEntries} onAdd={addJournalEntry} onUpdate={updateJournalEntry} onDelete={deleteJournalEntry} />}
+                  {activeTab === 'journal-new' && <JournalIdeasView entries={journalEntries} onAdd={(entry) => { addJournalEntry(entry); setActiveTab('journal'); }} onUpdate={updateJournalEntry} onDelete={deleteJournalEntry} autoNew />}
+                  {activeTab === 'history' && <JournalView trades={trades} accounts={accounts} filterAccount={filterAccount} setFilterAccount={setFilterAccount} onSelectTrade={setSelectedTrade} onDeleteTrades={async (ids) => { for (const id of ids) await deleteTrade(id); }} />}
                   {activeTab === 'accounts' && <AccountsView accounts={accounts} challenges={challenges} trades={trades} onUpdate={updateAccount} onDelete={deleteAccount} />}
                   {activeTab === 'calendar' && <CalendarView trades={trades} />}
                 </>
@@ -1717,6 +1747,260 @@ function ImportModal({ onClose, onImport, accounts }) {
   );
 }
 
+// ==================== JOURNAL IDEAS VIEW ====================
+const TIMEFRAMES = ['Daily', 'Weekly', 'Monthly'];
+const BIAS_OPTIONS = ['Bullish', 'Bearish', 'Neutral', 'No Trade'];
+const BIAS_COLORS = { Bullish: '#10b981', Bearish: '#ef4444', Neutral: '#8b5cf6', 'No Trade': '#64748b' };
+const COMMON_INSTRUMENTS = ['EURUSD', 'GBPUSD', 'USDJPY', 'XAUUSD', 'GBPJPY', 'EURJPY', 'NAS100', 'US30', 'AUDUSD', 'USDCAD'];
+
+function JournalIdeasView({ entries, onAdd, onUpdate, onDelete, autoNew }) {
+  const theme = useTheme();
+  const [showNew, setShowNew] = useState(autoNew || false);
+  const [editingEntry, setEditingEntry] = useState(null);
+  const [filterInstrument, setFilterInstrument] = useState('all');
+  const [filterTimeframe, setFilterTimeframe] = useState('all');
+
+  // Get unique instruments from entries
+  const instruments = [...new Set(entries.map(e => e.instrument).filter(Boolean))];
+
+  const filtered = entries.filter(e => {
+    if (filterInstrument !== 'all' && e.instrument !== filterInstrument) return false;
+    if (filterTimeframe !== 'all' && e.timeframe !== filterTimeframe) return false;
+    return true;
+  });
+
+  // Group entries by date
+  const groupedByDate = {};
+  filtered.forEach(e => {
+    const date = e.date || e.createdAt?.split('T')[0] || 'Unknown';
+    if (!groupedByDate[date]) groupedByDate[date] = [];
+    groupedByDate[date].push(e);
+  });
+  const sortedDates = Object.keys(groupedByDate).sort((a, b) => b.localeCompare(a));
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+      {/* Filters */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <select value={filterInstrument} onChange={e => setFilterInstrument(e.target.value)} className="input input-sm" style={{ width: 160 }}>
+            <option value="all">All Instruments</option>
+            {instruments.map(ins => <option key={ins} value={ins}>{ins}</option>)}
+          </select>
+          <div className="flex" style={{ background: theme.hoverBg, borderRadius: 8, padding: 3 }}>
+            <button onClick={() => setFilterTimeframe('all')} style={{ padding: '5px 12px', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 500, background: filterTimeframe === 'all' ? theme.card : 'transparent', color: filterTimeframe === 'all' ? theme.text : theme.textMuted, boxShadow: filterTimeframe === 'all' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none' }}>All</button>
+            {TIMEFRAMES.map(tf => (
+              <button key={tf} onClick={() => setFilterTimeframe(tf)} style={{ padding: '5px 12px', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 500, background: filterTimeframe === tf ? theme.card : 'transparent', color: filterTimeframe === tf ? theme.text : theme.textMuted, boxShadow: filterTimeframe === tf ? '0 1px 3px rgba(0,0,0,0.1)' : 'none' }}>{tf}</button>
+            ))}
+          </div>
+        </div>
+        <button onClick={() => setShowNew(true)} className="btn-primary flex items-center gap-2"><Plus size={16} />New Entry</button>
+      </div>
+
+      {/* New Entry Form */}
+      {showNew && <JournalEntryForm onSave={(entry) => { onAdd(entry); setShowNew(false); }} onCancel={() => { setShowNew(false); if (autoNew) {} }} />}
+
+      {/* Editing Entry */}
+      {editingEntry && <JournalEntryForm entry={editingEntry} onSave={(entry) => { onUpdate(entry); setEditingEntry(null); }} onCancel={() => setEditingEntry(null)} />}
+
+      {/* Entries grouped by date */}
+      {!showNew && !editingEntry && filtered.length === 0 && (
+        <div className="card-lg" style={{ padding: 60, textAlign: 'center' }}>
+          <BookOpen size={44} style={{ color: theme.textFaint, margin: '0 auto 12px', opacity: 0.4 }} />
+          <p style={{ fontSize: 15, fontWeight: 500, color: theme.textMuted }}>No journal entries yet</p>
+          <p style={{ fontSize: 13, color: theme.textFaint, marginTop: 4 }}>Record your trade ideas, market bias, and analysis</p>
+        </div>
+      )}
+
+      {!showNew && !editingEntry && sortedDates.map(date => (
+        <div key={date}>
+          <div style={{ fontSize: 12, fontWeight: 600, color: theme.textMuted, textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 8 }}>
+            {new Date(date + 'T00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {groupedByDate[date].map(entry => (
+              <div key={entry.id} className="card" style={{ padding: 0, overflow: 'hidden' }}>
+                {/* Bias color bar on left */}
+                <div style={{ display: 'flex' }}>
+                  <div style={{ width: 4, background: BIAS_COLORS[entry.bias] || theme.cardBorder, flexShrink: 0 }} />
+                  <div style={{ flex: 1, padding: 16 }}>
+                    <div className="flex items-center justify-between" style={{ marginBottom: 10 }}>
+                      <div className="flex items-center gap-3">
+                        <span style={{ fontSize: 15, fontWeight: 600, color: theme.text }}>{entry.instrument}</span>
+                        <span className="badge" style={{ background: BIAS_COLORS[entry.bias] + '20', color: BIAS_COLORS[entry.bias] }}>{entry.bias}</span>
+                        <span style={{ fontSize: 12, padding: '3px 10px', borderRadius: 6, background: theme.hoverBg, color: theme.textMuted, fontWeight: 500 }}>{entry.timeframe}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button onClick={() => setEditingEntry(entry)} style={{ padding: 6, borderRadius: 6, background: 'none', border: 'none', cursor: 'pointer' }}><Edit3 size={14} style={{ color: theme.textFaint }} /></button>
+                        <button onClick={() => { if (window.confirm('Delete this entry?')) onDelete(entry.id); }} style={{ padding: 6, borderRadius: 6, background: 'none', border: 'none', cursor: 'pointer' }}><Trash2 size={14} style={{ color: theme.textFaint }} /></button>
+                      </div>
+                    </div>
+
+                    {/* Trade Idea */}
+                    {entry.idea && (
+                      <div style={{ marginBottom: 10 }}>
+                        <div style={{ fontSize: 11, fontWeight: 600, color: theme.textMuted, textTransform: 'uppercase', letterSpacing: '0.3px', marginBottom: 4 }}>Trade Idea</div>
+                        <p style={{ fontSize: 14, color: theme.text, lineHeight: 1.5 }}>{entry.idea}</p>
+                      </div>
+                    )}
+
+                    {/* Key Levels */}
+                    {entry.keyLevels && (
+                      <div style={{ marginBottom: 10 }}>
+                        <div style={{ fontSize: 11, fontWeight: 600, color: theme.textMuted, textTransform: 'uppercase', letterSpacing: '0.3px', marginBottom: 4 }}>Key Levels</div>
+                        <p style={{ fontSize: 13, color: theme.textMuted, lineHeight: 1.5 }}>{entry.keyLevels}</p>
+                      </div>
+                    )}
+
+                    {/* Confluences as tags */}
+                    {entry.confluences && entry.confluences.length > 0 && (
+                      <div className="flex flex-wrap gap-2" style={{ marginBottom: 10 }}>
+                        {entry.confluences.map((c, i) => (
+                          <span key={i} style={{ fontSize: 11, padding: '3px 10px', borderRadius: 6, background: 'rgba(99,102,241,0.1)', color: '#6366f1', fontWeight: 500 }}>{c}</span>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Notes */}
+                    {entry.notes && (
+                      <p style={{ fontSize: 13, color: theme.textFaint, lineHeight: 1.5, fontStyle: 'italic' }}>{entry.notes}</p>
+                    )}
+
+                    {/* Chart reference */}
+                    {entry.chartImage && (
+                      <div style={{ marginTop: 10, borderRadius: 8, overflow: 'hidden', maxHeight: 200 }}>
+                        <img src={entry.chartImage} alt="" style={{ width: '100%', objectFit: 'cover' }} onError={e => e.target.style.display = 'none'} />
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ==================== JOURNAL ENTRY FORM ====================
+const CONFLUENCE_OPTIONS = ['FVG', 'Order Block', 'Liquidity Sweep', 'BOS/CHoCH', 'Supply Zone', 'Demand Zone', 'EQL/EQH', 'Inducement', 'Displacement', 'Session Open', 'Killzone'];
+
+function JournalEntryForm({ entry, onSave, onCancel }) {
+  const theme = useTheme();
+  const [form, setForm] = useState({
+    date: entry?.date || new Date().toISOString().split('T')[0],
+    instrument: entry?.instrument || '',
+    timeframe: entry?.timeframe || 'Daily',
+    bias: entry?.bias || 'Bullish',
+    idea: entry?.idea || '',
+    keyLevels: entry?.keyLevels || '',
+    confluences: entry?.confluences || [],
+    notes: entry?.notes || '',
+    chartImage: entry?.chartImage || '',
+    ...(entry?.id ? { id: entry.id } : {})
+  });
+
+  const toggleConfluence = (c) => {
+    setForm(prev => ({ ...prev, confluences: prev.confluences.includes(c) ? prev.confluences.filter(x => x !== c) : [...prev.confluences, c] }));
+  };
+
+  const handleSave = () => {
+    if (!form.instrument) return;
+    onSave(form);
+  };
+
+  return (
+    <div className="card-lg" style={{ padding: 20 }}>
+      <div className="flex items-center justify-between" style={{ marginBottom: 16 }}>
+        <h3 style={{ fontSize: 16, fontWeight: 600, color: theme.text }}>{entry ? 'Edit Entry' : 'New Journal Entry'}</h3>
+        <button onClick={onCancel} style={{ background: 'none', border: 'none', cursor: 'pointer' }}><X size={18} style={{ color: theme.textFaint }} /></button>
+      </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        {/* Row 1: Date, Instrument, Timeframe */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+          <div>
+            <label className="label">Date</label>
+            <input type="date" value={form.date} onChange={e => setForm({ ...form, date: e.target.value })} className="input" />
+          </div>
+          <div>
+            <label className="label">Instrument</label>
+            <input value={form.instrument} onChange={e => setForm({ ...form, instrument: e.target.value.toUpperCase() })} placeholder="EURUSD" className="input" list="instrument-list" />
+            <datalist id="instrument-list">{COMMON_INSTRUMENTS.map(ins => <option key={ins} value={ins} />)}</datalist>
+          </div>
+          <div>
+            <label className="label">Timeframe</label>
+            <div className="flex gap-2">
+              {TIMEFRAMES.map(tf => (
+                <button key={tf} onClick={() => setForm({ ...form, timeframe: tf })} style={{ flex: 1, padding: 10, borderRadius: 8, fontSize: 12, fontWeight: 500, border: `1px solid ${form.timeframe === tf ? '#6366f1' : theme.cardBorder}`, background: form.timeframe === tf ? 'rgba(99,102,241,0.1)' : 'transparent', color: form.timeframe === tf ? '#6366f1' : theme.textMuted, cursor: 'pointer' }}>{tf}</button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Row 2: Bias */}
+        <div>
+          <label className="label">Bias</label>
+          <div className="flex gap-2">
+            {BIAS_OPTIONS.map(b => (
+              <button key={b} onClick={() => setForm({ ...form, bias: b })} style={{ flex: 1, padding: 12, borderRadius: 10, fontSize: 13, fontWeight: 500, border: 'none', cursor: 'pointer', background: form.bias === b ? BIAS_COLORS[b] : theme.hoverBg, color: form.bias === b ? 'white' : theme.textMuted, transition: 'all 0.15s' }}>{b}</button>
+            ))}
+          </div>
+        </div>
+
+        {/* Row 3: Trade Idea */}
+        <div>
+          <label className="label">Trade Idea</label>
+          <textarea value={form.idea} onChange={e => setForm({ ...form, idea: e.target.value })} rows={3} className="input" placeholder="Describe your trade setup, narrative, or thesis..." style={{ resize: 'none' }} />
+        </div>
+
+        {/* Row 4: Key Levels */}
+        <div>
+          <label className="label">Key Levels / POIs</label>
+          <textarea value={form.keyLevels} onChange={e => setForm({ ...form, keyLevels: e.target.value })} rows={2} className="input" placeholder="e.g. PDH: 1.0850, PDL: 1.0780, FVG @ 1.0820..." style={{ resize: 'none' }} />
+        </div>
+
+        {/* Row 5: Confluences */}
+        <div>
+          <label className="label">Confluences</label>
+          <div className="flex flex-wrap gap-2">
+            {CONFLUENCE_OPTIONS.map(c => (
+              <button key={c} onClick={() => toggleConfluence(c)} style={{ padding: '7px 14px', borderRadius: 8, fontSize: 12, fontWeight: 500, border: 'none', cursor: 'pointer', background: form.confluences.includes(c) ? '#6366f1' : theme.hoverBg, color: form.confluences.includes(c) ? 'white' : theme.textMuted, transition: 'all 0.15s' }}>{c}</button>
+            ))}
+          </div>
+        </div>
+
+        {/* Row 6: Chart Image */}
+        <div>
+          <label className="label">Chart Screenshot URL</label>
+          <input value={form.chartImage} onChange={e => setForm({ ...form, chartImage: e.target.value })} placeholder="https://www.tradingview.com/x/... or image URL" className="input" />
+          {form.chartImage && getTradingViewImageUrl(form.chartImage) && (
+            <div style={{ marginTop: 8, borderRadius: 8, overflow: 'hidden', maxHeight: 150, border: `1px solid ${theme.cardBorder}` }}>
+              <img src={getTradingViewImageUrl(form.chartImage)} alt="" style={{ width: '100%', objectFit: 'cover' }} onError={e => e.target.style.display = 'none'} />
+            </div>
+          )}
+        </div>
+
+        {/* Row 7: Additional Notes */}
+        <div>
+          <label className="label">Additional Notes</label>
+          <textarea value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} rows={2} className="input" placeholder="Session notes, psychology, risk management thoughts..." style={{ resize: 'none' }} />
+        </div>
+      </div>
+
+      {/* Actions */}
+      <div className="flex justify-end gap-3" style={{ marginTop: 20 }}>
+        <button onClick={onCancel} style={{ background: 'none', border: 'none', fontSize: 14, color: theme.textMuted, cursor: 'pointer' }}>Cancel</button>
+        <button onClick={handleSave} className="btn-primary" style={{ opacity: form.instrument ? 1 : 0.5 }} disabled={!form.instrument}>
+          {entry ? 'Save Changes' : 'Save Entry'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ==================== TRADE HISTORY VIEW (formerly Journal) ====================
 function JournalView({ trades, accounts, filterAccount, setFilterAccount, onSelectTrade, onDeleteTrades }) {
   const theme = useTheme();
   const [viewMode, setViewMode] = useState('list');
