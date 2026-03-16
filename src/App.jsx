@@ -746,7 +746,7 @@ export default function TradingJournal() {
                   {activeTab === 'dashboard' && <DashboardView trades={trades} accounts={accounts} challenges={challenges} selectedAccount={analyticsAccount} setSelectedAccount={setAnalyticsAccount} />}
                   {activeTab === 'challenges' && <ChallengesView challenges={challenges} trades={trades} accounts={accounts} onUpdate={updateChallenge} onDelete={deleteChallenge} />}
                   {activeTab === 'journal' && <JournalView trades={trades} accounts={accounts} filterAccount={filterAccount} setFilterAccount={setFilterAccount} onSelectTrade={setSelectedTrade} onDeleteTrades={async (ids) => { for (const id of ids) await deleteTrade(id); }} />}
-                  {activeTab === 'accounts' && <AccountsView accounts={accounts} onUpdate={updateAccount} onDelete={deleteAccount} />}
+                  {activeTab === 'accounts' && <AccountsView accounts={accounts} challenges={challenges} trades={trades} onUpdate={updateAccount} onDelete={deleteAccount} />}
                   {activeTab === 'calendar' && <CalendarView trades={trades} />}
                 </>
               )}
@@ -2168,39 +2168,237 @@ function DashboardView({ trades, accounts, challenges, selectedAccount, setSelec
   );
 }
 
-function AccountsView({ accounts, onUpdate, onDelete }) {
+function AccountsView({ accounts, challenges, trades, onUpdate, onDelete }) {
   const theme = useTheme();
   const [deleteId, setDeleteId] = useState(null);
   const [editAcc, setEditAcc] = useState(null);
-  const totals = { balance: accounts.reduce((s, a) => s + a.balance, 0), equity: accounts.reduce((s, a) => s + a.equity, 0) };
+  const [expandedChallenge, setExpandedChallenge] = useState(null);
+
+  // Group accounts: find which accounts are linked to challenges
+  const challengeAccountNames = new Set(challenges.map(c => c.account).filter(Boolean));
+  const standaloneAccounts = accounts.filter(a => !challengeAccountNames.has(a.name));
+  
+  // Build challenge groups with merged equity
+  const challengeGroups = challenges.map(ch => {
+    const linkedAccount = accounts.find(a => a.name === ch.account);
+    const accountTrades = trades.filter(t => t.account === ch.account && (!ch.startDate || t.date >= ch.startDate));
+    const totalPnl = accountTrades.reduce((s, t) => s + (parseFloat(t.pnl) || 0), 0);
+    const mergedEquity = ch.accountSize + totalPnl;
+    const phase = ch.phases?.[ch.currentPhase] || ch.phases?.[0] || {};
+    const profitPct = ch.accountSize > 0 ? (totalPnl / ch.accountSize) * 100 : 0;
+    const tradingDays = new Set(accountTrades.map(t => t.date)).size;
+    
+    // Per-phase breakdown
+    const phaseBreakdown = ch.phases.map((p, idx) => {
+      // For completed phases, we'd need to know the split date
+      // For current phase, calculate from trades
+      const isCurrent = idx === ch.currentPhase;
+      const isPast = idx < ch.currentPhase;
+      const isFuture = idx > ch.currentPhase;
+      return { ...p, idx, isCurrent, isPast, isFuture };
+    });
+
+    const statusColors = {
+      active: { bg: 'rgba(99,102,241,0.1)', text: '#6366f1', label: 'Active' },
+      passed: { bg: 'rgba(16,185,129,0.1)', text: '#10b981', label: 'Passed' },
+      failed: { bg: 'rgba(239,68,68,0.1)', text: '#ef4444', label: 'Failed' },
+      funded: { bg: 'rgba(245,158,11,0.1)', text: '#f59e0b', label: 'Funded' }
+    };
+
+    return {
+      challenge: ch,
+      linkedAccount,
+      totalPnl,
+      mergedEquity,
+      phase,
+      profitPct,
+      tradingDays,
+      phaseBreakdown,
+      statusStyle: statusColors[ch.status] || statusColors.active
+    };
+  });
+
+  const totalBalance = accounts.reduce((s, a) => s + a.balance, 0);
+  const totalEquity = challengeGroups.reduce((s, g) => s + g.mergedEquity, 0) + standaloneAccounts.reduce((s, a) => s + a.equity, 0);
+  const totalChallenges = challenges.length;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 }}>
-        <div className="card" style={{ padding: 20 }}><div className="stat-label">Total Balance</div><div className="stat-value" style={{ marginTop: 6 }}>${totals.balance.toLocaleString()}</div></div>
-        <div className="card" style={{ padding: 20 }}><div className="stat-label">Total Equity</div><div className="stat-value" style={{ color: '#10b981', marginTop: 6 }}>${totals.equity.toLocaleString()}</div></div>
-        <div className="card" style={{ padding: 20 }}><div className="stat-label">Accounts</div><div className="stat-value" style={{ marginTop: 6 }}>{accounts.length}</div></div>
+      {/* Summary Cards */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
+        <div className="card" style={{ padding: 20 }}>
+          <div className="stat-label">Total Balance</div>
+          <div className="stat-value" style={{ marginTop: 6 }}>${totalBalance.toLocaleString()}</div>
+        </div>
+        <div className="card" style={{ padding: 20 }}>
+          <div className="stat-label">Merged Equity</div>
+          <div className="stat-value" style={{ color: totalEquity >= totalBalance ? '#10b981' : '#ef4444', marginTop: 6 }}>${totalEquity.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+        </div>
+        <div className="card" style={{ padding: 20 }}>
+          <div className="stat-label">Prop Challenges</div>
+          <div className="stat-value" style={{ marginTop: 6 }}>{totalChallenges}</div>
+        </div>
+        <div className="card" style={{ padding: 20 }}>
+          <div className="stat-label">Standalone Accounts</div>
+          <div className="stat-value" style={{ marginTop: 6 }}>{standaloneAccounts.length}</div>
+        </div>
       </div>
-      <div className="card-lg" style={{ overflow: 'hidden' }}>
-        {accounts.length === 0 ? (
-          <div style={{ padding: 60, textAlign: 'center' }}><Database size={40} style={{ color: theme.textFaint, margin: '0 auto 12px', opacity: 0.5 }} /><p style={{ fontSize: 14, color: theme.textMuted }}>No accounts yet</p></div>
-        ) : accounts.map(acc => (
-          <div key={acc.id} className="table-row" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <div className="flex items-center gap-3">
-              <div style={{ width: 44, height: 44, borderRadius: 10, background: acc.platform === 'MT5' ? 'rgba(59,130,246,0.1)' : 'rgba(139,92,246,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Database size={20} style={{ color: acc.platform === 'MT5' ? '#3b82f6' : '#8b5cf6' }} /></div>
-              <div><div style={{ fontSize: 14, fontWeight: 500, color: theme.text }}>{acc.name}</div><div style={{ fontSize: 12, color: theme.textFaint }}>{acc.broker} · {acc.server}</div></div>
-            </div>
-            <div className="flex items-center gap-8">
-              <div style={{ textAlign: 'right' }}><div style={{ fontSize: 14, fontWeight: 600, color: theme.text }}>${acc.balance.toLocaleString()}</div><div style={{ fontSize: 11, color: theme.textFaint }}>Balance</div></div>
-              <div style={{ textAlign: 'right' }}><div style={{ fontSize: 14, fontWeight: 600, color: acc.equity >= acc.balance ? '#10b981' : '#ef4444' }}>${acc.equity.toLocaleString()}</div><div style={{ fontSize: 11, color: theme.textFaint }}>Equity</div></div>
-              <div className="flex gap-1">
-                <button onClick={() => setEditAcc(acc)} style={{ padding: 8, borderRadius: 8, background: 'transparent', border: 'none', cursor: 'pointer' }}><Edit3 size={16} style={{ color: theme.textFaint }} /></button>
-                <button onClick={() => setDeleteId(acc.id)} style={{ padding: 8, borderRadius: 8, background: 'transparent', border: 'none', cursor: 'pointer' }}><Trash2 size={16} style={{ color: theme.textFaint }} /></button>
-              </div>
-            </div>
+
+      {/* Prop Firm Challenge Accounts — Unified Cards */}
+      {challengeGroups.length > 0 && (
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 600, color: theme.textMuted, textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 12 }}>Prop Firm Accounts</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            {challengeGroups.map(({ challenge: ch, linkedAccount, totalPnl, mergedEquity, phase, profitPct, tradingDays, phaseBreakdown, statusStyle }) => {
+              const isExpanded = expandedChallenge === ch.id;
+              return (
+                <div key={ch.id} className="card-lg" style={{ overflow: 'hidden' }}>
+                  {/* Main Row */}
+                  <div onClick={() => setExpandedChallenge(isExpanded ? null : ch.id)} style={{ padding: '16px 20px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between', transition: 'background 0.15s' }} onMouseEnter={e => e.currentTarget.style.background = theme.hoverBg} onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+                    <div className="flex items-center gap-4">
+                      <div style={{ width: 48, height: 48, borderRadius: 12, background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                        <Shield size={22} style={{ color: 'white' }} />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span style={{ fontSize: 15, fontWeight: 600, color: theme.text }}>{ch.name}</span>
+                          <span className="badge" style={{ background: statusStyle.bg, color: statusStyle.text }}>{statusStyle.label}</span>
+                        </div>
+                        <div style={{ fontSize: 12, color: theme.textFaint, marginTop: 2 }}>
+                          {ch.propFirm} · {phase.name || 'Phase 1'} · {tradingDays} trading days
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-8">
+                      <div style={{ textAlign: 'right' }}>
+                        <div style={{ fontSize: 11, fontWeight: 600, color: theme.textMuted, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Starting</div>
+                        <div style={{ fontSize: 15, fontWeight: 600, color: theme.text, marginTop: 2 }}>${(ch.accountSize || 0).toLocaleString()}</div>
+                      </div>
+                      <div style={{ textAlign: 'right' }}>
+                        <div style={{ fontSize: 11, fontWeight: 600, color: theme.textMuted, textTransform: 'uppercase', letterSpacing: '0.5px' }}>P&L</div>
+                        <div style={{ fontSize: 15, fontWeight: 600, color: totalPnl >= 0 ? '#10b981' : '#ef4444', marginTop: 2 }}>
+                          {totalPnl >= 0 ? '+' : ''}${totalPnl.toFixed(2)}
+                        </div>
+                      </div>
+                      <div style={{ textAlign: 'right', minWidth: 100 }}>
+                        <div style={{ fontSize: 11, fontWeight: 600, color: theme.textMuted, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Equity</div>
+                        <div style={{ fontSize: 18, fontWeight: 700, color: mergedEquity >= ch.accountSize ? '#10b981' : '#ef4444', marginTop: 2 }}>
+                          ${mergedEquity.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </div>
+                      </div>
+                      <ChevronDown size={18} style={{ color: theme.textFaint, transition: 'transform 0.2s', transform: isExpanded ? 'rotate(180deg)' : 'none' }} />
+                    </div>
+                  </div>
+
+                  {/* Expanded: Phase Timeline */}
+                  {isExpanded && (
+                    <div style={{ padding: '0 20px 20px', borderTop: `1px solid ${theme.cardBorder}` }}>
+                      {/* Phase Progress Timeline */}
+                      <div style={{ padding: '16px 0' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 0, position: 'relative' }}>
+                          {phaseBreakdown.map((p, idx) => {
+                            const isLast = idx === phaseBreakdown.length - 1;
+                            const dotColor = p.isPast ? '#10b981' : p.isCurrent ? '#6366f1' : theme.cardBorder;
+                            const lineColor = p.isPast ? '#10b981' : theme.cardBorder;
+                            return (
+                              <div key={idx} style={{ flex: 1, display: 'flex', alignItems: 'center' }}>
+                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', zIndex: 1 }}>
+                                  <div style={{ width: p.isCurrent ? 16 : 12, height: p.isCurrent ? 16 : 12, borderRadius: '50%', background: dotColor, border: p.isCurrent ? '3px solid rgba(99,102,241,0.3)' : 'none', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                    {p.isPast && <CheckCircle size={8} style={{ color: 'white' }} />}
+                                  </div>
+                                  <div style={{ marginTop: 8, textAlign: 'center' }}>
+                                    <div style={{ fontSize: 12, fontWeight: p.isCurrent ? 600 : 400, color: p.isCurrent ? '#6366f1' : p.isPast ? '#10b981' : theme.textFaint }}>{p.name}</div>
+                                    {p.profitTarget && <div style={{ fontSize: 11, color: theme.textFaint }}>{p.profitTarget}% target</div>}
+                                    {!p.profitTarget && p.name?.toLowerCase().includes('funded') && <div style={{ fontSize: 11, color: '#f59e0b' }}>Live</div>}
+                                  </div>
+                                </div>
+                                {!isLast && <div style={{ flex: 1, height: 2, background: lineColor, marginBottom: 30 }} />}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      {/* Current Phase Stats */}
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10 }}>
+                        <div style={{ padding: 14, borderRadius: 10, background: theme.hoverBg }}>
+                          <div className="stat-label">Profit Target</div>
+                          <div style={{ fontSize: 16, fontWeight: 600, color: profitPct >= (phase.profitTarget || 999) ? '#10b981' : theme.text, marginTop: 4 }}>
+                            {profitPct.toFixed(2)}% {phase.profitTarget ? `/ ${phase.profitTarget}%` : ''}
+                          </div>
+                        </div>
+                        <div style={{ padding: 14, borderRadius: 10, background: theme.hoverBg }}>
+                          <div className="stat-label">Daily DD Limit</div>
+                          <div style={{ fontSize: 16, fontWeight: 600, color: theme.text, marginTop: 4 }}>{phase.maxDailyDrawdown || 5}%</div>
+                        </div>
+                        <div style={{ padding: 14, borderRadius: 10, background: theme.hoverBg }}>
+                          <div className="stat-label">Max DD Limit</div>
+                          <div style={{ fontSize: 16, fontWeight: 600, color: theme.text, marginTop: 4 }}>{phase.maxTotalDrawdown || 10}%</div>
+                        </div>
+                        <div style={{ padding: 14, borderRadius: 10, background: theme.hoverBg }}>
+                          <div className="stat-label">Trading Days</div>
+                          <div style={{ fontSize: 16, fontWeight: 600, color: tradingDays >= (phase.minTradingDays || 0) ? '#10b981' : theme.text, marginTop: 4 }}>
+                            {tradingDays} {phase.minTradingDays ? `/ ${phase.minTradingDays} min` : ''}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Linked Account Info */}
+                      {linkedAccount && (
+                        <div style={{ marginTop: 12, padding: 12, borderRadius: 8, background: theme.hoverBg, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <div className="flex items-center gap-3">
+                            <Database size={16} style={{ color: theme.textFaint }} />
+                            <span style={{ fontSize: 13, color: theme.textMuted }}>Linked: <strong style={{ color: theme.text }}>{linkedAccount.name}</strong> · {linkedAccount.broker} · {linkedAccount.server}</span>
+                          </div>
+                          <div className="flex gap-1">
+                            <button onClick={() => setEditAcc(linkedAccount)} style={{ padding: 6, borderRadius: 6, background: 'transparent', border: 'none', cursor: 'pointer' }}><Edit3 size={14} style={{ color: theme.textFaint }} /></button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
-        ))}
-      </div>
+        </div>
+      )}
+
+      {/* Standalone Accounts */}
+      {standaloneAccounts.length > 0 && (
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 600, color: theme.textMuted, textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 12 }}>
+            {challengeGroups.length > 0 ? 'Other Accounts' : 'Accounts'}
+          </div>
+          <div className="card-lg" style={{ overflow: 'hidden' }}>
+            {standaloneAccounts.map(acc => (
+              <div key={acc.id} className="table-row" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div className="flex items-center gap-3">
+                  <div style={{ width: 44, height: 44, borderRadius: 10, background: acc.platform === 'MT5' ? 'rgba(59,130,246,0.1)' : 'rgba(139,92,246,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Database size={20} style={{ color: acc.platform === 'MT5' ? '#3b82f6' : '#8b5cf6' }} /></div>
+                  <div><div style={{ fontSize: 14, fontWeight: 500, color: theme.text }}>{acc.name}</div><div style={{ fontSize: 12, color: theme.textFaint }}>{acc.broker} · {acc.server}</div></div>
+                </div>
+                <div className="flex items-center gap-8">
+                  <div style={{ textAlign: 'right' }}><div style={{ fontSize: 14, fontWeight: 600, color: theme.text }}>${acc.balance.toLocaleString()}</div><div style={{ fontSize: 11, color: theme.textFaint }}>Balance</div></div>
+                  <div style={{ textAlign: 'right' }}><div style={{ fontSize: 14, fontWeight: 600, color: acc.equity >= acc.balance ? '#10b981' : '#ef4444' }}>${acc.equity.toLocaleString()}</div><div style={{ fontSize: 11, color: theme.textFaint }}>Equity</div></div>
+                  <div className="flex gap-1">
+                    <button onClick={() => setEditAcc(acc)} style={{ padding: 8, borderRadius: 8, background: 'transparent', border: 'none', cursor: 'pointer' }}><Edit3 size={16} style={{ color: theme.textFaint }} /></button>
+                    <button onClick={() => setDeleteId(acc.id)} style={{ padding: 8, borderRadius: 8, background: 'transparent', border: 'none', cursor: 'pointer' }}><Trash2 size={16} style={{ color: theme.textFaint }} /></button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {accounts.length === 0 && challenges.length === 0 && (
+        <div className="card-lg" style={{ padding: 60, textAlign: 'center' }}>
+          <Database size={40} style={{ color: theme.textFaint, margin: '0 auto 12px', opacity: 0.5 }} />
+          <p style={{ fontSize: 14, color: theme.textMuted }}>No accounts yet</p>
+          <p style={{ fontSize: 13, color: theme.textFaint, marginTop: 4 }}>Add an account to start tracking</p>
+        </div>
+      )}
+
       {editAcc && <EditAccountModal account={editAcc} onClose={() => setEditAcc(null)} onSave={(updated) => { onUpdate(updated); setEditAcc(null); }} />}
       {deleteId && (
         <Modal onClose={() => setDeleteId(null)}>
