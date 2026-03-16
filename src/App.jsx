@@ -905,7 +905,7 @@ export default function TradingJournal() {
                       <button onClick={() => setShowNewTrade(true)} className="btn-primary flex items-center gap-2"><Plus size={16} />Log Trade</button>
                     </>
                   )}
-                  {activeTab === 'journal' && <button onClick={() => setActiveTab('journal-new')} className="btn-primary flex items-center gap-2"><Plus size={16} />New Entry</button>}
+                  {activeTab === 'journal' && <button onClick={() => { const evt = new CustomEvent('ellipse-new-journal'); window.dispatchEvent(evt); }} className="btn-primary flex items-center gap-2"><Plus size={16} />New Entry</button>}
                   {activeTab === 'accounts' && <button onClick={() => setShowNewAccount(true)} className="btn-primary flex items-center gap-2"><Plus size={16} />Add Account</button>}
                   {activeTab === 'challenges' && <button onClick={() => setShowNewChallenge(true)} className="btn-primary flex items-center gap-2"><Plus size={16} />New Challenge</button>}
                 </div>
@@ -922,7 +922,6 @@ export default function TradingJournal() {
                   {activeTab === 'dashboard' && <DashboardView trades={trades} accounts={accounts} challenges={challenges} selectedAccount={analyticsAccount} setSelectedAccount={setAnalyticsAccount} />}
                   {activeTab === 'challenges' && <ChallengesView challenges={challenges} trades={trades} accounts={accounts} onUpdate={updateChallenge} onDelete={deleteChallenge} />}
                   {activeTab === 'journal' && <JournalIdeasView entries={journalEntries} onAdd={addJournalEntry} onUpdate={updateJournalEntry} onDelete={deleteJournalEntry} />}
-                  {activeTab === 'journal-new' && <JournalIdeasView entries={journalEntries} onAdd={(entry) => { addJournalEntry(entry); setActiveTab('journal'); }} onUpdate={updateJournalEntry} onDelete={deleteJournalEntry} autoNew />}
                   {activeTab === 'history' && <JournalView trades={trades} accounts={accounts} filterAccount={filterAccount} setFilterAccount={setFilterAccount} onSelectTrade={setSelectedTrade} onDeleteTrades={async (ids) => { for (const id of ids) await deleteTrade(id); }} />}
                   {activeTab === 'accounts' && <AccountsView accounts={accounts} challenges={challenges} trades={trades} onUpdate={updateAccount} onDelete={deleteAccount} />}
                   {activeTab === 'calendar' && <CalendarView trades={trades} />}
@@ -1907,17 +1906,40 @@ function JournalIdeasView({ entries, onAdd, onUpdate, onDelete, autoNew }) {
   const [editingEntry, setEditingEntry] = useState(null);
   const [filterInstrument, setFilterInstrument] = useState('all');
   const [filterTimeframe, setFilterTimeframe] = useState('all');
+  const [filterBias, setFilterBias] = useState('all');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
 
-  // Get unique instruments from entries
+  // Listen for header "New Entry" button click
+  useEffect(() => {
+    const handler = () => setShowNew(true);
+    window.addEventListener('ellipse-new-journal', handler);
+    return () => window.removeEventListener('ellipse-new-journal', handler);
+  }, []);
+
+  // Quick date presets
+  const setDatePreset = (preset) => {
+    const today = new Date();
+    const fmt = (d) => d.toISOString().split('T')[0];
+    setDateTo(fmt(today));
+    if (preset === 'today') setDateFrom(fmt(today));
+    else if (preset === 'week') { const d = new Date(today); d.setDate(d.getDate() - 7); setDateFrom(fmt(d)); }
+    else if (preset === 'month') { const d = new Date(today); d.setMonth(d.getMonth() - 1); setDateFrom(fmt(d)); }
+    else if (preset === 'all') { setDateFrom(''); setDateTo(''); }
+  };
+
   const instruments = [...new Set(entries.map(e => e.instrument).filter(Boolean))];
 
   const filtered = entries.filter(e => {
     if (filterInstrument !== 'all' && e.instrument !== filterInstrument) return false;
     if (filterTimeframe !== 'all' && e.timeframe !== filterTimeframe) return false;
+    if (filterBias !== 'all' && e.bias !== filterBias) return false;
+    const eDate = e.date || e.createdAt?.split('T')[0] || '';
+    if (dateFrom && eDate < dateFrom) return false;
+    if (dateTo && eDate > dateTo) return false;
     return true;
   });
 
-  // Group entries by date
   const groupedByDate = {};
   filtered.forEach(e => {
     const date = e.date || e.createdAt?.split('T')[0] || 'Unknown';
@@ -1927,39 +1949,74 @@ function JournalIdeasView({ entries, onAdd, onUpdate, onDelete, autoNew }) {
   const sortedDates = Object.keys(groupedByDate).sort((a, b) => b.localeCompare(a));
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-      {/* Filters */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <select value={filterInstrument} onChange={e => setFilterInstrument(e.target.value)} className="input input-sm" style={{ width: 160 }}>
-            <option value="all">All Instruments</option>
-            {instruments.map(ins => <option key={ins} value={ins}>{ins}</option>)}
-          </select>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      {/* Filters Row */}
+      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10 }}>
+        <select value={filterInstrument} onChange={e => setFilterInstrument(e.target.value)} className="input input-sm" style={{ width: 150 }}>
+          <option value="all">All Instruments</option>
+          {instruments.map(ins => <option key={ins} value={ins}>{ins}</option>)}
+        </select>
+
+        {/* Timeframe toggle */}
+        <div className="flex" style={{ background: theme.hoverBg, borderRadius: 8, padding: 3 }}>
+          {['all', ...TIMEFRAMES].map(tf => (
+            <button key={tf} onClick={() => setFilterTimeframe(tf)} style={{ padding: '5px 12px', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 500, background: filterTimeframe === tf ? theme.card : 'transparent', color: filterTimeframe === tf ? theme.text : theme.textMuted, boxShadow: filterTimeframe === tf ? '0 1px 3px rgba(0,0,0,0.1)' : 'none' }}>
+              {tf === 'all' ? 'All' : tf}
+            </button>
+          ))}
+        </div>
+
+        {/* Bias filter */}
+        <div className="flex" style={{ background: theme.hoverBg, borderRadius: 8, padding: 3 }}>
+          <button onClick={() => setFilterBias('all')} style={{ padding: '5px 10px', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 500, background: filterBias === 'all' ? theme.card : 'transparent', color: filterBias === 'all' ? theme.text : theme.textMuted, boxShadow: filterBias === 'all' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none' }}>All</button>
+          {BIAS_OPTIONS.map(b => (
+            <button key={b} onClick={() => setFilterBias(b)} style={{ padding: '5px 10px', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 500, background: filterBias === b ? theme.card : 'transparent', color: filterBias === b ? BIAS_COLORS[b] : theme.textMuted, boxShadow: filterBias === b ? '0 1px 3px rgba(0,0,0,0.1)' : 'none' }}>
+              {b === 'No Trade' ? 'NT' : b.slice(0, 4)}
+            </button>
+          ))}
+        </div>
+
+        {/* Spacer */}
+        <div style={{ flex: 1 }} />
+
+        {/* Date range */}
+        <div className="flex items-center gap-2">
           <div className="flex" style={{ background: theme.hoverBg, borderRadius: 8, padding: 3 }}>
-            <button onClick={() => setFilterTimeframe('all')} style={{ padding: '5px 12px', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 500, background: filterTimeframe === 'all' ? theme.card : 'transparent', color: filterTimeframe === 'all' ? theme.text : theme.textMuted, boxShadow: filterTimeframe === 'all' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none' }}>All</button>
-            {TIMEFRAMES.map(tf => (
-              <button key={tf} onClick={() => setFilterTimeframe(tf)} style={{ padding: '5px 12px', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 500, background: filterTimeframe === tf ? theme.card : 'transparent', color: filterTimeframe === tf ? theme.text : theme.textMuted, boxShadow: filterTimeframe === tf ? '0 1px 3px rgba(0,0,0,0.1)' : 'none' }}>{tf}</button>
+            {[{ key: 'today', label: 'Today' }, { key: 'week', label: '7D' }, { key: 'month', label: '30D' }, { key: 'all', label: 'All' }].map(p => (
+              <button key={p.key} onClick={() => setDatePreset(p.key)} style={{ padding: '5px 10px', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: 11, fontWeight: 500, background: 'transparent', color: theme.textMuted }}>{p.label}</button>
             ))}
           </div>
+          <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="input input-sm" style={{ width: 130, fontSize: 12 }} />
+          <span style={{ fontSize: 12, color: theme.textFaint }}>→</span>
+          <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className="input input-sm" style={{ width: 130, fontSize: 12 }} />
         </div>
-        <button onClick={() => setShowNew(true)} className="btn-primary flex items-center gap-2"><Plus size={16} />New Entry</button>
+      </div>
+
+      {/* Results count */}
+      <div style={{ fontSize: 12, color: theme.textFaint }}>
+        {filtered.length} entr{filtered.length === 1 ? 'y' : 'ies'}{(filterInstrument !== 'all' || filterTimeframe !== 'all' || filterBias !== 'all' || dateFrom || dateTo) ? ' (filtered)' : ''}
       </div>
 
       {/* New Entry Form */}
-      {showNew && <JournalEntryForm onSave={(entry) => { onAdd(entry); setShowNew(false); }} onCancel={() => { setShowNew(false); if (autoNew) {} }} />}
+      {showNew && <JournalEntryForm onSave={(entry) => { onAdd(entry); setShowNew(false); }} onCancel={() => setShowNew(false)} />}
 
       {/* Editing Entry */}
       {editingEntry && <JournalEntryForm entry={editingEntry} onSave={(entry) => { onUpdate(entry); setEditingEntry(null); }} onCancel={() => setEditingEntry(null)} />}
 
-      {/* Entries grouped by date */}
+      {/* Empty state */}
       {!showNew && !editingEntry && filtered.length === 0 && (
         <div className="card-lg" style={{ padding: 60, textAlign: 'center' }}>
           <BookOpen size={44} style={{ color: theme.textFaint, margin: '0 auto 12px', opacity: 0.4 }} />
-          <p style={{ fontSize: 15, fontWeight: 500, color: theme.textMuted }}>No journal entries yet</p>
-          <p style={{ fontSize: 13, color: theme.textFaint, marginTop: 4 }}>Record your trade ideas, market bias, and analysis</p>
+          <p style={{ fontSize: 15, fontWeight: 500, color: theme.textMuted }}>
+            {entries.length === 0 ? 'No journal entries yet' : 'No entries match your filters'}
+          </p>
+          <p style={{ fontSize: 13, color: theme.textFaint, marginTop: 4 }}>
+            {entries.length === 0 ? 'Record your trade ideas, market bias, and analysis' : 'Try adjusting your date range or filters'}
+          </p>
         </div>
       )}
 
+      {/* Entries grouped by date */}
       {!showNew && !editingEntry && sortedDates.map(date => (
         <div key={date}>
           <div style={{ fontSize: 12, fontWeight: 600, color: theme.textMuted, textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 8 }}>
