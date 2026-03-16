@@ -349,36 +349,132 @@ const LIQUIDITY_LEVELS = [
 ];
 
 const SYMBOL_CONFIG = {
-  'EURUSD': { pipSize: 0.0001, lotSize: 100000, quoteUSD: true },
-  'GBPUSD': { pipSize: 0.0001, lotSize: 100000, quoteUSD: true },
-  'AUDUSD': { pipSize: 0.0001, lotSize: 100000, quoteUSD: true },
-  'NZDUSD': { pipSize: 0.0001, lotSize: 100000, quoteUSD: true },
-  'USDJPY': { pipSize: 0.01, lotSize: 100000, quoteJPY: true },
-  'EURJPY': { pipSize: 0.01, lotSize: 100000, quoteJPY: true },
-  'GBPJPY': { pipSize: 0.01, lotSize: 100000, quoteJPY: true },
-  'AUDJPY': { pipSize: 0.01, lotSize: 100000, quoteJPY: true },
-  'CADJPY': { pipSize: 0.01, lotSize: 100000, quoteJPY: true },
-  'CHFJPY': { pipSize: 0.01, lotSize: 100000, quoteJPY: true },
-  'NZDJPY': { pipSize: 0.01, lotSize: 100000, quoteJPY: true },
-  'USDCAD': { pipSize: 0.0001, lotSize: 100000, quoteOther: true },
-  'USDCHF': { pipSize: 0.0001, lotSize: 100000, quoteOther: true },
-  'EURGBP': { pipSize: 0.0001, lotSize: 100000, quoteOther: true },
-  'EURAUD': { pipSize: 0.0001, lotSize: 100000, quoteOther: true },
-  'GBPAUD': { pipSize: 0.0001, lotSize: 100000, quoteOther: true },
-  'AUDCAD': { pipSize: 0.0001, lotSize: 100000, quoteOther: true },
-  'XAUUSD': { pipSize: 0.01, lotSize: 100, quoteUSD: true },
-  'US30': { pipSize: 1, lotSize: 1, pointValue: 1 },
-  'NAS100': { pipSize: 1, lotSize: 1, pointValue: 1 },
-  'SPX500': { pipSize: 0.1, lotSize: 1, pointValue: 10 },
-  'DEFAULT': { pipSize: 0.0001, lotSize: 100000, quoteUSD: true }
+  // Forex pairs: base/quote — lotSize is always 100,000 units of BASE currency
+  // For P&L: profit_in_quote = (exit - entry) * lotSize * lots
+  // Then convert quote currency to USD
+  'EURUSD': { pipSize: 0.0001, lotSize: 100000, base: 'EUR', quote: 'USD' },
+  'GBPUSD': { pipSize: 0.0001, lotSize: 100000, base: 'GBP', quote: 'USD' },
+  'AUDUSD': { pipSize: 0.0001, lotSize: 100000, base: 'AUD', quote: 'USD' },
+  'NZDUSD': { pipSize: 0.0001, lotSize: 100000, base: 'NZD', quote: 'USD' },
+  'USDJPY': { pipSize: 0.01, lotSize: 100000, base: 'USD', quote: 'JPY' },
+  'EURJPY': { pipSize: 0.01, lotSize: 100000, base: 'EUR', quote: 'JPY' },
+  'GBPJPY': { pipSize: 0.01, lotSize: 100000, base: 'GBP', quote: 'JPY' },
+  'AUDJPY': { pipSize: 0.01, lotSize: 100000, base: 'AUD', quote: 'JPY' },
+  'CADJPY': { pipSize: 0.01, lotSize: 100000, base: 'CAD', quote: 'JPY' },
+  'CHFJPY': { pipSize: 0.01, lotSize: 100000, base: 'CHF', quote: 'JPY' },
+  'NZDJPY': { pipSize: 0.01, lotSize: 100000, base: 'NZD', quote: 'JPY' },
+  'USDCAD': { pipSize: 0.0001, lotSize: 100000, base: 'USD', quote: 'CAD' },
+  'USDCHF': { pipSize: 0.0001, lotSize: 100000, base: 'USD', quote: 'CHF' },
+  'EURGBP': { pipSize: 0.0001, lotSize: 100000, base: 'EUR', quote: 'GBP' },
+  'EURAUD': { pipSize: 0.0001, lotSize: 100000, base: 'EUR', quote: 'AUD' },
+  'GBPAUD': { pipSize: 0.0001, lotSize: 100000, base: 'GBP', quote: 'AUD' },
+  'AUDCAD': { pipSize: 0.0001, lotSize: 100000, base: 'AUD', quote: 'CAD' },
+  'EURCHF': { pipSize: 0.0001, lotSize: 100000, base: 'EUR', quote: 'CHF' },
+  'GBPCAD': { pipSize: 0.0001, lotSize: 100000, base: 'GBP', quote: 'CAD' },
+  'GBPCHF': { pipSize: 0.0001, lotSize: 100000, base: 'GBP', quote: 'CHF' },
+  'AUDNZD': { pipSize: 0.0001, lotSize: 100000, base: 'AUD', quote: 'NZD' },
+  'NZDCAD': { pipSize: 0.0001, lotSize: 100000, base: 'NZD', quote: 'CAD' },
+  // Gold/Silver — contract size in troy ounces
+  'XAUUSD': { pipSize: 0.01, lotSize: 100, base: 'XAU', quote: 'USD' },
+  'XAGUSD': { pipSize: 0.001, lotSize: 5000, base: 'XAG', quote: 'USD' },
+  // Indices — point value per contract
+  'US30':   { pipSize: 1, lotSize: 1, pointValue: 1, quote: 'USD' },
+  'NAS100': { pipSize: 1, lotSize: 1, pointValue: 1, quote: 'USD' },
+  'SPX500': { pipSize: 0.1, lotSize: 1, pointValue: 10, quote: 'USD' },
+  'DEFAULT': { pipSize: 0.0001, lotSize: 100000, base: 'USD', quote: 'USD' }
 };
 
+// Exchange rates cache — fetched once on app load
+let _exchangeRates = { USD: 1 };
+let _ratesLoaded = false;
+
+const fetchExchangeRates = async () => {
+  try {
+    const res = await fetch('https://open.er-api.com/v6/latest/USD');
+    const data = await res.json();
+    if (data.result === 'success' && data.rates) {
+      _exchangeRates = data.rates;
+      _ratesLoaded = true;
+      console.log('Exchange rates loaded:', Object.keys(_exchangeRates).length, 'currencies');
+    }
+  } catch (err) {
+    console.warn('Failed to fetch exchange rates, using fallbacks:', err.message);
+  }
+};
+
+// Get rate for converting 1 unit of currency to USD
+const getUSDRate = (currency) => {
+  if (currency === 'USD') return 1;
+  if (!_exchangeRates[currency]) return null;
+  // _exchangeRates has rates relative to USD (e.g. EUR: 0.92 means 1 USD = 0.92 EUR)
+  // We need: 1 EUR = ? USD → 1 / 0.92 = 1.087
+  return 1 / _exchangeRates[currency];
+};
+
+// Calculate P&L in USD for a trade
+// Formula: P&L = (exit - entry) * lotSize * lots [gives profit in QUOTE currency]
+//          Then convert quote currency to USD
+const calculateTradePnL = (symbol, side, entry, exit, lots) => {
+  const sym = symbol.toUpperCase();
+  const config = SYMBOL_CONFIG[sym] || SYMBOL_CONFIG['DEFAULT'];
+  const entryF = parseFloat(entry), exitF = parseFloat(exit), lotsF = parseFloat(lots);
+  if (isNaN(entryF) || isNaN(exitF) || isNaN(lotsF)) return 0;
+  
+  const diff = side === 'Long' ? exitF - entryF : entryF - exitF;
+  
+  // Indices: simple point value
+  if (config.pointValue) {
+    return diff * config.pointValue * lotsF;
+  }
+  
+  // Profit in quote currency
+  const profitInQuote = diff * config.lotSize * lotsF;
+  
+  // Convert quote currency to USD
+  if (config.quote === 'USD') {
+    // Quote is already USD (EURUSD, GBPUSD, XAUUSD, etc.)
+    return profitInQuote;
+  } else {
+    // Need to convert quote to USD
+    // For JPY pairs: profitInQuote is in JPY, divide by USDJPY rate
+    // For other crosses: profitInQuote is in quote currency, divide by USD/quote rate
+    const quoteToUSD = getUSDRate(config.quote);
+    if (quoteToUSD !== null) {
+      return profitInQuote * quoteToUSD;
+    }
+    // Fallback: use exit price as the cross rate for JPY pairs
+    // For EURJPY at 182.747: 1 JPY = 1/182.747 * EURUSD... approximate using exit
+    if (config.quote === 'JPY') {
+      // Approximate: get the USDJPY-equivalent rate
+      // profitInJPY / USDJPY_rate = profitInUSD
+      const usdjpyApprox = _exchangeRates['JPY'] || 150;
+      return profitInQuote / usdjpyApprox;
+    }
+    // Last resort approximation
+    return profitInQuote * 0.75;
+  }
+};
+
+// Keep old function signature for backward compatibility but redirect to new logic
 const calculatePipValue = (symbol, exitPrice) => {
   const config = SYMBOL_CONFIG[symbol.toUpperCase()] || SYMBOL_CONFIG['DEFAULT'];
-  if (config.quoteUSD) return config.pipSize * config.lotSize;
-  else if (config.quoteJPY) { const rate = parseFloat(exitPrice) || 150; return (config.pipSize * config.lotSize) / rate; }
-  else if (config.pointValue) return config.pointValue;
-  else return config.pipSize * config.lotSize * 0.75;
+  if (config.pointValue) return config.pointValue;
+  
+  // pip value per lot = (pipSize * lotSize) in quote currency, converted to USD
+  const pipValueInQuote = config.pipSize * config.lotSize;
+  
+  if (config.quote === 'USD') return pipValueInQuote;
+  
+  const quoteToUSD = getUSDRate(config.quote);
+  if (quoteToUSD !== null) return pipValueInQuote * quoteToUSD;
+  
+  // Fallback using exit price for JPY pairs
+  if (config.quote === 'JPY') {
+    const rate = parseFloat(exitPrice) || _exchangeRates['JPY'] || 150;
+    return pipValueInQuote / rate;
+  }
+  
+  return pipValueInQuote * 0.75;
 };
 
 const loadDarkMode = () => { try { return localStorage.getItem('ellipse_darkMode') === 'true'; } catch { return false; } };
@@ -403,6 +499,9 @@ export default function TradingJournal() {
   const [journalEntries, setJournalEntries] = useState([]);
 
   useEffect(() => { localStorage.setItem('ellipse_darkMode', darkMode); }, [darkMode]);
+
+  // Fetch exchange rates on mount
+  useEffect(() => { fetchExchangeRates(); }, []);
 
   // Load data from Supabase
   useEffect(() => {
@@ -2821,14 +2920,10 @@ function NewTradeModal({ onClose, onSave, accounts }) {
 
   useEffect(() => {
     if (trade.entry && trade.exit && trade.lots && trade.symbol) {
-      const config = SYMBOL_CONFIG[trade.symbol.toUpperCase()] || SYMBOL_CONFIG['DEFAULT'];
       const entry = parseFloat(trade.entry), exit = parseFloat(trade.exit), lots = parseFloat(trade.lots);
       const commission = parseFloat(trade.commission) || 0, swap = parseFloat(trade.swap) || 0;
       if (!isNaN(entry) && !isNaN(exit) && !isNaN(lots)) {
-        const diff = trade.side === 'Long' ? exit - entry : entry - exit;
-        const pips = diff / config.pipSize;
-        const pipValue = calculatePipValue(trade.symbol, exit);
-        const gross = pips * pipValue * lots;
+        const gross = calculateTradePnL(trade.symbol, trade.side, entry, exit, lots);
         setTrade(prev => ({ ...prev, pnl: gross - commission + swap }));
       }
     }
@@ -2957,14 +3052,10 @@ function EditTradeModal({ trade: initialTrade, onClose, onSave, accounts }) {
 
   useEffect(() => {
     if (trade.entry && trade.exit && trade.lots && trade.symbol) {
-      const config = SYMBOL_CONFIG[trade.symbol.toUpperCase()] || SYMBOL_CONFIG['DEFAULT'];
       const entry = parseFloat(trade.entry), exit = parseFloat(trade.exit), lots = parseFloat(trade.lots);
       const commission = parseFloat(trade.commission) || 0, swap = parseFloat(trade.swap) || 0;
       if (!isNaN(entry) && !isNaN(exit) && !isNaN(lots)) {
-        const diff = trade.side === 'Long' ? exit - entry : entry - exit;
-        const pips = diff / config.pipSize;
-        const pipValue = calculatePipValue(trade.symbol, exit);
-        const gross = pips * pipValue * lots;
+        const gross = calculateTradePnL(trade.symbol, trade.side, entry, exit, lots);
         setTrade(prev => ({ ...prev, pnl: gross - commission + swap }));
       }
     }
