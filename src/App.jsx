@@ -745,7 +745,7 @@ export default function TradingJournal() {
                 <>
                   {activeTab === 'dashboard' && <DashboardView trades={trades} accounts={accounts} challenges={challenges} selectedAccount={analyticsAccount} setSelectedAccount={setAnalyticsAccount} />}
                   {activeTab === 'challenges' && <ChallengesView challenges={challenges} trades={trades} accounts={accounts} onUpdate={updateChallenge} onDelete={deleteChallenge} />}
-                  {activeTab === 'journal' && <JournalView trades={trades} accounts={accounts} filterAccount={filterAccount} setFilterAccount={setFilterAccount} onSelectTrade={setSelectedTrade} />}
+                  {activeTab === 'journal' && <JournalView trades={trades} accounts={accounts} filterAccount={filterAccount} setFilterAccount={setFilterAccount} onSelectTrade={setSelectedTrade} onDeleteTrades={async (ids) => { for (const id of ids) await deleteTrade(id); }} />}
                   {activeTab === 'accounts' && <AccountsView accounts={accounts} onUpdate={updateAccount} onDelete={deleteAccount} />}
                   {activeTab === 'calendar' && <CalendarView trades={trades} />}
                 </>
@@ -773,6 +773,50 @@ function ChallengesView({ challenges, trades, accounts, onUpdate, onDelete }) {
 
   const activeChallenges = challenges.filter(c => c.status === 'active');
   const completedChallenges = challenges.filter(c => c.status !== 'active');
+
+  // Auto-progression check: for each active challenge, check if profit target + min trading days are met
+  useEffect(() => {
+    activeChallenges.forEach(challenge => {
+      const accountTrades = trades.filter(t => t.account === challenge.account);
+      const challengeTrades = accountTrades.filter(t => !challenge.startDate || t.date >= challenge.startDate);
+      const phase = challenge.phases?.[challenge.currentPhase] || challenge.phases?.[0] || {};
+      const accountSize = challenge.accountSize || 1;
+      const totalPnl = challengeTrades.reduce((s, t) => s + (parseFloat(t.pnl) || 0), 0);
+      const profitPct = (totalPnl / accountSize) * 100;
+      const tradingDays = new Set(challengeTrades.map(t => t.date)).size;
+      const minDays = phase.minTradingDays || 0;
+      const targetPct = phase.profitTarget;
+
+      // Check if max drawdown was breached (auto-fail)
+      let lowestEquity = accountSize;
+      let runPnl = 0;
+      [...challengeTrades].sort((a, b) => new Date(a.date) - new Date(b.date)).forEach(t => {
+        runPnl += (parseFloat(t.pnl) || 0);
+        const eq = accountSize + runPnl;
+        if (eq < lowestEquity) lowestEquity = eq;
+      });
+      const maxDD = accountSize > 0 ? ((accountSize - lowestEquity) / accountSize) * 100 : 0;
+      
+      if (maxDD >= (phase.maxTotalDrawdown || 10)) {
+        // Auto-fail: max drawdown breached
+        if (challenge.status === 'active') {
+          onUpdate({ ...challenge, status: 'failed', notes: (challenge.notes || '') + `\nAuto-failed: Max drawdown ${maxDD.toFixed(2)}% exceeded ${phase.maxTotalDrawdown}% limit.` });
+        }
+        return;
+      }
+
+      // Auto-advance: profit target met + min trading days met
+      if (targetPct && profitPct >= targetPct && tradingDays >= minDays) {
+        if (challenge.currentPhase < challenge.phases.length - 1) {
+          // Advance to next phase
+          onUpdate({ ...challenge, currentPhase: challenge.currentPhase + 1, notes: (challenge.notes || '') + `\nAuto-advanced to ${challenge.phases[challenge.currentPhase + 1]?.name}: +${profitPct.toFixed(2)}% in ${tradingDays} days.` });
+        } else {
+          // Last phase — mark as passed
+          onUpdate({ ...challenge, status: 'passed', notes: (challenge.notes || '') + `\nAuto-passed: +${profitPct.toFixed(2)}% in ${tradingDays} days.` });
+        }
+      }
+    });
+  }, [trades.length]); // Re-check when trade count changes
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
@@ -1673,18 +1717,62 @@ function ImportModal({ onClose, onImport, accounts }) {
   );
 }
 
-function JournalView({ trades, accounts, filterAccount, setFilterAccount, onSelectTrade }) {
+function JournalView({ trades, accounts, filterAccount, setFilterAccount, onSelectTrade, onDeleteTrades }) {
   const theme = useTheme();
   const [viewMode, setViewMode] = useState('list');
+  const [selectedIds, setSelectedIds] = useState(new Set());
+  const [selectMode, setSelectMode] = useState(false);
   const filtered = filterAccount === 'all' ? trades : trades.filter(t => t.account === filterAccount);
+
+  const toggleSelect = (id, e) => {
+    e.stopPropagation();
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const selectAll = () => {
+    if (selectedIds.size === filtered.length) setSelectedIds(new Set());
+    else setSelectedIds(new Set(filtered.map(t => t.id)));
+  };
+
+  const handleBulkDelete = async () => {
+    if (selectedIds.size === 0) return;
+    if (!window.confirm(`Delete ${selectedIds.size} trade${selectedIds.size > 1 ? 's' : ''}? This cannot be undone.`)) return;
+    await onDeleteTrades([...selectedIds]);
+    setSelectedIds(new Set());
+    setSelectMode(false);
+  };
+
+  const exitSelectMode = () => { setSelectMode(false); setSelectedIds(new Set()); };
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
       <div className="flex items-center justify-between">
-        <select value={filterAccount} onChange={(e) => setFilterAccount(e.target.value)} className="input input-sm" style={{ width: 200 }}>
-          <option value="all">All Accounts</option>
-          {accounts.map(acc => <option key={acc.id} value={acc.name}>{acc.name}</option>)}
-        </select>
+        <div className="flex items-center gap-3">
+          <select value={filterAccount} onChange={(e) => setFilterAccount(e.target.value)} className="input input-sm" style={{ width: 200 }}>
+            <option value="all">All Accounts</option>
+            {accounts.map(acc => <option key={acc.id} value={acc.name}>{acc.name}</option>)}
+          </select>
+          {!selectMode ? (
+            <button onClick={() => setSelectMode(true)} style={{ padding: '7px 14px', borderRadius: 8, border: `1px solid ${theme.cardBorder}`, background: 'none', fontSize: 12, color: theme.textMuted, cursor: 'pointer' }}>Select</button>
+          ) : (
+            <div className="flex items-center gap-2">
+              <button onClick={selectAll} style={{ padding: '7px 14px', borderRadius: 8, border: `1px solid ${theme.cardBorder}`, background: 'none', fontSize: 12, color: theme.textMuted, cursor: 'pointer' }}>
+                {selectedIds.size === filtered.length ? 'Deselect All' : 'Select All'}
+              </button>
+              {selectedIds.size > 0 && (
+                <button onClick={handleBulkDelete} style={{ padding: '7px 14px', borderRadius: 8, border: 'none', background: '#ef4444', fontSize: 12, fontWeight: 500, color: 'white', cursor: 'pointer' }}>
+                  Delete {selectedIds.size}
+                </button>
+              )}
+              <button onClick={exitSelectMode} style={{ padding: '7px 14px', borderRadius: 8, border: `1px solid ${theme.cardBorder}`, background: 'none', fontSize: 12, color: theme.textMuted, cursor: 'pointer' }}>Cancel</button>
+              <span style={{ fontSize: 12, color: theme.textFaint }}>{selectedIds.size} selected</span>
+            </div>
+          )}
+        </div>
         <div className="flex" style={{ background: theme.hoverBg, borderRadius: 8, padding: 4 }}>
           <button onClick={() => setViewMode('list')} style={{ padding: '6px 10px', borderRadius: 6, border: 'none', cursor: 'pointer', background: viewMode === 'list' ? theme.card : 'transparent', boxShadow: viewMode === 'list' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none' }}>
             <LayoutList size={18} style={{ color: viewMode === 'list' ? theme.text : theme.textMuted }} />
@@ -1703,13 +1791,22 @@ function JournalView({ trades, accounts, filterAccount, setFilterAccount, onSele
         </div>
       ) : viewMode === 'list' ? (
         <div className="card-lg" style={{ overflow: 'hidden' }}>
-          <div className="table-header" style={{ display: 'grid', gridTemplateColumns: '1.5fr 80px 100px 80px 100px 50px', gap: 12 }}>
-            <div>Trade</div><div>Side</div><div>Structure</div><div>Lots</div><div style={{ textAlign: 'right' }}>P&L</div><div></div>
+          <div className="table-header" style={{ display: 'grid', gridTemplateColumns: selectMode ? '36px 1.5fr 80px 100px 80px 100px' : '1.5fr 80px 100px 80px 100px 50px', gap: 12 }}>
+            {selectMode && <div></div>}
+            <div>Trade</div><div>Side</div><div>Structure</div><div>Lots</div><div style={{ textAlign: 'right' }}>P&L</div>{!selectMode && <div></div>}
           </div>
           {filtered.map(trade => {
             const chartImg = getTradingViewImageUrl(trade.chartLink) || trade.chartImage;
+            const isSelected = selectedIds.has(trade.id);
             return (
-              <div key={trade.id} onClick={() => onSelectTrade(trade)} className="table-row" style={{ display: 'grid', gridTemplateColumns: '1.5fr 80px 100px 80px 100px 50px', gap: 12, alignItems: 'center' }}>
+              <div key={trade.id} onClick={() => selectMode ? toggleSelect(trade.id, { stopPropagation: () => {} }) : onSelectTrade(trade)} className="table-row" style={{ display: 'grid', gridTemplateColumns: selectMode ? '36px 1.5fr 80px 100px 80px 100px' : '1.5fr 80px 100px 80px 100px 50px', gap: 12, alignItems: 'center', background: isSelected ? (theme.dark ? 'rgba(99,102,241,0.15)' : 'rgba(99,102,241,0.08)') : undefined }}>
+                {selectMode && (
+                  <div onClick={(e) => toggleSelect(trade.id, e)} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
+                    <div style={{ width: 20, height: 20, borderRadius: 6, border: `2px solid ${isSelected ? '#6366f1' : theme.cardBorder}`, background: isSelected ? '#6366f1' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.15s' }}>
+                      {isSelected && <CheckCircle size={14} style={{ color: 'white' }} />}
+                    </div>
+                  </div>
+                )}
                 <div className="flex items-center gap-3">
                   {chartImg ? (
                     <div style={{ width: 48, height: 36, borderRadius: 6, overflow: 'hidden', flexShrink: 0, background: theme.hoverBg }}>
@@ -1727,7 +1824,7 @@ function JournalView({ trades, accounts, filterAccount, setFilterAccount, onSele
                 <span className="badge" style={{ background: MARKET_STRUCTURES[trade.marketStructure]?.color, color: 'white' }}>{trade.marketStructure?.replace('_', ' ').slice(0, 8)}</span>
                 <span style={{ fontSize: 14, color: theme.text }}>{trade.lots}</span>
                 <span style={{ fontSize: 14, fontWeight: 600, color: trade.pnl >= 0 ? '#10b981' : '#ef4444', textAlign: 'right' }}>{trade.pnl >= 0 ? '+' : ''}${trade.pnl?.toFixed(2)}</span>
-                <Eye size={16} style={{ color: theme.textFaint }} />
+                {!selectMode && <Eye size={16} style={{ color: theme.textFaint }} />}
               </div>
             );
           })}
@@ -1736,16 +1833,22 @@ function JournalView({ trades, accounts, filterAccount, setFilterAccount, onSele
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 16 }}>
           {filtered.map(trade => {
             const chartImg = getTradingViewImageUrl(trade.chartLink) || trade.chartImage;
+            const isSelected = selectedIds.has(trade.id);
             return (
-              <div key={trade.id} onClick={() => onSelectTrade(trade)} className="card" style={{ cursor: 'pointer', overflow: 'hidden', transition: 'transform 0.15s, box-shadow 0.15s' }}
-                onMouseEnter={(e) => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.boxShadow = '0 8px 24px rgba(0,0,0,0.12)'; }}
+              <div key={trade.id} onClick={() => selectMode ? toggleSelect(trade.id, { stopPropagation: () => {} }) : onSelectTrade(trade)} className="card" style={{ cursor: 'pointer', overflow: 'hidden', transition: 'transform 0.15s, box-shadow 0.15s', outline: isSelected ? '2px solid #6366f1' : 'none' }}
+                onMouseEnter={(e) => { if (!selectMode) { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.boxShadow = '0 8px 24px rgba(0,0,0,0.12)'; } }}
                 onMouseLeave={(e) => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = 'none'; }}>
+                {selectMode && (
+                  <div style={{ position: 'absolute', top: 8, left: 8, zIndex: 2, width: 22, height: 22, borderRadius: 6, border: `2px solid ${isSelected ? '#6366f1' : 'rgba(255,255,255,0.5)'}`, background: isSelected ? '#6366f1' : 'rgba(0,0,0,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    {isSelected && <CheckCircle size={14} style={{ color: 'white' }} />}
+                  </div>
+                )}
                 {chartImg ? (
                   <div style={{ width: '100%', height: 140, background: theme.hoverBg, position: 'relative' }}>
                     <img src={chartImg} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={(e) => e.target.parentElement.style.display = 'none'} />
                   </div>
                 ) : (
-                  <div style={{ width: '100%', height: 80, background: trade.pnl >= 0 ? 'rgba(16,185,129,0.05)' : 'rgba(239,68,68,0.05)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <div style={{ width: '100%', height: 80, background: trade.pnl >= 0 ? 'rgba(16,185,129,0.05)' : 'rgba(239,68,68,0.05)', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
                     <span style={{ fontSize: 28, fontWeight: 700, color: trade.pnl >= 0 ? '#10b981' : '#ef4444', opacity: 0.3 }}>{trade.symbol}</span>
                   </div>
                 )}
@@ -1988,8 +2091,8 @@ function DashboardView({ trades, accounts, challenges, selectedAccount, setSelec
                     <linearGradient id="cumRed" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#ef4444" stopOpacity={0.3} /><stop offset="100%" stopColor="#ef4444" stopOpacity={0} /></linearGradient>
                   </defs>
                   <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: theme.textFaint }} />
-                  <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: theme.textFaint }} tickFormatter={v => `$${v}`} />
-                  <Tooltip contentStyle={{ background: theme.card, border: `1px solid ${theme.cardBorder}`, borderRadius: 8, fontSize: 12 }} formatter={(v) => [`$${v.toFixed(2)}`, 'Cumulative']} />
+                  <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: theme.textFaint }} tickFormatter={v => `$${v}`} width={60} />
+                  <Tooltip contentStyle={{ background: theme.card, border: `1px solid ${theme.cardBorder}`, borderRadius: 8, fontSize: 12, color: theme.text }} labelStyle={{ color: theme.textMuted }} formatter={(v) => [`$${v.toFixed(2)}`, 'Cumulative']} />
                   <Area type="monotone" dataKey="pnl" stroke={totalPnl >= 0 ? '#10b981' : '#ef4444'} fill={totalPnl >= 0 ? 'url(#cumGreen)' : 'url(#cumRed)'} strokeWidth={2} />
                 </AreaChart>
               </ResponsiveContainer>
@@ -2003,8 +2106,8 @@ function DashboardView({ trades, accounts, challenges, selectedAccount, setSelec
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={dailyPnlData}>
                   <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: theme.textFaint }} />
-                  <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: theme.textFaint }} tickFormatter={v => `$${v}`} />
-                  <Tooltip contentStyle={{ background: theme.card, border: `1px solid ${theme.cardBorder}`, borderRadius: 8, fontSize: 12 }} formatter={(v) => [`$${v.toFixed(2)}`, 'Daily']} />
+                  <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: theme.textFaint }} tickFormatter={v => `$${v}`} width={60} />
+                  <Tooltip contentStyle={{ background: theme.card, border: `1px solid ${theme.cardBorder}`, borderRadius: 8, fontSize: 12, color: theme.text }} labelStyle={{ color: theme.textMuted }} formatter={(v) => [`$${v.toFixed(2)}`, 'Daily P&L']} cursor={{ fill: theme.hoverBg }} />
                   <Bar dataKey="pnl" radius={[4, 4, 0, 0]}>{dailyPnlData.map((entry, index) => <Cell key={index} fill={entry.pnl >= 0 ? '#10b981' : '#ef4444'} />)}</Bar>
                 </BarChart>
               </ResponsiveContainer>
@@ -2047,9 +2150,14 @@ function DashboardView({ trades, accounts, challenges, selectedAccount, setSelec
             {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(d => <div key={d} style={{ padding: 6, textAlign: 'center', fontSize: 11, fontWeight: 500, color: theme.textFaint }}>{d}</div>)}
             {calendarDays.map((day, i) => {
               const data = getDayData(day);
+              const dayBg = data 
+                ? data.pnl >= 0 
+                  ? 'linear-gradient(135deg, rgba(16,185,129,0.08) 0%, rgba(16,185,129,0.22) 100%)'
+                  : 'linear-gradient(135deg, rgba(239,68,68,0.08) 0%, rgba(239,68,68,0.22) 100%)'
+                : 'transparent';
               return (
-                <div key={i} style={{ minHeight: 50, padding: 4, borderRadius: 6, background: data ? (data.pnl >= 0 ? 'rgba(16,185,129,0.15)' : 'rgba(239,68,68,0.15)') : 'transparent', border: day ? `1px solid ${theme.cardBorder}` : 'none' }}>
-                  {day && <><div style={{ fontSize: 11, color: theme.textMuted }}>{day}</div>{data && <div style={{ marginTop: 2 }}><div style={{ fontSize: 11, fontWeight: 600, color: data.pnl >= 0 ? '#10b981' : '#ef4444' }}>{data.pnl >= 0 ? '+' : ''}{Math.abs(data.pnl) >= 1000 ? (data.pnl / 1000).toFixed(1) + 'K' : data.pnl.toFixed(0)}</div><div style={{ fontSize: 9, color: theme.textFaint }}>{data.trades}t</div></div>}</>}
+                <div key={i} style={{ minHeight: 50, padding: 4, borderRadius: 6, background: dayBg, border: day ? `1px solid ${data ? (data.pnl >= 0 ? 'rgba(16,185,129,0.25)' : 'rgba(239,68,68,0.25)') : theme.cardBorder}` : 'none' }}>
+                  {day && <><div style={{ fontSize: 11, color: data ? (data.pnl >= 0 ? '#10b981' : '#ef4444') : theme.textMuted, fontWeight: data ? 600 : 400 }}>{day}</div>{data && <div style={{ marginTop: 2 }}><div style={{ fontSize: 11, fontWeight: 600, color: data.pnl >= 0 ? '#10b981' : '#ef4444' }}>{data.pnl >= 0 ? '+' : ''}{Math.abs(data.pnl) >= 1000 ? (data.pnl / 1000).toFixed(1) + 'K' : data.pnl.toFixed(0)}</div><div style={{ fontSize: 9, color: theme.textFaint }}>{data.trades}t</div></div>}</>}
                 </div>
               );
             })}
@@ -2142,9 +2250,15 @@ function CalendarView({ trades }) {
           {days.map((day, i) => {
             const dayTrades = getTradesForDay(day);
             const pnl = dayTrades.reduce((s, t) => s + t.pnl, 0);
+            const hasTrades = dayTrades.length > 0;
+            const dayBg = hasTrades
+              ? pnl >= 0
+                ? 'linear-gradient(135deg, rgba(16,185,129,0.06) 0%, rgba(16,185,129,0.2) 100%)'
+                : 'linear-gradient(135deg, rgba(239,68,68,0.06) 0%, rgba(239,68,68,0.2) 100%)'
+              : !day ? (theme.dark ? '#0a0a0a' : '#f8fafc') : 'transparent';
             return (
-              <div key={i} style={{ minHeight: 90, padding: 10, borderBottom: `1px solid ${theme.cardBorder}`, borderRight: `1px solid ${theme.cardBorder}`, background: !day ? (theme.dark ? '#0a0a0a' : '#f8fafc') : 'transparent' }}>
-                {day && <><div style={{ fontSize: 13, color: theme.textMuted }}>{day}</div>{dayTrades.length > 0 && <div style={{ marginTop: 6 }}><div style={{ fontSize: 13, fontWeight: 600, color: pnl >= 0 ? '#10b981' : '#ef4444' }}>{pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}</div><div style={{ fontSize: 11, color: theme.textFaint }}>{dayTrades.length} trade{dayTrades.length > 1 ? 's' : ''}</div></div>}</>}
+              <div key={i} style={{ minHeight: 90, padding: 10, borderBottom: `1px solid ${theme.cardBorder}`, borderRight: `1px solid ${theme.cardBorder}`, background: dayBg, borderLeft: hasTrades ? `3px solid ${pnl >= 0 ? '#10b981' : '#ef4444'}` : undefined }}>
+                {day && <><div style={{ fontSize: 13, color: hasTrades ? (pnl >= 0 ? '#10b981' : '#ef4444') : theme.textMuted, fontWeight: hasTrades ? 600 : 400 }}>{day}</div>{hasTrades && <div style={{ marginTop: 6 }}><div style={{ fontSize: 13, fontWeight: 600, color: pnl >= 0 ? '#10b981' : '#ef4444' }}>{pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}</div><div style={{ fontSize: 11, color: theme.textFaint }}>{dayTrades.length} trade{dayTrades.length > 1 ? 's' : ''}</div></div>}</>}
               </div>
             );
           })}
