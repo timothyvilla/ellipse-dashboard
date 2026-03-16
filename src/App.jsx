@@ -772,8 +772,11 @@ export default function TradingJournal() {
   };
 
   const filteredTrades = filterAccount === 'all' ? trades : trades.filter(t => t.account === filterAccount);
-  const totalPnl = filteredTrades.reduce((sum, t) => sum + t.pnl, 0);
-  const winningTrades = filteredTrades.filter(t => t.pnl > 0).length;
+  const today = new Date().toISOString().split('T')[0];
+  const todayTrades = filteredTrades.filter(t => t.date === today);
+  const todayPnl = todayTrades.reduce((sum, t) => sum + (parseFloat(t.pnl) || 0), 0);
+  const todayWins = todayTrades.filter(t => t.pnl > 0).length;
+  const todayLosses = todayTrades.filter(t => t.pnl < 0).length;
 
   const theme = {
     dark: darkMode, bg: darkMode ? '#0a0a0a' : '#f8fafc',
@@ -836,6 +839,7 @@ export default function TradingJournal() {
                 { id: 'dashboard', label: 'Dashboard', icon: BarChart3 },
                 { id: 'challenges', label: 'Challenges', icon: Trophy },
                 { id: 'journal', label: 'Journal', icon: BookOpen },
+                { id: 'news', label: 'News', icon: Zap },
                 { id: 'history', label: 'History', icon: Clock },
                 { id: 'accounts', label: 'Accounts', icon: Wallet },
                 { id: 'calendar', label: 'Calendar', icon: Calendar },
@@ -859,12 +863,12 @@ export default function TradingJournal() {
               
               <div className="card" style={{ padding: 16 }}>
                 <div className="stat-label">Today's P&L</div>
-                <div className="stat-value" style={{ color: totalPnl >= 0 ? '#10b981' : '#ef4444', marginTop: 4 }}>
-                  {totalPnl >= 0 ? '+' : ''}{totalPnl.toFixed(2)}
+                <div className="stat-value" style={{ color: todayPnl >= 0 ? '#10b981' : '#ef4444', marginTop: 4 }}>
+                  {todayPnl >= 0 ? '+' : ''}{todayPnl.toFixed(2)}
                 </div>
                 <div style={{ marginTop: 8, display: 'flex', gap: 12, fontSize: 12, color: theme.textMuted }}>
-                  <span className="flex items-center gap-1"><span style={{ width: 6, height: 6, borderRadius: 3, background: '#10b981' }}></span>{winningTrades}W</span>
-                  <span className="flex items-center gap-1"><span style={{ width: 6, height: 6, borderRadius: 3, background: '#ef4444' }}></span>{filteredTrades.length - winningTrades}L</span>
+                  <span className="flex items-center gap-1"><span style={{ width: 6, height: 6, borderRadius: 3, background: '#10b981' }}></span>{todayWins}W</span>
+                  <span className="flex items-center gap-1"><span style={{ width: 6, height: 6, borderRadius: 3, background: '#ef4444' }}></span>{todayLosses}L</span>
                 </div>
               </div>
             </div>
@@ -879,6 +883,7 @@ export default function TradingJournal() {
                     {activeTab === 'dashboard' && 'Dashboard'}
                     {activeTab === 'challenges' && 'Prop Firm Challenges'}
                     {activeTab === 'journal' && 'Journal'}
+                    {activeTab === 'news' && 'Economic Calendar'}
                     {activeTab === 'history' && 'Trade History'}
                     {activeTab === 'accounts' && 'Accounts'}
                     {activeTab === 'calendar' && 'Calendar'}
@@ -887,6 +892,7 @@ export default function TradingJournal() {
                     {activeTab === 'dashboard' && 'Performance metrics and insights'}
                     {activeTab === 'challenges' && 'Track challenge phases, drawdown limits & profit targets'}
                     {activeTab === 'journal' && 'Trade ideas, bias analysis & market notes'}
+                    {activeTab === 'news' && 'High-impact forex news events & economic releases'}
                     {activeTab === 'history' && 'Document and analyze your trades'}
                     {activeTab === 'accounts' && 'Manage trading accounts'}
                     {activeTab === 'calendar' && 'Visual trade history'}
@@ -922,6 +928,7 @@ export default function TradingJournal() {
                   {activeTab === 'dashboard' && <DashboardView trades={trades} accounts={accounts} challenges={challenges} selectedAccount={analyticsAccount} setSelectedAccount={setAnalyticsAccount} />}
                   {activeTab === 'challenges' && <ChallengesView challenges={challenges} trades={trades} accounts={accounts} onUpdate={updateChallenge} onDelete={deleteChallenge} />}
                   {activeTab === 'journal' && <JournalIdeasView entries={journalEntries} onAdd={addJournalEntry} onUpdate={updateJournalEntry} onDelete={deleteJournalEntry} />}
+                  {activeTab === 'news' && <NewsCalendarView />}
                   {activeTab === 'history' && <JournalView trades={trades} accounts={accounts} filterAccount={filterAccount} setFilterAccount={setFilterAccount} onSelectTrade={setSelectedTrade} onDeleteTrades={async (ids) => { for (const id of ids) await deleteTrade(id); }} />}
                   {activeTab === 'accounts' && <AccountsView accounts={accounts} challenges={challenges} trades={trades} onUpdate={updateAccount} onDelete={deleteAccount} />}
                   {activeTab === 'calendar' && <CalendarView trades={trades} />}
@@ -2201,6 +2208,245 @@ function JournalEntryForm({ entry, onSave, onCancel }) {
           {entry ? 'Save Changes' : 'Save Entry'}
         </button>
       </div>
+    </div>
+  );
+}
+
+// ==================== NEWS / ECONOMIC CALENDAR VIEW ====================
+const IMPACT_COLORS = { High: '#ef4444', Medium: '#f59e0b', Low: '#6366f1', Holiday: '#64748b' };
+const NEWS_CURRENCIES = ['All', 'USD', 'EUR', 'GBP', 'JPY', 'AUD', 'CAD', 'CHF', 'NZD'];
+
+function NewsCalendarView() {
+  const theme = useTheme();
+  const [events, setEvents] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [filterCurrency, setFilterCurrency] = useState('All');
+  const [filterImpact, setFilterImpact] = useState('All');
+  const [viewMode, setViewMode] = useState('week'); // 'today' or 'week'
+  const [lastFetched, setLastFetched] = useState(null);
+
+  useEffect(() => {
+    loadEvents(viewMode);
+  }, [viewMode]);
+
+  const loadEvents = async (mode) => {
+    // Check localStorage cache first
+    const cacheKey = `ellipse_news_${mode}`;
+    const cacheTimeKey = `ellipse_news_${mode}_time`;
+    const cached = localStorage.getItem(cacheKey);
+    const cachedTime = localStorage.getItem(cacheTimeKey);
+    const now = Date.now();
+    
+    // Use cache if less than 4 hours old
+    if (cached && cachedTime && (now - parseInt(cachedTime)) < 4 * 60 * 60 * 1000) {
+      try {
+        setEvents(JSON.parse(cached));
+        setLastFetched(new Date(parseInt(cachedTime)));
+        setLoading(false);
+        return;
+      } catch {}
+    }
+
+    setLoading(true);
+    setError('');
+    try {
+      const endpoint = mode === 'today'
+        ? 'https://nfs.faireconomy.media/ff_calendar_thisweek.json'
+        : 'https://nfs.faireconomy.media/ff_calendar_thisweek.json';
+      
+      const res = await fetch(endpoint);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      
+      // Normalize the data
+      const normalized = (Array.isArray(data) ? data : []).map(e => ({
+        title: e.title || e.event || e.name || '',
+        country: e.country || e.currency || '',
+        date: e.date || '',
+        impact: e.impact || e.importance || 'Low',
+        forecast: e.forecast ?? '',
+        previous: e.previous ?? '',
+        actual: e.actual ?? '',
+      }));
+      
+      setEvents(normalized);
+      setLastFetched(new Date());
+      
+      // Cache it
+      localStorage.setItem(cacheKey, JSON.stringify(normalized));
+      localStorage.setItem(cacheTimeKey, now.toString());
+    } catch (err) {
+      console.warn('News fetch failed, trying fallback:', err.message);
+      // Try fallback with Forex Factory public JSON
+      try {
+        const res = await fetch('https://nfs.faireconomy.media/ff_calendar_thisweek.json');
+        const data = await res.json();
+        const normalized = (Array.isArray(data) ? data : []).map(e => ({
+          title: e.title || '',
+          country: e.country || '',
+          date: e.date || '',
+          impact: e.impact || 'Low',
+          forecast: e.forecast ?? '',
+          previous: e.previous ?? '',
+          actual: e.actual ?? '',
+        }));
+        setEvents(normalized);
+        setLastFetched(new Date());
+        localStorage.setItem(cacheKey, JSON.stringify(normalized));
+        localStorage.setItem(`${cacheKey}_time`, now.toString());
+      } catch (err2) {
+        setError('Unable to load economic calendar. Check your connection.');
+      }
+    }
+    setLoading(false);
+  };
+
+  // Filter events
+  const today = new Date().toISOString().split('T')[0];
+  const filtered = events.filter(e => {
+    if (filterCurrency !== 'All' && e.country !== filterCurrency) return false;
+    if (filterImpact !== 'All' && e.impact !== filterImpact) return false;
+    if (viewMode === 'today') {
+      const eventDate = e.date ? new Date(e.date).toISOString().split('T')[0] : '';
+      if (eventDate !== today) return false;
+    }
+    return true;
+  });
+
+  // Group by date
+  const groupedByDate = {};
+  filtered.forEach(e => {
+    const d = e.date ? new Date(e.date) : null;
+    const dateKey = d ? d.toISOString().split('T')[0] : 'Unknown';
+    if (!groupedByDate[dateKey]) groupedByDate[dateKey] = [];
+    groupedByDate[dateKey].push(e);
+  });
+  const sortedDates = Object.keys(groupedByDate).sort();
+
+  // Count high impact today
+  const highImpactToday = events.filter(e => {
+    const ed = e.date ? new Date(e.date).toISOString().split('T')[0] : '';
+    return ed === today && e.impact === 'High';
+  }).length;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      {/* Filter Bar */}
+      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10 }}>
+        {/* View mode toggle */}
+        <div className="flex" style={{ background: theme.hoverBg, borderRadius: 8, padding: 3 }}>
+          {['today', 'week'].map(m => (
+            <button key={m} onClick={() => setViewMode(m)} style={{ padding: '6px 16px', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 500, background: viewMode === m ? theme.card : 'transparent', color: viewMode === m ? theme.text : theme.textMuted, boxShadow: viewMode === m ? '0 1px 3px rgba(0,0,0,0.1)' : 'none' }}>
+              {m === 'today' ? 'Today' : 'This Week'}
+            </button>
+          ))}
+        </div>
+
+        {/* Currency filter */}
+        <div className="flex" style={{ background: theme.hoverBg, borderRadius: 8, padding: 3 }}>
+          {NEWS_CURRENCIES.map(c => (
+            <button key={c} onClick={() => setFilterCurrency(c)} style={{ padding: '5px 10px', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: 11, fontWeight: 500, background: filterCurrency === c ? theme.card : 'transparent', color: filterCurrency === c ? theme.text : theme.textMuted, boxShadow: filterCurrency === c ? '0 1px 3px rgba(0,0,0,0.1)' : 'none' }}>
+              {c}
+            </button>
+          ))}
+        </div>
+
+        {/* Impact filter */}
+        <div className="flex" style={{ background: theme.hoverBg, borderRadius: 8, padding: 3 }}>
+          {['All', 'High', 'Medium', 'Low'].map(imp => (
+            <button key={imp} onClick={() => setFilterImpact(imp)} style={{ padding: '5px 12px', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: 11, fontWeight: 500, background: filterImpact === imp ? theme.card : 'transparent', color: filterImpact === imp ? (IMPACT_COLORS[imp] || theme.text) : theme.textMuted, boxShadow: filterImpact === imp ? '0 1px 3px rgba(0,0,0,0.1)' : 'none' }}>
+              {imp}
+            </button>
+          ))}
+        </div>
+
+        <div style={{ flex: 1 }} />
+
+        {/* Status */}
+        <div style={{ fontSize: 11, color: theme.textFaint }}>
+          {highImpactToday > 0 && <span style={{ color: '#ef4444', fontWeight: 600, marginRight: 8 }}>🔴 {highImpactToday} high-impact today</span>}
+          {lastFetched && <span>Updated {lastFetched.toLocaleTimeString()}</span>}
+        </div>
+        
+        <button onClick={() => { localStorage.removeItem(`ellipse_news_${viewMode}`); localStorage.removeItem(`ellipse_news_${viewMode}_time`); loadEvents(viewMode); }} style={{ padding: '6px 12px', borderRadius: 8, border: `1px solid ${theme.cardBorder}`, background: 'none', fontSize: 12, color: theme.textMuted, cursor: 'pointer' }}>
+          Refresh
+        </button>
+      </div>
+
+      {/* Loading */}
+      {loading && (
+        <div style={{ padding: 60, textAlign: 'center' }}>
+          <Loader2 size={28} style={{ color: theme.textMuted, animation: 'spin 1s linear infinite', margin: '0 auto 12px' }} />
+          <p style={{ fontSize: 13, color: theme.textFaint }}>Loading economic calendar...</p>
+        </div>
+      )}
+
+      {/* Error */}
+      {error && (
+        <div style={{ padding: 16, borderRadius: 10, background: 'rgba(239,68,68,0.1)', display: 'flex', alignItems: 'center', gap: 8 }}>
+          <AlertCircle size={16} style={{ color: '#ef4444' }} />
+          <span style={{ fontSize: 13, color: '#ef4444' }}>{error}</span>
+        </div>
+      )}
+
+      {/* Events grouped by date */}
+      {!loading && !error && filtered.length === 0 && (
+        <div className="card-lg" style={{ padding: 60, textAlign: 'center' }}>
+          <Zap size={40} style={{ color: theme.textFaint, margin: '0 auto 12px', opacity: 0.4 }} />
+          <p style={{ fontSize: 14, color: theme.textMuted }}>No events match your filters</p>
+        </div>
+      )}
+
+      {!loading && sortedDates.map(dateKey => {
+        const isToday = dateKey === today;
+        const dayEvents = groupedByDate[dateKey];
+        const highCount = dayEvents.filter(e => e.impact === 'High').length;
+        return (
+          <div key={dateKey}>
+            <div className="flex items-center gap-3" style={{ marginBottom: 8 }}>
+              <span style={{ fontSize: 12, fontWeight: 600, color: isToday ? '#6366f1' : theme.textMuted, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                {isToday ? '📍 Today — ' : ''}{new Date(dateKey + 'T00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}
+              </span>
+              {highCount > 0 && <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 4, background: 'rgba(239,68,68,0.1)', color: '#ef4444', fontWeight: 600 }}>{highCount} high impact</span>}
+              <span style={{ fontSize: 11, color: theme.textFaint }}>{dayEvents.length} events</span>
+            </div>
+
+            <div className="card-lg" style={{ overflow: 'hidden' }}>
+              {/* Table header */}
+              <div style={{ display: 'grid', gridTemplateColumns: '70px 50px 60px 1fr 80px 80px 80px', gap: 8, padding: '10px 16px', background: theme.hoverBg, borderBottom: `1px solid ${theme.cardBorder}` }}>
+                <span style={{ fontSize: 10, fontWeight: 600, color: theme.textFaint, textTransform: 'uppercase' }}>Time</span>
+                <span style={{ fontSize: 10, fontWeight: 600, color: theme.textFaint, textTransform: 'uppercase' }}>Ccy</span>
+                <span style={{ fontSize: 10, fontWeight: 600, color: theme.textFaint, textTransform: 'uppercase' }}>Impact</span>
+                <span style={{ fontSize: 10, fontWeight: 600, color: theme.textFaint, textTransform: 'uppercase' }}>Event</span>
+                <span style={{ fontSize: 10, fontWeight: 600, color: theme.textFaint, textTransform: 'uppercase', textAlign: 'right' }}>Forecast</span>
+                <span style={{ fontSize: 10, fontWeight: 600, color: theme.textFaint, textTransform: 'uppercase', textAlign: 'right' }}>Previous</span>
+                <span style={{ fontSize: 10, fontWeight: 600, color: theme.textFaint, textTransform: 'uppercase', textAlign: 'right' }}>Actual</span>
+              </div>
+
+              {dayEvents.map((event, i) => {
+                const eventTime = event.date ? new Date(event.date).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true }) : '--:--';
+                const impactColor = IMPACT_COLORS[event.impact] || theme.textFaint;
+                const isHigh = event.impact === 'High';
+                return (
+                  <div key={i} style={{ display: 'grid', gridTemplateColumns: '70px 50px 60px 1fr 80px 80px 80px', gap: 8, padding: '12px 16px', borderBottom: `1px solid ${theme.cardBorder}`, background: isHigh ? (theme.dark ? 'rgba(239,68,68,0.05)' : 'rgba(239,68,68,0.03)') : 'transparent' }}>
+                    <span style={{ fontSize: 13, color: theme.textMuted, fontFamily: "'JetBrains Mono', monospace" }}>{eventTime}</span>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: theme.text }}>{event.country}</span>
+                    <div className="flex items-center gap-1">
+                      <div style={{ width: 8, height: 8, borderRadius: 4, background: impactColor }} />
+                      <span style={{ fontSize: 11, color: impactColor, fontWeight: 500 }}>{event.impact}</span>
+                    </div>
+                    <span style={{ fontSize: 13, color: theme.text, fontWeight: isHigh ? 600 : 400 }}>{event.title}</span>
+                    <span style={{ fontSize: 13, color: theme.textMuted, textAlign: 'right', fontFamily: "'JetBrains Mono', monospace" }}>{event.forecast || '—'}</span>
+                    <span style={{ fontSize: 13, color: theme.textMuted, textAlign: 'right', fontFamily: "'JetBrains Mono', monospace" }}>{event.previous || '—'}</span>
+                    <span style={{ fontSize: 13, fontWeight: event.actual ? 600 : 400, color: event.actual ? theme.text : theme.textFaint, textAlign: 'right', fontFamily: "'JetBrains Mono', monospace" }}>{event.actual || '—'}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }
