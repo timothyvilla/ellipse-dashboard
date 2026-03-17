@@ -1,13 +1,20 @@
 import React, { useState, useEffect, createContext, useContext, useRef } from 'react';
-import { createClient } from '@supabase/supabase-js';
 import { XAxis, YAxis, Tooltip, ResponsiveContainer, AreaChart, Area, BarChart, Bar, Cell } from 'recharts';
 import { Plus, TrendingUp, TrendingDown, ChevronDown, Calendar, BarChart3, BookOpen, Wallet, CheckCircle, Clock, X, Eye, Database, ChevronLeft, ChevronRight, Trash2, Edit3, Moon, Sun, Settings, Link, Image, ExternalLink, Loader2, CloudOff, Cloud, LayoutGrid, LayoutList, Upload, FileText, AlertCircle, Shield, Target, AlertTriangle, Zap, Trophy, Flag, Activity } from 'lucide-react';
-
-// Supabase client
-const supabase = createClient(
-  'https://ksbhbhjnrrkcnunehksx.supabase.co',
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtzYmhiaGpucnJrY251bmVoa3N4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMyMTUwNDAsImV4cCI6MjA4ODc5MTA0MH0.t0tbxMpMzYxWtrejNi0TrcM3cUPPopAe2GaUdIuCjeA'
-);
+import { supabase } from './lib/supabaseClient';
+import {
+  sanitizeImportedHtml,
+  sanitizeImageUrl,
+  getTradingViewImageUrl,
+  safeCsvRow,
+  validateExchangeRates,
+  validateTrade,
+  validateAccount,
+  validateChallenge,
+  validateJournalEntry,
+  checkImportSize,
+  truncate,
+} from './lib/security';
 
 const ThemeContext = createContext();
 const useTheme = () => useContext(ThemeContext);
@@ -56,23 +63,12 @@ const PROP_FIRM_PRESETS = {
   }
 };
 
-// Convert TradingView share URL to direct image URL
-const getTradingViewImageUrl = (url) => {
-  if (!url) return null;
-  if (url.includes('s3.tradingview.com') || url.match(/\.(png|jpg|jpeg|gif|webp)$/i)) return url;
-  const match = url.match(/tradingview\.com\/x\/([a-zA-Z0-9]+)/);
-  if (match) {
-    const id = match[1];
-    return `https://s3.tradingview.com/snapshots/${id.charAt(0).toLowerCase()}/${id}.png`;
-  }
-  return url;
-};
 
 // Parse MT5 HTML statement
 const parseMT5Statement = (html) => {
   const trades = [];
   const parser = new DOMParser();
-  const doc = parser.parseFromString(html, 'text/html');
+  const doc = parser.parseFromString(sanitizeImportedHtml(html), 'text/html');
   const tables = doc.querySelectorAll('table');
   
   for (const table of tables) {
@@ -142,7 +138,7 @@ const parseCTraderStatement = (html) => {
   const trades = [];
   const phaseSplits = [];
   const parser = new DOMParser();
-  const doc = parser.parseFromString(html, 'text/html');
+  const doc = parser.parseFromString(sanitizeImportedHtml(html), 'text/html');
   
   const parseNum = (text) => {
     if (!text) return 0;
@@ -300,8 +296,7 @@ const parseCSV = (csv, platform) => {
   
   for (let i = 1; i < lines.length; i++) {
     const values = lines[i].split(',').map(v => v.trim().replace(/"/g, ''));
-    const row = {};
-    headers.forEach((h, idx) => row[h] = values[idx] || '');
+    const row = safeCsvRow(headers, values);
     
     const symbol = row.symbol || row.instrument || row.pair || '';
     const type = (row.type || row.direction || row.side || '').toLowerCase();
@@ -392,7 +387,7 @@ const fetchExchangeRates = async () => {
   try {
     const res = await fetch('https://open.er-api.com/v6/latest/USD');
     const data = await res.json();
-    if (data.result === 'success' && data.rates) {
+    if (validateExchangeRates(data)) {
       _exchangeRates = data.rates;
       _ratesLoaded = true;
       console.log('Exchange rates loaded:', Object.keys(_exchangeRates).length, 'currencies');
