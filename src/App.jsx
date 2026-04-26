@@ -1164,6 +1164,13 @@ function ChallengeCard({ challenge, trades, onSelect, onUpdate, onDelete, compac
           <div className="flex items-center gap-3">
             <span className="badge" style={{ background: statusStyle.bg, color: statusStyle.text }}>{statusStyle.label}</span>
             <span style={{ fontSize: 14, fontWeight: 600, color: totalPnl >= 0 ? '#10b981' : '#ef4444' }}>{totalPnl >= 0 ? '+' : ''}${totalPnl.toFixed(2)}</span>
+            <button
+              onClick={(e) => { e.stopPropagation(); onDelete(); }}
+              title="Delete challenge"
+              style={{ padding: 6, borderRadius: 6, background: 'transparent', border: 'none', cursor: 'pointer' }}
+            >
+              <Trash2 size={14} style={{ color: theme.textFaint }} />
+            </button>
           </div>
         </div>
       </div>
