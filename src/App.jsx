@@ -130,7 +130,14 @@ const parseMT5Statement = (html) => {
       }
     }
   }
-  return trades;
+  // Dedupe in case the HTML has nested duplicate tables
+  const seen = new Set();
+  return trades.filter(t => {
+    const key = `${t.date}|${t.time}|${t.symbol}|${t.side}|${t.entry}|${t.exit}|${t.lots}|${t.pnl}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 };
 
 // Parse cTrader HTML statement  
@@ -284,7 +291,18 @@ const parseCTraderStatement = (html) => {
     }
   }
   
-  return { trades, phaseSplits };
+  // FIX: cTrader HTML statements often contain nested duplicate History tables
+  // (an outer flat table + an inner clean table). Dedupe by fingerprint.
+  const seen = new Set();
+  const uniqueTrades = [];
+  for (const t of trades) {
+    const key = `${t.date}|${t.time}|${t.symbol}|${t.side}|${t.entry}|${t.exit}|${t.lots}|${t.pnl}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    uniqueTrades.push(t);
+  }
+  
+  return { trades: uniqueTrades, phaseSplits };
 };
 
 // Parse CSV file
