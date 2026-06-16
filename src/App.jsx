@@ -1,6 +1,6 @@
 import React, { useState, useEffect, createContext, useContext, useRef } from 'react';
-import { XAxis, YAxis, Tooltip, ResponsiveContainer, AreaChart, Area, BarChart, Bar, Cell } from 'recharts';
-import { Plus, TrendingUp, TrendingDown, ChevronDown, Calendar, BarChart3, BookOpen, Wallet, CheckCircle, Clock, X, Eye, Database, ChevronLeft, ChevronRight, Trash2, Edit3, Moon, Sun, Settings, Link, Image, ExternalLink, Loader2, CloudOff, Cloud, LayoutGrid, LayoutList, Upload, FileText, AlertCircle, Shield, Target, AlertTriangle, Zap, Trophy, Flag, Activity } from 'lucide-react';
+import { XAxis, YAxis, Tooltip, ResponsiveContainer, AreaChart, Area, BarChart, Bar, Cell, ComposedChart, Line, ReferenceLine } from 'recharts';
+import { Plus, TrendingUp, TrendingDown, ChevronDown, Calendar, BarChart3, BookOpen, Wallet, CheckCircle, Clock, X, Eye, Database, ChevronLeft, ChevronRight, Trash2, Edit3, Moon, Sun, Settings, Link, Image, ExternalLink, Loader2, CloudOff, Cloud, LayoutGrid, LayoutList, Upload, FileText, AlertCircle, Shield, Target, AlertTriangle, Zap, Trophy, Flag, Activity, Dices, Play } from 'lucide-react';
 import { supabase } from './lib/supabaseClient';
 import {
   sanitizeImportedHtml,
@@ -855,6 +855,7 @@ export default function TradingJournal() {
               {[
                 { id: 'dashboard', label: 'Dashboard', icon: BarChart3 },
                 { id: 'challenges', label: 'Challenges', icon: Trophy },
+                { id: 'simulator', label: 'Simulator', icon: Dices },
                 { id: 'journal', label: 'Journal', icon: BookOpen },
                 { id: 'news', label: 'News', icon: Zap },
                 { id: 'history', label: 'History', icon: Clock },
@@ -899,6 +900,7 @@ export default function TradingJournal() {
                   <h1 style={{ fontSize: 18, fontWeight: 600, color: theme.text }}>
                     {activeTab === 'dashboard' && 'Dashboard'}
                     {activeTab === 'challenges' && 'Prop Firm Challenges'}
+                    {activeTab === 'simulator' && 'Monte Carlo Simulation'}
                     {activeTab === 'journal' && 'Journal'}
                     {activeTab === 'news' && 'Economic Calendar'}
                     {activeTab === 'history' && 'Trade History'}
@@ -908,6 +910,7 @@ export default function TradingJournal() {
                   <p style={{ fontSize: 13, color: theme.textMuted, marginTop: 2 }}>
                     {activeTab === 'dashboard' && 'Performance metrics and insights'}
                     {activeTab === 'challenges' && 'Track challenge phases, drawdown limits & profit targets'}
+                    {activeTab === 'simulator' && 'Project challenge outcomes from your trade history'}
                     {activeTab === 'journal' && 'Trade ideas, bias analysis & market notes'}
                     {activeTab === 'news' && 'High-impact forex news events & economic releases'}
                     {activeTab === 'history' && 'Document and analyze your trades'}
@@ -944,6 +947,7 @@ export default function TradingJournal() {
                 <>
                   {activeTab === 'dashboard' && <DashboardView trades={trades} accounts={accounts} challenges={challenges} selectedAccount={analyticsAccount} setSelectedAccount={setAnalyticsAccount} />}
                   {activeTab === 'challenges' && <ChallengesView challenges={challenges} trades={trades} accounts={accounts} onUpdate={updateChallenge} onDelete={deleteChallenge} />}
+                  {activeTab === 'simulator' && <SimulatorView trades={trades} accounts={accounts} challenges={challenges} />}
                   {activeTab === 'journal' && <JournalIdeasView entries={journalEntries} onAdd={addJournalEntry} onUpdate={updateJournalEntry} onDelete={deleteJournalEntry} />}
                   {activeTab === 'news' && <NewsCalendarView />}
                   {activeTab === 'history' && <JournalView trades={trades} accounts={accounts} filterAccount={filterAccount} setFilterAccount={setFilterAccount} onSelectTrade={setSelectedTrade} onDeleteTrades={async (ids) => { for (const id of ids) await deleteTrade(id); }} />}
@@ -3321,6 +3325,406 @@ function CalendarView({ trades }) {
           })}
         </div>
       </div>
+    </div>
+  );
+}
+
+// ==================== MONTE CARLO SIMULATOR ====================
+// Pure simulation engine. Resamples the user's historical per-trade P&L to
+// project the probability of passing a prop-firm challenge vs. breaching its
+// daily / total drawdown limits. Drawdown is measured from starting balance
+// (static), matching the Challenges tracker in this app.
+
+function shuffledCopy(arr) {
+  const a = arr.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = (Math.random() * (i + 1)) | 0;
+    const t = a[i]; a[i] = a[j]; a[j] = t;
+  }
+  return a;
+}
+
+function percentile(sortedArr, p) {
+  if (!sortedArr.length) return 0;
+  const idx = Math.min(sortedArr.length - 1, Math.max(0, Math.floor(p * sortedArr.length)));
+  return sortedArr[idx];
+}
+
+function runMonteCarlo(pool, p) {
+  const accountSize = p.accountSize;
+  const target$ = accountSize * p.targetPct / 100;
+  const ddTotal$ = accountSize * p.ddTotalPct / 100;
+  const ddDaily$ = accountSize * p.ddDailyPct / 100;
+  const tpd = Math.max(1, Math.round(p.tradesPerDay));
+  const H = p.horizonDays;
+  const N = p.numSims;
+  const n = pool.length;
+  const minDays = p.minDays || 0;
+
+  const dayEquity = Array.from({ length: H }, () => new Float64Array(N));
+  const finals = new Float64Array(N);
+  const maxDDs = new Float64Array(N);
+  let pass = 0, failDaily = 0, failTotal = 0, timeout = 0;
+
+  for (let s = 0; s < N; s++) {
+    let cum = 0, minCum = 0, frozen = false, targetHit = false, outcome = null;
+    const seq = p.method === 'shuffle' ? shuffledCopy(pool) : null;
+    let si = 0;
+    for (let d = 0; d < H; d++) {
+      if (!frozen) {
+        let dayPnl = 0;
+        for (let k = 0; k < tpd; k++) {
+          const r = seq ? seq[si++ % n] : pool[(Math.random() * n) | 0];
+          cum += r; dayPnl += r;
+          if (cum < minCum) minCum = cum;
+          if (p.enforceTotal && cum <= -ddTotal$) { outcome = 'failTotal'; break; }
+          if (!targetHit && cum >= target$) { targetHit = true; frozen = true; cum = target$; break; }
+        }
+        if (outcome) { for (let dd = d; dd < H; dd++) dayEquity[dd][s] = accountSize + cum; break; }
+        if (!frozen && p.enforceDaily && dayPnl <= -ddDaily$) {
+          outcome = 'failDaily';
+          for (let dd = d; dd < H; dd++) dayEquity[dd][s] = accountSize + cum;
+          break;
+        }
+      }
+      dayEquity[d][s] = accountSize + cum;
+      if (targetHit && (d + 1) >= minDays) {
+        outcome = 'pass';
+        for (let dd = d + 1; dd < H; dd++) dayEquity[dd][s] = accountSize + cum;
+        break;
+      }
+    }
+    if (!outcome) outcome = (targetHit && H >= minDays) ? 'pass' : 'timeout';
+    if (outcome === 'pass') pass++;
+    else if (outcome === 'failDaily') failDaily++;
+    else if (outcome === 'failTotal') failTotal++;
+    else timeout++;
+    finals[s] = accountSize + cum;
+    maxDDs[s] = -minCum;
+  }
+
+  const fan = [];
+  for (let d = 0; d < H; d++) {
+    const arr = Float64Array.from(dayEquity[d]).sort();
+    const p5 = percentile(arr, 0.05), p25 = percentile(arr, 0.25), p50 = percentile(arr, 0.5), p75 = percentile(arr, 0.75), p95 = percentile(arr, 0.95);
+    fan.push({ day: d + 1, lower: p5, band: p95 - p5, p25, p50, p75 });
+  }
+
+  const sortedFinals = Float64Array.from(finals).sort();
+  let fmin = Infinity, fmax = -Infinity, fsum = 0;
+  for (let i = 0; i < N; i++) { const v = finals[i]; if (v < fmin) fmin = v; if (v > fmax) fmax = v; fsum += v; }
+  const bins = 24;
+  const binW = (fmax - fmin) / bins || 1;
+  const hist = Array.from({ length: bins }, (_, i) => ({ x: fmin + binW * (i + 0.5), count: 0 }));
+  for (let i = 0; i < N; i++) {
+    let bi = Math.floor((finals[i] - fmin) / binW);
+    if (bi >= bins) bi = bins - 1;
+    if (bi < 0) bi = 0;
+    hist[bi].count++;
+  }
+
+  const sortedDD = Float64Array.from(maxDDs).sort();
+  let ddSum = 0;
+  for (let i = 0; i < N; i++) ddSum += maxDDs[i];
+
+  return {
+    probs: { pass: pass / N, failDaily: failDaily / N, failTotal: failTotal / N, timeout: timeout / N },
+    fan, hist,
+    finals: { p5: percentile(sortedFinals, 0.05), p50: percentile(sortedFinals, 0.5), p95: percentile(sortedFinals, 0.95), min: fmin, max: fmax, mean: fsum / N },
+    dd: { mean: ddSum / N, p95: percentile(sortedDD, 0.95) },
+    breachProb: (failDaily + failTotal) / N,
+    accountSize, target$, ddTotal$,
+  };
+}
+
+function SimulatorView({ trades, accounts, challenges }) {
+  const theme = useTheme();
+  const activeChallenges = challenges.filter(c => c.status === 'active');
+  const [poolAccount, setPoolAccount] = useState('all');
+  const [baseChallenge, setBaseChallenge] = useState(activeChallenges[0]?.id || '');
+  const [running, setRunning] = useState(false);
+  const [result, setResult] = useState(null);
+
+  const buildCfg = () => {
+    const ch = activeChallenges.find(c => String(c.id) === String(baseChallenge));
+    const phase = ch?.phases?.[ch.currentPhase] || ch?.phases?.[0] || {};
+    const acctBal = accounts.find(a => a.name === ch?.account)?.balance;
+    return {
+      accountSize: String(ch?.accountSize || acctBal || 10000),
+      targetPct: String(phase.profitTarget ?? 8),
+      ddTotalPct: String(phase.maxTotalDrawdown ?? 10),
+      ddDailyPct: String(phase.maxDailyDrawdown ?? 5),
+      tradesPerDay: '3',
+      horizonDays: String(phase.maxTradingDays || 30),
+      minDays: String(phase.minTradingDays || 0),
+      numSims: '5000',
+      method: 'bootstrap',
+      enforceDaily: true,
+      enforceTotal: true,
+    };
+  };
+  const [cfg, setCfg] = useState(buildCfg);
+
+  // When the base challenge changes, repopulate rule fields from its current phase.
+  useEffect(() => {
+    const ch = activeChallenges.find(c => String(c.id) === String(baseChallenge));
+    if (!ch) return;
+    const phase = ch.phases?.[ch.currentPhase] || ch.phases?.[0] || {};
+    const acctBal = accounts.find(a => a.name === ch.account)?.balance;
+    setCfg(prev => ({
+      ...prev,
+      accountSize: String(ch.accountSize || acctBal || prev.accountSize),
+      targetPct: String(phase.profitTarget ?? prev.targetPct),
+      ddTotalPct: String(phase.maxTotalDrawdown ?? prev.ddTotalPct),
+      ddDailyPct: String(phase.maxDailyDrawdown ?? prev.ddDailyPct),
+      horizonDays: String(phase.maxTradingDays || prev.horizonDays),
+      minDays: String(phase.minTradingDays || 0),
+    }));
+    if (ch.account) setPoolAccount(ch.account);
+  }, [baseChallenge]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const poolTrades = poolAccount === 'all' ? trades : trades.filter(t => t.account === poolAccount);
+  const pool = poolTrades.map(t => parseFloat(t.pnl) || 0);
+
+  const stats = (() => {
+    const n = pool.length;
+    const wins = pool.filter(v => v > 0);
+    const losses = pool.filter(v => v < 0);
+    const winRate = n ? (wins.length / n) * 100 : 0;
+    const avgWin = wins.length ? wins.reduce((a, b) => a + b, 0) / wins.length : 0;
+    const avgLoss = losses.length ? Math.abs(losses.reduce((a, b) => a + b, 0) / losses.length) : 0;
+    const expectancy = n ? pool.reduce((a, b) => a + b, 0) / n : 0;
+    const dates = new Set(poolTrades.map(t => t.date));
+    const avgTPD = dates.size ? n / dates.size : 0;
+    return { n, winRate, avgWin, avgLoss, expectancy, avgTPD };
+  })();
+
+  const fmt$ = (v) => (v < 0 ? '-' : '') + '$' + Math.abs(Math.round(v)).toLocaleString();
+  const fmtK = (v) => (v < 0 ? '-' : '') + '$' + (Math.abs(v) >= 1000 ? (Math.abs(v) / 1000).toFixed(1) + 'k' : Math.abs(v).toFixed(0));
+  const pctStr = (v) => (v * 100).toFixed(1) + '%';
+
+  const run = () => {
+    if (pool.length < 10) return;
+    setRunning(true);
+    setTimeout(() => {
+      const p = {
+        accountSize: parseFloat(cfg.accountSize) || 10000,
+        targetPct: parseFloat(cfg.targetPct) || 0,
+        ddTotalPct: parseFloat(cfg.ddTotalPct) || 0,
+        ddDailyPct: parseFloat(cfg.ddDailyPct) || 0,
+        tradesPerDay: parseFloat(cfg.tradesPerDay) || 1,
+        horizonDays: Math.max(1, Math.min(365, parseInt(cfg.horizonDays) || 30)),
+        minDays: parseInt(cfg.minDays) || 0,
+        numSims: Math.max(100, Math.min(50000, parseInt(cfg.numSims) || 5000)),
+        method: cfg.method,
+        enforceDaily: cfg.enforceDaily,
+        enforceTotal: cfg.enforceTotal,
+      };
+      setResult(runMonteCarlo(pool, p));
+      setRunning(false);
+    }, 30);
+  };
+
+  const lbl = { fontSize: 11, fontWeight: 600, color: theme.textMuted, textTransform: 'uppercase', letterSpacing: '0.4px', marginBottom: 6, display: 'block' };
+  const inp = { background: theme.inputBg, border: `1px solid ${theme.inputBorder}`, borderRadius: 8, padding: '8px 12px', fontSize: 14, color: theme.text, width: '100%' };
+  const card = { background: theme.card, border: `1px solid ${theme.cardBorder}`, borderRadius: 16, padding: 20 };
+  const muted = { fontSize: 11, color: theme.textFaint, marginTop: 4 };
+
+  const numField = (label, k, step = 1, suffix, hint) => (
+    <div>
+      <label style={lbl}>{label}</label>
+      <div style={{ position: 'relative' }}>
+        <input type="number" step={step} value={cfg[k]} onChange={e => setCfg({ ...cfg, [k]: e.target.value })} style={{ ...inp, paddingRight: suffix ? 30 : 12 }} />
+        {suffix && <span style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', fontSize: 12, color: theme.textFaint, pointerEvents: 'none' }}>{suffix}</span>}
+      </div>
+      {hint && <div style={muted}>{hint}</div>}
+    </div>
+  );
+
+  const OUTCOMES = [
+    { key: 'pass', label: 'Pass target', color: '#10b981' },
+    { key: 'failTotal', label: 'Hit max loss', color: '#ef4444' },
+    { key: 'failDaily', label: 'Hit daily limit', color: '#f59e0b' },
+    { key: 'timeout', label: 'Incomplete', color: theme.textFaint },
+  ];
+
+  const accSize = parseFloat(cfg.accountSize) || 10000;
+  const targetEq = accSize + accSize * (parseFloat(cfg.targetPct) || 0) / 100;
+  const floorEq = accSize - accSize * (parseFloat(cfg.ddTotalPct) || 0) / 100;
+
+  const tipBox = { background: theme.card, border: `1px solid ${theme.cardBorder}`, borderRadius: 8, padding: '8px 10px', fontSize: 12, color: theme.text };
+  const FanTip = ({ active, payload, label }) => {
+    if (!active || !payload || !payload.length) return null;
+    const row = payload[0].payload;
+    return (
+      <div style={tipBox}>
+        <div style={{ fontWeight: 600, marginBottom: 4 }}>Day {label}</div>
+        <div style={{ color: '#10b981' }}>P95: {fmt$(row.lower + row.band)}</div>
+        <div style={{ color: '#8b5cf6' }}>P75: {fmt$(row.p75)}</div>
+        <div style={{ color: '#6366f1' }}>Median: {fmt$(row.p50)}</div>
+        <div style={{ color: '#8b5cf6' }}>P25: {fmt$(row.p25)}</div>
+        <div style={{ color: '#ef4444' }}>P5: {fmt$(row.lower)}</div>
+      </div>
+    );
+  };
+
+  const insufficient = pool.length < 10;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+      {/* Assumptions note */}
+      <div style={{ ...card, padding: 14, display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+        <AlertCircle size={16} style={{ color: '#6366f1', flexShrink: 0, marginTop: 2 }} />
+        <div style={{ fontSize: 12.5, color: theme.textMuted, lineHeight: 1.5 }}>
+          This resamples your historical trade P&amp;L in random order to estimate how often a challenge would pass vs. breach its limits.
+          It assumes trades are independent and your edge stays constant — treat the output as a <strong style={{ color: theme.text }}>risk-of-ruin estimate, not a prediction</strong>.
+          Drawdown is measured from starting balance (static), matching the Challenges tracker.
+        </div>
+      </div>
+
+      {/* Config */}
+      <div style={card}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, flexWrap: 'wrap', gap: 10 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: theme.textMuted, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Simulation Inputs</div>
+          <button onClick={run} disabled={running || insufficient} className="btn-primary" style={{ display: 'inline-flex', alignItems: 'center', gap: 8, opacity: running || insufficient ? 0.6 : 1, cursor: running || insufficient ? 'not-allowed' : 'pointer' }}>
+            {running ? <Loader2 size={16} style={{ animation: 'spin 1s linear infinite' }} /> : <Play size={16} />}
+            {running ? 'Running…' : 'Run simulation'}
+          </button>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 14 }}>
+          <div>
+            <label style={lbl}>Base on challenge</label>
+            <select value={baseChallenge} onChange={e => setBaseChallenge(e.target.value)} style={inp}>
+              <option value="">Manual / none</option>
+              {activeChallenges.map(c => {
+                const ph = c.phases?.[c.currentPhase] || c.phases?.[0] || {};
+                return <option key={c.id} value={c.id}>{c.account || c.name || 'Challenge'} — {ph.name || 'Phase'}</option>;
+              })}
+            </select>
+            <div style={muted}>Pre-fills rules below</div>
+          </div>
+          <div>
+            <label style={lbl}>Trade pool</label>
+            <select value={poolAccount} onChange={e => setPoolAccount(e.target.value)} style={inp}>
+              <option value="all">All accounts</option>
+              {accounts.map(a => <option key={a.id} value={a.name}>{a.name}</option>)}
+            </select>
+            <div style={muted}>{stats.n} trades · {stats.winRate.toFixed(0)}% win</div>
+          </div>
+          {numField('Account size', 'accountSize', 100, '$')}
+          {numField('Profit target', 'targetPct', 0.5, '%')}
+          {numField('Max total drawdown', 'ddTotalPct', 0.5, '%')}
+          {numField('Max daily drawdown', 'ddDailyPct', 0.5, '%')}
+          {numField('Trades / day', 'tradesPerDay', 1, '', `Historical avg: ${stats.avgTPD.toFixed(1)}`)}
+          {numField('Horizon (days)', 'horizonDays', 1, 'd')}
+          {numField('Min trading days', 'minDays', 1, 'd')}
+          {numField('Simulations', 'numSims', 1000, '', '100–50,000')}
+          <div>
+            <label style={lbl}>Resampling</label>
+            <select value={cfg.method} onChange={e => setCfg({ ...cfg, method: e.target.value })} style={inp}>
+              <option value="bootstrap">Bootstrap (with replacement)</option>
+              <option value="shuffle">Shuffle (use each trade once)</option>
+            </select>
+          </div>
+          <div>
+            <label style={lbl}>Enforce limits</label>
+            <div style={{ display: 'flex', gap: 8 }}>
+              {[['enforceTotal', 'Total DD'], ['enforceDaily', 'Daily DD']].map(([k, t]) => (
+                <button key={k} onClick={() => setCfg({ ...cfg, [k]: !cfg[k] })} style={{ flex: 1, padding: '8px 6px', borderRadius: 8, fontSize: 12, fontWeight: 500, cursor: 'pointer', border: `1px solid ${cfg[k] ? '#6366f1' : theme.inputBorder}`, background: cfg[k] ? 'rgba(99,102,241,0.12)' : theme.inputBg, color: cfg[k] ? '#6366f1' : theme.textMuted }}>{t}</button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {insufficient && (
+          <div style={{ marginTop: 14, fontSize: 13, color: '#f59e0b', display: 'flex', alignItems: 'center', gap: 8 }}>
+            <AlertTriangle size={15} /> Need at least 10 trades in the selected pool to simulate. Currently {stats.n}.
+          </div>
+        )}
+      </div>
+
+      {/* Results */}
+      {result && (
+        <>
+          {/* Outcome probabilities */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 14 }}>
+            {OUTCOMES.map(o => (
+              <div key={o.key} style={card}>
+                <div style={{ fontSize: 12, color: theme.textMuted, marginBottom: 6 }}>{o.label}</div>
+                <div style={{ fontSize: 28, fontWeight: 700, color: o.color }}>{pctStr(result.probs[o.key])}</div>
+                <div style={{ marginTop: 8, height: 6, borderRadius: 3, background: theme.hoverBg, overflow: 'hidden' }}>
+                  <div style={{ height: '100%', width: `${result.probs[o.key] * 100}%`, background: o.color, borderRadius: 3 }} />
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Key stats */}
+          <div style={card}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: theme.textMuted, textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 14 }}>Projected outcomes</div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: 16 }}>
+              {[
+                { l: 'Median end equity', v: fmt$(result.finals.p50), c: theme.text },
+                { l: 'Downside (P5)', v: fmt$(result.finals.p5), c: '#ef4444' },
+                { l: 'Upside (P95)', v: fmt$(result.finals.p95), c: '#10b981' },
+                { l: 'Avg max drawdown', v: fmt$(result.dd.mean), c: '#f59e0b' },
+                { l: 'Worst-case DD (P95)', v: fmt$(result.dd.p95), c: '#ef4444' },
+                { l: 'Any breach', v: pctStr(result.breachProb), c: '#ef4444' },
+              ].map((s, i) => (
+                <div key={i}>
+                  <div style={{ fontSize: 11, color: theme.textMuted, marginBottom: 4 }}>{s.l}</div>
+                  <div style={{ fontSize: 18, fontWeight: 700, color: s.c }}>{s.v}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Equity fan chart */}
+          <div style={card}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: theme.textMuted, textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 4 }}>Equity Paths (P5–P95 band, median line)</div>
+            <div style={{ height: 300 }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <ComposedChart data={result.fan} margin={{ top: 10, right: 12, left: 4, bottom: 0 }}>
+                  <XAxis dataKey="day" stroke={theme.textFaint} tick={{ fontSize: 11 }} tickLine={false} />
+                  <YAxis stroke={theme.textFaint} tick={{ fontSize: 11 }} tickLine={false} width={52} domain={['auto', 'auto']} tickFormatter={fmtK} />
+                  <Tooltip content={<FanTip />} />
+                  <Area dataKey="lower" stackId="band" stroke="none" fill="transparent" isAnimationActive={false} />
+                  <Area dataKey="band" stackId="band" stroke="none" fill="rgba(99,102,241,0.18)" isAnimationActive={false} />
+                  <Line dataKey="p50" stroke="#6366f1" strokeWidth={2} dot={false} isAnimationActive={false} />
+                  <ReferenceLine y={targetEq} stroke="#10b981" strokeDasharray="5 4" label={{ value: 'Target', position: 'insideTopRight', fill: '#10b981', fontSize: 11 }} />
+                  <ReferenceLine y={floorEq} stroke="#ef4444" strokeDasharray="5 4" label={{ value: 'Max loss', position: 'insideBottomRight', fill: '#ef4444', fontSize: 11 }} />
+                </ComposedChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          {/* Final equity distribution */}
+          <div style={card}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: theme.textMuted, textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 4 }}>Distribution of Ending Equity</div>
+            <div style={{ height: 240 }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={result.hist} margin={{ top: 10, right: 12, left: 4, bottom: 0 }}>
+                  <XAxis dataKey="x" stroke={theme.textFaint} tick={{ fontSize: 10 }} tickLine={false} tickFormatter={fmtK} />
+                  <YAxis stroke={theme.textFaint} tick={{ fontSize: 11 }} tickLine={false} width={40} />
+                  <Tooltip cursor={{ fill: theme.hoverBg }} contentStyle={tipBox} formatter={(v) => [v, 'Sims']} labelFormatter={(v) => fmt$(v)} />
+                  <ReferenceLine x={result.accountSize} stroke={theme.textFaint} strokeDasharray="4 4" />
+                  <Bar dataKey="count" radius={[3, 3, 0, 0]}>
+                    {result.hist.map((d, i) => <Cell key={i} fill={d.x >= result.accountSize ? '#10b981' : '#ef4444'} />)}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        </>
+      )}
+
+      {!result && !insufficient && (
+        <div style={{ ...card, textAlign: 'center', padding: 40, color: theme.textMuted }}>
+          <Dices size={32} style={{ color: theme.textFaint, marginBottom: 10 }} />
+          <div style={{ fontSize: 14 }}>Set your inputs and run the simulation to see pass/breach probabilities and projected equity paths.</div>
+        </div>
+      )}
     </div>
   );
 }
