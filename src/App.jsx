@@ -4310,6 +4310,8 @@ function CryptoPortfolio({ balance, positions, snapshots, syncing, onSync, fmt, 
   const totalEq = balance?.totalEq ?? lastSnap?.totalEq ?? 0;
   const upl = balance?.upl ?? lastSnap?.upl ?? 0;
   const details = balance?.details || lastSnap?.balances || [];
+  const displayPositions = (positions && positions.length) ? positions : (lastSnap?.positions || []);
+  const positionsAreLive = !!(positions && positions.length);
   const curve = (snapshots || []).map(s => ({ t: new Date(s.ts).getTime(), eq: s.totalEq, label: new Date(s.ts).toLocaleDateString() }));
   const allocation = details.filter(d => (d.eqUsd || 0) > 0.01).map((d, i) => ({ name: d.ccy, value: d.eqUsd, color: COIN_COLORS[i % COIN_COLORS.length] }));
 
@@ -4357,15 +4359,20 @@ function CryptoPortfolio({ balance, positions, snapshots, syncing, onSync, fmt, 
       </div>
 
       <div className="card-lg" style={{ overflow: 'hidden' }}>
-        <div style={{ padding: '16px 20px', fontSize: 14, fontWeight: 600, color: theme.text, borderBottom: `1px solid ${theme.cardBorder}` }}>Open Positions</div>
-        {positions.length ? (
+        <div style={{ padding: '16px 20px', borderBottom: `1px solid ${theme.cardBorder}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <span style={{ fontSize: 14, fontWeight: 600, color: theme.text }}>Open Positions</span>
+          {!positionsAreLive && displayPositions.length > 0 && lastSnap && (
+            <span style={{ fontSize: 11, color: theme.textFaint }}>as of {new Date(lastSnap.ts).toLocaleString()}</span>
+          )}
+        </div>
+        {displayPositions.length ? (
           <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead><tr>
                 {['Instrument', 'Side', 'Size', 'Avg Entry', 'Mark', 'uPnL', 'Lev', 'Liq. Price'].map(h => <th key={h} className="table-header" style={{ textAlign: h === 'Instrument' || h === 'Side' ? 'left' : 'right' }}>{h}</th>)}
               </tr></thead>
               <tbody>
-                {positions.map((p, i) => (
+                {displayPositions.map((p, i) => (
                   <tr key={i} className="table-row" style={{ cursor: 'default' }}>
                     <td style={{ padding: '12px 16px', fontSize: 13, fontWeight: 600, color: theme.text }}>{p.instId}</td>
                     <td style={{ padding: '12px 16px' }}><span className="badge" style={{ background: p.posSide === 'long' ? 'rgba(16,185,129,0.15)' : 'rgba(239,68,68,0.15)', color: p.posSide === 'long' ? '#10b981' : '#ef4444' }}>{(p.posSide || '').toUpperCase()}</span></td>
