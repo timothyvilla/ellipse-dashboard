@@ -1,6 +1,7 @@
 import React, { useState, useEffect, createContext, useContext, useRef } from 'react';
 import { XAxis, YAxis, Tooltip, ResponsiveContainer, AreaChart, Area, BarChart, Bar, Cell, ComposedChart, Line, ReferenceLine } from 'recharts';
-import { Plus, TrendingUp, TrendingDown, ChevronDown, Calendar, BarChart3, BookOpen, Wallet, CheckCircle, Clock, X, Eye, Database, ChevronLeft, ChevronRight, Trash2, Edit3, Moon, Sun, Settings, Link, Image, ExternalLink, Loader2, CloudOff, Cloud, LayoutGrid, LayoutList, Upload, FileText, AlertCircle, Shield, Target, AlertTriangle, Zap, Trophy, Flag, Activity, Dices, Play } from 'lucide-react';
+import { Plus, TrendingUp, TrendingDown, ChevronDown, Calendar, BarChart3, BookOpen, Wallet, CheckCircle, Clock, X, Eye, Database, ChevronLeft, ChevronRight, Trash2, Edit3, Moon, Sun, Settings, Link, Image, ExternalLink, Loader2, CloudOff, Cloud, LayoutGrid, LayoutList, Upload, FileText, AlertCircle, Shield, Target, AlertTriangle, Zap, Trophy, Flag, Activity, Dices, Play, Coins, RefreshCw } from 'lucide-react';
+import { PieChart, Pie } from 'recharts';
 import { supabase } from './lib/supabaseClient';
 import {
   sanitizeImportedHtml,
@@ -493,6 +494,51 @@ const calculatePipValue = (symbol, exitPrice) => {
 
 const loadDarkMode = () => { try { return localStorage.getItem('ellipse_darkMode') === 'true'; } catch { return false; } };
 
+// ==================== CRYPTO ROW MAPPERS ====================
+const mapCryptoTradeRow = (r) => ({
+  id: r.id, tradeId: r.trade_id, ordId: r.ord_id, instId: r.inst_id, side: r.side,
+  posSide: r.pos_side, fillSz: parseFloat(r.fill_sz) || 0, fillPx: parseFloat(r.fill_px) || 0,
+  pnl: parseFloat(r.pnl) || 0, fee: parseFloat(r.fee) || 0, feeCcy: r.fee_ccy || '',
+  execType: r.exec_type, ts: r.ts, source: r.source || 'okx', notes: r.notes || '', chartImage: r.chart_image || '',
+});
+const mapSnapshotRow = (r) => ({
+  id: r.id, ts: r.ts, totalEq: parseFloat(r.total_eq) || 0, upl: parseFloat(r.upl) || 0,
+  balances: Array.isArray(r.balances) ? r.balances : [], positions: Array.isArray(r.positions) ? r.positions : [], source: r.source || 'okx',
+});
+const mapCryptoChallengeRow = (r) => ({
+  id: r.id, name: r.name || 'Growth Challenge', startBalance: parseFloat(r.start_balance) || 0,
+  targetBalance: parseFloat(r.target_balance) || 0, currentBalance: parseFloat(r.current_balance) || 0,
+  startDate: r.start_date, targetDate: r.target_date, status: r.status || 'active',
+  milestones: Array.isArray(r.milestones) ? r.milestones : [], notes: r.notes || '',
+});
+
+// Crypto P&L analytics from a list of trades (fills)
+const computeCryptoStats = (trades) => {
+  const closed = trades.filter(t => typeof t.pnl === 'number');
+  const realized = closed.filter(t => t.pnl !== 0);
+  const wins = realized.filter(t => t.pnl > 0);
+  const losses = realized.filter(t => t.pnl < 0);
+  const grossProfit = wins.reduce((s, t) => s + t.pnl, 0);
+  const grossLoss = Math.abs(losses.reduce((s, t) => s + t.pnl, 0));
+  const totalPnl = closed.reduce((s, t) => s + t.pnl, 0);
+  const totalFees = Math.abs(trades.reduce((s, t) => s + (t.fee || 0), 0));
+  return {
+    totalPnl, totalFees, netPnl: totalPnl - totalFees,
+    tradeCount: trades.length, realizedCount: realized.length,
+    winCount: wins.length, lossCount: losses.length,
+    winRate: realized.length ? (wins.length / realized.length) * 100 : 0,
+    grossProfit, grossLoss,
+    profitFactor: grossLoss > 0 ? grossProfit / grossLoss : (grossProfit > 0 ? Infinity : 0),
+    avgWin: wins.length ? grossProfit / wins.length : 0,
+    avgLoss: losses.length ? grossLoss / losses.length : 0,
+    largestWin: wins.length ? Math.max(...wins.map(t => t.pnl)) : 0,
+    largestLoss: losses.length ? Math.min(...losses.map(t => t.pnl)) : 0,
+  };
+};
+
+const COIN_COLORS = ['#6366f1', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981', '#3b82f6', '#ef4444', '#14b8a6', '#a855f7', '#f97316'];
+const coinFromInst = (instId) => (instId || '').split('-')[0] || instId;
+
 // ==================== MAIN APP ====================
 export default function TradingJournal() {
   const [darkMode, setDarkMode] = useState(loadDarkMode);
@@ -511,6 +557,17 @@ export default function TradingJournal() {
   const [loading, setLoading] = useState(true);
   const [synced, setSynced] = useState(false);
   const [journalEntries, setJournalEntries] = useState([]);
+
+  // ---- Crypto (OKX) state ----
+  const [cryptoTrades, setCryptoTrades] = useState([]);
+  const [cryptoSnapshots, setCryptoSnapshots] = useState([]);
+  const [cryptoChallenges, setCryptoChallenges] = useState([]);
+  const [cryptoLive, setCryptoLive] = useState({ balance: null, positions: [] });
+  const [syncingOKX, setSyncingOKX] = useState(false);
+  const [okxError, setOkxError] = useState(null);
+  const [lastSync, setLastSync] = useState(null);
+  const [cryptoSubTab, setCryptoSubTab] = useState('portfolio');
+  const [showNewCryptoChallenge, setShowNewCryptoChallenge] = useState(false);
 
   useEffect(() => { localStorage.setItem('ellipse_darkMode', darkMode); }, [darkMode]);
 
@@ -603,7 +660,24 @@ export default function TradingJournal() {
             setJournalEntries(localEntries);
           } catch {}
         }
-        
+
+        // Load crypto trades, snapshots, challenges — tables may not exist yet
+        try {
+          const [ctRes, csRes, cchRes] = await Promise.all([
+            supabase.from('crypto_trades').select('*').order('ts', { ascending: false }).limit(1000),
+            supabase.from('crypto_snapshots').select('*').order('ts', { ascending: true }).limit(1000),
+            supabase.from('crypto_challenges').select('*').order('created_at', { ascending: false }),
+          ]);
+          if (ctRes.data) setCryptoTrades(ctRes.data.map(mapCryptoTradeRow));
+          if (csRes.data) setCryptoSnapshots(csRes.data.map(mapSnapshotRow));
+          if (cchRes.data) setCryptoChallenges(cchRes.data.map(mapCryptoChallengeRow));
+        } catch (cryptoErr) {
+          console.warn('Crypto tables not available, using localStorage:', cryptoErr.message);
+          try { setCryptoTrades(JSON.parse(localStorage.getItem('ellipse_crypto_trades') || '[]')); } catch {}
+          try { setCryptoSnapshots(JSON.parse(localStorage.getItem('ellipse_crypto_snapshots') || '[]')); } catch {}
+          try { setCryptoChallenges(JSON.parse(localStorage.getItem('ellipse_crypto_challenges') || '[]')); } catch {}
+        }
+
         setSynced(true);
       } catch (err) {
         console.error('Error loading trades/accounts:', err);
@@ -627,6 +701,127 @@ export default function TradingJournal() {
       localStorage.setItem('ellipse_journal_entries', JSON.stringify(journalEntries));
     }
   }, [journalEntries]);
+
+  // Crypto localStorage fallbacks
+  useEffect(() => { if (cryptoTrades.length) localStorage.setItem('ellipse_crypto_trades', JSON.stringify(cryptoTrades.slice(0, 1000))); }, [cryptoTrades]);
+  useEffect(() => { if (cryptoSnapshots.length) localStorage.setItem('ellipse_crypto_snapshots', JSON.stringify(cryptoSnapshots.slice(-1000))); }, [cryptoSnapshots]);
+  useEffect(() => { if (cryptoChallenges.length) localStorage.setItem('ellipse_crypto_challenges', JSON.stringify(cryptoChallenges)); }, [cryptoChallenges]);
+
+  // ---- OKX sync: pull balance, positions, fills via serverless proxy ----
+  const syncOKX = async () => {
+    setSyncingOKX(true);
+    setOkxError(null);
+    try {
+      const [balRes, posRes, fillsRes] = await Promise.all([
+        fetch('/api/okx/balance').then(r => r.json()),
+        fetch('/api/okx/positions').then(r => r.json()),
+        fetch('/api/okx/fills?limit=100').then(r => r.json()),
+      ]);
+      if (balRes?.error || posRes?.error || fillsRes?.error) {
+        throw new Error(balRes?.msg || posRes?.msg || fillsRes?.msg || balRes?.error || 'OKX sync failed. Check API keys / Vercel env vars.');
+      }
+
+      setCryptoLive({ balance: balRes, positions: posRes.positions || [] });
+
+      // Dedupe fills against what we already have
+      const existingIds = new Set(cryptoTrades.map(t => t.tradeId).filter(Boolean));
+      const newFills = (fillsRes.fills || []).filter(f => f.tradeId && !existingIds.has(f.tradeId));
+      if (newFills.length) {
+        const rows = newFills.map(f => ({
+          trade_id: f.tradeId, ord_id: f.ordId, inst_id: f.instId, side: f.side,
+          pos_side: f.posSide, fill_sz: f.fillSz, fill_px: f.fillPx, pnl: f.fillPnl,
+          fee: f.fee, fee_ccy: f.feeCcy, exec_type: f.execType,
+          ts: new Date(f.ts).toISOString(), source: 'okx',
+        }));
+        let inserted = null;
+        try {
+          const { data } = await supabase.from('crypto_trades').upsert(rows, { onConflict: 'trade_id' }).select();
+          inserted = data;
+        } catch {}
+        const localNew = (inserted && inserted.length ? inserted.map(mapCryptoTradeRow)
+          : newFills.map(f => ({
+              id: 'local_' + f.tradeId, tradeId: f.tradeId, ordId: f.ordId, instId: f.instId,
+              side: f.side, posSide: f.posSide, fillSz: f.fillSz, fillPx: f.fillPx,
+              pnl: f.fillPnl, fee: f.fee, feeCcy: f.feeCcy, execType: f.execType,
+              ts: new Date(f.ts).toISOString(), source: 'okx', notes: '', chartImage: '',
+            })));
+        setCryptoTrades(prev => [...localNew, ...prev].sort((a, b) => new Date(b.ts) - new Date(a.ts)));
+      }
+
+      // Snapshot for the equity curve
+      const snapRow = {
+        ts: new Date().toISOString(), total_eq: balRes.totalEq, upl: balRes.upl,
+        balances: balRes.details || [], positions: posRes.positions || [], source: 'okx',
+      };
+      let snapInserted = null;
+      try {
+        const { data } = await supabase.from('crypto_snapshots').insert(snapRow).select().single();
+        snapInserted = data;
+      } catch {}
+      setCryptoSnapshots(prev => [...prev, snapInserted ? mapSnapshotRow(snapInserted) : { ...mapSnapshotRow(snapRow), id: 'local_' + Date.now() }]);
+
+      // Update active challenge balances with live equity
+      setCryptoChallenges(prev => prev.map(c => {
+        if (c.status !== 'active') return c;
+        const updated = { ...c, currentBalance: balRes.totalEq };
+        supabase.from('crypto_challenges').update({ current_balance: balRes.totalEq, updated_at: new Date().toISOString() }).eq('id', c.id).then(() => {}, () => {});
+        return updated;
+      }));
+
+      setLastSync(new Date());
+    } catch (e) {
+      setOkxError(e.message || 'OKX sync failed');
+    }
+    setSyncingOKX(false);
+  };
+
+  // Crypto challenge CRUD
+  const addCryptoChallenge = async (ch) => {
+    try {
+      const row = {
+        name: ch.name, start_balance: ch.startBalance, target_balance: ch.targetBalance,
+        current_balance: ch.currentBalance || ch.startBalance, start_date: ch.startDate,
+        target_date: ch.targetDate || null, status: 'active', milestones: ch.milestones || [], notes: ch.notes || '',
+      };
+      const { data, error } = await supabase.from('crypto_challenges').insert(row).select().single();
+      if (!error && data) { setCryptoChallenges(prev => [mapCryptoChallengeRow(data), ...prev]); return; }
+    } catch {}
+    setCryptoChallenges(prev => [{ ...ch, id: 'local_' + Date.now(), status: 'active', currentBalance: ch.currentBalance || ch.startBalance }, ...prev]);
+  };
+
+  const updateCryptoChallenge = async (ch) => {
+    try {
+      await supabase.from('crypto_challenges').update({
+        name: ch.name, start_balance: ch.startBalance, target_balance: ch.targetBalance,
+        current_balance: ch.currentBalance, target_date: ch.targetDate || null,
+        status: ch.status, milestones: ch.milestones || [], notes: ch.notes || '', updated_at: new Date().toISOString(),
+      }).eq('id', ch.id);
+    } catch {}
+    setCryptoChallenges(prev => prev.map(c => c.id === ch.id ? ch : c));
+  };
+
+  const deleteCryptoChallenge = async (id) => {
+    try { await supabase.from('crypto_challenges').delete().eq('id', id); } catch {}
+    setCryptoChallenges(prev => prev.filter(c => c.id !== id));
+  };
+
+  const addCryptoTrade = async (t) => {
+    try {
+      const row = {
+        inst_id: t.instId, side: t.side, pos_side: t.posSide, fill_sz: t.fillSz,
+        fill_px: t.fillPx, pnl: t.pnl, fee: t.fee || 0, fee_ccy: t.feeCcy || 'USDT',
+        ts: t.ts, source: 'manual', notes: t.notes || '', chart_image: t.chartImage || '',
+      };
+      const { data, error } = await supabase.from('crypto_trades').insert(row).select().single();
+      if (!error && data) { setCryptoTrades(prev => [mapCryptoTradeRow(data), ...prev].sort((a, b) => new Date(b.ts) - new Date(a.ts))); return; }
+    } catch {}
+    setCryptoTrades(prev => [{ ...t, id: 'local_' + Date.now(), source: 'manual' }, ...prev].sort((a, b) => new Date(b.ts) - new Date(a.ts)));
+  };
+
+  const deleteCryptoTrade = async (id) => {
+    try { await supabase.from('crypto_trades').delete().eq('id', id); } catch {}
+    setCryptoTrades(prev => prev.filter(t => t.id !== id));
+  };
 
   // Journal entry CRUD — Supabase with localStorage fallback
   const addJournalEntry = async (entry) => {
@@ -871,6 +1066,19 @@ export default function TradingJournal() {
                   )}
                 </div>
               ))}
+
+              {/* Crypto section */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '14px 16px 6px', fontSize: 10, fontWeight: 700, letterSpacing: '0.8px', textTransform: 'uppercase', color: theme.textFaint }}>
+                <span style={{ flex: 1, height: 1, background: theme.cardBorder }}></span>Crypto<span style={{ flex: 1, height: 1, background: theme.cardBorder }}></span>
+              </div>
+              <div onClick={() => setActiveTab('crypto')} className={`nav-item ${activeTab === 'crypto' ? 'active' : ''}`}>
+                <Coins size={18} />OKX Trading
+                {cryptoChallenges.filter(c => c.status === 'active').length > 0 && (
+                  <span style={{ marginLeft: 'auto', fontSize: 10, padding: '2px 7px', borderRadius: 10, background: activeTab === 'crypto' ? 'rgba(255,255,255,0.2)' : '#f59e0b', color: 'white', fontWeight: 600 }}>
+                    {cryptoChallenges.filter(c => c.status === 'active').length}
+                  </span>
+                )}
+              </div>
             </nav>
 
             <div style={{ padding: 12, borderTop: `1px solid ${theme.cardBorder}` }}>
@@ -906,6 +1114,7 @@ export default function TradingJournal() {
                     {activeTab === 'history' && 'Trade History'}
                     {activeTab === 'accounts' && 'Accounts'}
                     {activeTab === 'calendar' && 'Calendar'}
+                    {activeTab === 'crypto' && 'Crypto — OKX'}
                   </h1>
                   <p style={{ fontSize: 13, color: theme.textMuted, marginTop: 2 }}>
                     {activeTab === 'dashboard' && 'Performance metrics and insights'}
@@ -916,6 +1125,7 @@ export default function TradingJournal() {
                     {activeTab === 'history' && 'Document and analyze your trades'}
                     {activeTab === 'accounts' && 'Manage trading accounts'}
                     {activeTab === 'calendar' && 'Visual trade history'}
+                    {activeTab === 'crypto' && 'Live portfolio, growth challenge, trades & analytics'}
                   </p>
                 </div>
                 <div className="flex items-center gap-3">
@@ -934,6 +1144,14 @@ export default function TradingJournal() {
                   {activeTab === 'journal' && <button onClick={() => { const evt = new CustomEvent('ellipse-new-journal'); window.dispatchEvent(evt); }} className="btn-primary flex items-center gap-2"><Plus size={16} />New Entry</button>}
                   {activeTab === 'accounts' && <button onClick={() => setShowNewAccount(true)} className="btn-primary flex items-center gap-2"><Plus size={16} />Add Account</button>}
                   {activeTab === 'challenges' && <button onClick={() => setShowNewChallenge(true)} className="btn-primary flex items-center gap-2"><Plus size={16} />New Challenge</button>}
+                  {activeTab === 'crypto' && (
+                    <>
+                      {cryptoSubTab === 'challenge' && <button onClick={() => setShowNewCryptoChallenge(true)} className="btn-primary flex items-center gap-2"><Plus size={16} />New Challenge</button>}
+                      <button onClick={syncOKX} disabled={syncingOKX} className="btn-primary flex items-center gap-2" style={{ opacity: syncingOKX ? 0.6 : 1 }}>
+                        <RefreshCw size={16} style={syncingOKX ? { animation: 'spin 1s linear infinite' } : undefined} />{syncingOKX ? 'Syncing…' : 'Sync OKX'}
+                      </button>
+                    </>
+                  )}
                 </div>
               </div>
             </header>
@@ -953,6 +1171,13 @@ export default function TradingJournal() {
                   {activeTab === 'history' && <JournalView trades={trades} accounts={accounts} filterAccount={filterAccount} setFilterAccount={setFilterAccount} onSelectTrade={setSelectedTrade} onDeleteTrades={async (ids) => { for (const id of ids) await deleteTrade(id); }} />}
                   {activeTab === 'accounts' && <AccountsView accounts={accounts} challenges={challenges} trades={trades} onUpdate={updateAccount} onDelete={deleteAccount} />}
                   {activeTab === 'calendar' && <CalendarView trades={trades} />}
+                  {activeTab === 'crypto' && <CryptoView
+                    subTab={cryptoSubTab} setSubTab={setCryptoSubTab}
+                    trades={cryptoTrades} snapshots={cryptoSnapshots} challenges={cryptoChallenges}
+                    live={cryptoLive} syncing={syncingOKX} okxError={okxError} lastSync={lastSync}
+                    onSync={syncOKX} onAddTrade={addCryptoTrade} onDeleteTrade={deleteCryptoTrade}
+                    onUpdateChallenge={updateCryptoChallenge} onDeleteChallenge={deleteCryptoChallenge}
+                  />}
                 </>
               )}
             </div>
@@ -963,6 +1188,7 @@ export default function TradingJournal() {
         {showNewAccount && <NewAccountModal onClose={() => setShowNewAccount(false)} onSave={(acc) => { addAccount(acc); setShowNewAccount(false); }} />}
         {showImport && <ImportModal onClose={() => setShowImport(false)} onImport={importTrades} accounts={accounts} />}
         {showNewChallenge && <NewChallengeModal onClose={() => setShowNewChallenge(false)} onSave={(ch) => { addChallenge(ch); setShowNewChallenge(false); }} accounts={accounts} />}
+        {showNewCryptoChallenge && <NewCryptoChallengeModal onClose={() => setShowNewCryptoChallenge(false)} onSave={(ch) => { addCryptoChallenge(ch); setShowNewCryptoChallenge(false); }} liveBalance={cryptoLive.balance?.totalEq} />}
         {selectedTrade && <TradeDetailModal trade={selectedTrade} onClose={() => setSelectedTrade(null)} onDelete={(id) => { deleteTrade(id); setSelectedTrade(null); }} onEdit={(trade) => { setSelectedTrade(null); setEditingTrade(trade); }} />}
         {editingTrade && <EditTradeModal trade={editingTrade} onClose={() => setEditingTrade(null)} onSave={(trade) => { updateTrade(trade); setEditingTrade(null); }} accounts={accounts} />}
       </div>
@@ -3986,25 +4212,19 @@ function EditTradeModal({ trade: initialTrade, onClose, onSave, accounts }) {
               </label>
             )}
           </div>
-          <div><label className="label" style={{ marginBottom: 8 }}>Market Structure</label><div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8 }}>
-            {Object.entries(MARKET_STRUCTURES).map(([key, val]) => (
-              <button key={key} onClick={() => setTrade({...trade, marketStructure: key})} style={{ padding: 10, borderRadius: 8, fontSize: 12, border: `1px solid ${trade.marketStructure === key ? '#6366f1' : theme.cardBorder}`, background: trade.marketStructure === key ? 'rgba(99,102,241,0.1)' : 'transparent', color: theme.text, cursor: 'pointer', textAlign: 'left' }}>
-                <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: 4, background: val.color, marginRight: 8 }}></span>{val.label}
-              </button>
-            ))}
-          </div></div>
-          <div><label className="label" style={{ marginBottom: 8 }}>Liquidity Taken</label><div className="flex flex-wrap gap-2">{LIQUIDITY_LEVELS.map(l => (
-            <button key={l.key} onClick={() => toggleLiq(l.key, 'taken')} style={{ padding: '6px 12px', borderRadius: 6, fontSize: 11, fontWeight: 500, border: 'none', cursor: 'pointer', background: trade.liquidityTaken.includes(l.key) ? '#f59e0b' : theme.hoverBg, color: trade.liquidityTaken.includes(l.key) ? 'white' : theme.textMuted }}>{l.abbr}</button>
-          ))}</div></div>
+
           <div style={{ padding: 16, borderRadius: 10, background: theme.hoverBg }}>
             <div className="flex items-center gap-2" style={{ marginBottom: 12 }}><Link size={14} style={{ color: theme.textMuted }} /><span style={{ fontSize: 12, fontWeight: 500, color: theme.textMuted }}>Chart Reference</span></div>
-            <div><label className="label">TradingView Link</label><input value={trade.chartLink} onChange={(e) => setTrade({...trade, chartLink: e.target.value})} placeholder="https://www.tradingview.com/x/..." className="input" /></div>
-            {chartPreview && <div style={{ marginTop: 12, borderRadius: 8, overflow: 'hidden' }}><img src={chartPreview} alt="Chart" style={{ width: '100%', height: 120, objectFit: 'cover' }} onError={(e) => e.target.style.display = 'none'} /></div>}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <div><label className="label">TradingView Link</label><input value={trade.chartLink} onChange={(e) => setTrade({ ...trade, chartLink: e.target.value })} placeholder="https://www.tradingview.com/chart/..." className="input" /></div>
+              <div><label className="label">Chart Image URL</label><input value={trade.chartImage} onChange={(e) => setTrade({ ...trade, chartImage: e.target.value })} placeholder="https://i.imgur.com/..." className="input" /></div>
+            </div>
           </div>
-          <div><label className="label">Notes</label><textarea value={trade.notes} onChange={(e) => setTrade({...trade, notes: e.target.value})} rows={3} className="input" style={{ resize: 'none' }} /></div>
+
+          <div><label className="label">Notes</label><textarea value={trade.notes || ''} onChange={(e) => setTrade({ ...trade, notes: e.target.value })} rows={3} className="input" placeholder="Trade thesis, observations..." style={{ resize: 'none' }} /></div>
         </div>
       </div>
-      <div style={{ padding: 20, borderTop: `1px solid ${theme.cardBorder}`, display: 'flex', justifyContent: 'flex-end', gap: 12 }}>
+      <div style={{ padding: 20, borderTop: `1px solid ${theme.cardBorder}`, display: 'flex', justifyContent: 'space-between' }}>
         <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: 14, color: theme.textMuted, cursor: 'pointer' }}>Cancel</button>
         <button onClick={handleSave} className="btn-primary">Save Changes</button>
       </div>
@@ -4012,121 +4232,422 @@ function EditTradeModal({ trade: initialTrade, onClose, onSave, accounts }) {
   );
 }
 
-function NewAccountModal({ onClose, onSave }) {
+// ==================== CRYPTO VIEW (OKX) ====================
+function CryptoView({ subTab, setSubTab, trades, snapshots, challenges, live, syncing, okxError, lastSync, onSync, onAddTrade, onDeleteTrade, onUpdateChallenge, onDeleteChallenge }) {
   const theme = useTheme();
-  const [acc, setAcc] = useState({ name: '', platform: 'MT5', broker: '', server: '', balance: '', equity: '' });
+  const tabs = [
+    { id: 'portfolio', label: 'Portfolio', icon: Wallet },
+    { id: 'challenge', label: 'Challenge', icon: Trophy },
+    { id: 'trades', label: 'Trades', icon: Clock },
+    { id: 'analytics', label: 'Analytics', icon: BarChart3 },
+  ];
+  const fmt = (n, d = 2) => (n < 0 ? '-' : '') + '$' + Math.abs(Number(n) || 0).toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
+  const balance = live?.balance;
+
   return (
-    <Modal onClose={onClose}>
-      <div style={{ padding: 20, borderBottom: `1px solid ${theme.cardBorder}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <h3 style={{ fontSize: 16, fontWeight: 600, color: theme.text }}>Add Account</h3>
-        <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer' }}><X size={20} style={{ color: theme.textFaint }} /></button>
-      </div>
-      <div style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 16 }}>
-        <div><label className="label">Platform</label><div className="flex gap-2">{['MT5', 'cTrader'].map(p => (
-          <button key={p} onClick={() => setAcc({...acc, platform: p})} style={{ flex: 1, padding: 12, borderRadius: 10, fontSize: 14, fontWeight: 500, border: 'none', cursor: 'pointer', background: acc.platform === p ? (p === 'MT5' ? '#3b82f6' : '#8b5cf6') : theme.hoverBg, color: acc.platform === p ? 'white' : theme.textMuted }}>{p}</button>
-        ))}</div></div>
-        <div><label className="label">Account Name</label><input value={acc.name} onChange={(e) => setAcc({...acc, name: e.target.value})} placeholder="Main Account" className="input" /></div>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-          <div><label className="label">Broker</label><input value={acc.broker} onChange={(e) => setAcc({...acc, broker: e.target.value})} placeholder="ICMarkets" className="input" /></div>
-          <div><label className="label">Server</label><input value={acc.server} onChange={(e) => setAcc({...acc, server: e.target.value})} placeholder="Live-01" className="input" /></div>
-        </div>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-          <div><label className="label">Balance</label><input type="number" value={acc.balance} onChange={(e) => setAcc({...acc, balance: e.target.value})} placeholder="10000" className="input" /></div>
-          <div><label className="label">Equity</label><input type="number" value={acc.equity} onChange={(e) => setAcc({...acc, equity: e.target.value})} placeholder="10000" className="input" /></div>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+      {/* Sub-tab nav */}
+      <div className="flex items-center gap-2" style={{ flexWrap: 'wrap' }}>
+        {tabs.map(t => (
+          <button key={t.id} onClick={() => setSubTab(t.id)} className="flex items-center gap-2" style={{ padding: '8px 16px', borderRadius: 10, fontSize: 13, fontWeight: 500, cursor: 'pointer', border: `1px solid ${subTab === t.id ? '#6366f1' : theme.cardBorder}`, background: subTab === t.id ? 'linear-gradient(135deg, #6366f1, #8b5cf6)' : theme.card, color: subTab === t.id ? 'white' : theme.textMuted }}>
+            <t.icon size={15} />{t.label}
+          </button>
+        ))}
+        <div style={{ marginLeft: 'auto', fontSize: 12, color: theme.textFaint }}>
+          {lastSync ? `Last synced ${new Date(lastSync).toLocaleTimeString()}` : 'Not synced yet'}
         </div>
       </div>
-      <div style={{ padding: 20, borderTop: `1px solid ${theme.cardBorder}`, display: 'flex', justifyContent: 'flex-end', gap: 12 }}>
-        <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: 14, color: theme.textMuted, cursor: 'pointer' }}>Cancel</button>
-        <button onClick={() => onSave({ ...acc, balance: parseFloat(acc.balance) || 0, equity: parseFloat(acc.equity) || 0, connected: true })} className="btn-primary">Add Account</button>
-      </div>
-    </Modal>
+
+      {okxError && (
+        <div className="card" style={{ padding: 14, borderColor: '#ef4444', background: 'rgba(239,68,68,0.08)', display: 'flex', alignItems: 'center', gap: 10 }}>
+          <AlertTriangle size={18} style={{ color: '#ef4444' }} />
+          <div style={{ fontSize: 13, color: theme.text }}><strong>OKX sync error:</strong> {okxError}</div>
+        </div>
+      )}
+
+      {subTab === 'portfolio' && <CryptoPortfolio balance={balance} positions={live?.positions || []} snapshots={snapshots} syncing={syncing} onSync={onSync} fmt={fmt} theme={theme} />}
+      {subTab === 'challenge' && <CryptoChallengeView challenges={challenges} snapshots={snapshots} liveEq={balance?.totalEq} onUpdate={onUpdateChallenge} onDelete={onDeleteChallenge} fmt={fmt} theme={theme} />}
+      {subTab === 'trades' && <CryptoTradesView trades={trades} onAddTrade={onAddTrade} onDeleteTrade={onDeleteTrade} fmt={fmt} theme={theme} />}
+      {subTab === 'analytics' && <CryptoAnalyticsView trades={trades} fmt={fmt} theme={theme} />}
+    </div>
   );
 }
 
-function EditAccountModal({ account, onClose, onSave }) {
-  const theme = useTheme();
-  const [data, setData] = useState({ ...account, balance: account.balance.toString(), equity: account.equity.toString() });
+function StatCard({ label, value, color, sub, theme }) {
   return (
-    <Modal onClose={onClose}>
-      <div style={{ padding: 20, borderBottom: `1px solid ${theme.cardBorder}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <h3 style={{ fontSize: 16, fontWeight: 600, color: theme.text }}>Edit Account</h3>
-        <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer' }}><X size={20} style={{ color: theme.textFaint }} /></button>
-      </div>
-      <div style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 16 }}>
-        <div><label className="label">Name</label><input value={data.name} onChange={(e) => setData({...data, name: e.target.value})} className="input" /></div>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-          <div><label className="label">Balance</label><input type="number" value={data.balance} onChange={(e) => setData({...data, balance: e.target.value})} className="input" /></div>
-          <div><label className="label">Equity</label><input type="number" value={data.equity} onChange={(e) => setData({...data, equity: e.target.value})} className="input" /></div>
-        </div>
-      </div>
-      <div style={{ padding: 20, borderTop: `1px solid ${theme.cardBorder}`, display: 'flex', justifyContent: 'flex-end', gap: 12 }}>
-        <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: 14, color: theme.textMuted, cursor: 'pointer' }}>Cancel</button>
-        <button onClick={() => onSave({ ...data, balance: parseFloat(data.balance) || 0, equity: parseFloat(data.equity) || 0 })} className="btn-primary">Save</button>
-      </div>
-    </Modal>
+    <div className="card" style={{ padding: 18 }}>
+      <div className="stat-label">{label}</div>
+      <div className="stat-value" style={{ color: color || theme.text, marginTop: 6 }}>{value}</div>
+      {sub && <div style={{ fontSize: 12, color: theme.textMuted, marginTop: 4 }}>{sub}</div>}
+    </div>
   );
 }
 
-function TradeDetailModal({ trade, onClose, onDelete, onEdit }) {
-  const theme = useTheme();
-  const [confirmDelete, setConfirmDelete] = useState(false);
-  const chartImg = getTradingViewImageUrl(trade.chartLink) || trade.chartImage;
+function CryptoPortfolio({ balance, positions, snapshots, syncing, onSync, fmt, theme }) {
+  if (!balance && (!snapshots || snapshots.length === 0)) {
+    return (
+      <div className="card" style={{ padding: 48, textAlign: 'center' }}>
+        <Coins size={40} style={{ color: theme.textFaint, margin: '0 auto 14px' }} />
+        <div style={{ fontSize: 16, fontWeight: 600, color: theme.text, marginBottom: 6 }}>No portfolio data yet</div>
+        <div style={{ fontSize: 13, color: theme.textMuted, marginBottom: 18 }}>Connect your read-only OKX API keys, then sync to load balances and positions.</div>
+        <button onClick={onSync} disabled={syncing} className="btn-primary" style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+          <RefreshCw size={16} style={syncing ? { animation: 'spin 1s linear infinite' } : undefined} />{syncing ? 'Syncing…' : 'Sync OKX'}
+        </button>
+      </div>
+    );
+  }
+
+  const lastSnap = snapshots && snapshots.length ? snapshots[snapshots.length - 1] : null;
+  const totalEq = balance?.totalEq ?? lastSnap?.totalEq ?? 0;
+  const upl = balance?.upl ?? lastSnap?.upl ?? 0;
+  const details = balance?.details || lastSnap?.balances || [];
+  const curve = (snapshots || []).map(s => ({ t: new Date(s.ts).getTime(), eq: s.totalEq, label: new Date(s.ts).toLocaleDateString() }));
+  const allocation = details.filter(d => (d.eqUsd || 0) > 0.01).map((d, i) => ({ name: d.ccy, value: d.eqUsd, color: COIN_COLORS[i % COIN_COLORS.length] }));
 
   return (
-    <Modal width={520} onClose={onClose}>
-      <div style={{ padding: 20, borderBottom: `1px solid ${theme.cardBorder}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <div className="flex items-center gap-3">
-          <div style={{ width: 44, height: 44, borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', background: trade.pnl >= 0 ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)' }}>
-            <span style={{ fontSize: 14, fontWeight: 600, color: trade.pnl >= 0 ? '#10b981' : '#ef4444' }}>{trade.symbol?.slice(0, 2)}</span>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 14 }}>
+        <StatCard label="Total Equity" value={fmt(totalEq)} theme={theme} />
+        <StatCard label="Unrealized P&L" value={`${upl >= 0 ? '+' : ''}${fmt(upl)}`} color={upl >= 0 ? '#10b981' : '#ef4444'} theme={theme} />
+        <StatCard label="Open Positions" value={positions.length} theme={theme} />
+        <StatCard label="Assets" value={details.length} sub={details.slice(0, 4).map(d => d.ccy).join(', ')} theme={theme} />
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 2fr) minmax(0, 1fr)', gap: 16 }}>
+        <div className="card-lg" style={{ padding: 20 }}>
+          <div style={{ fontSize: 14, fontWeight: 600, color: theme.text, marginBottom: 14 }}>Equity Curve</div>
+          {curve.length > 1 ? (
+            <ResponsiveContainer width="100%" height={240}>
+              <AreaChart data={curve}>
+                <defs><linearGradient id="eqGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#6366f1" stopOpacity={0.4} /><stop offset="100%" stopColor="#6366f1" stopOpacity={0} /></linearGradient></defs>
+                <XAxis dataKey="label" tick={{ fontSize: 11, fill: theme.textFaint }} />
+                <YAxis tick={{ fontSize: 11, fill: theme.textFaint }} width={70} domain={['auto', 'auto']} />
+                <Tooltip contentStyle={{ background: theme.card, border: `1px solid ${theme.cardBorder}`, borderRadius: 8, fontSize: 12 }} formatter={(v) => fmt(v)} />
+                <Area type="monotone" dataKey="eq" stroke="#6366f1" strokeWidth={2} fill="url(#eqGrad)" />
+              </AreaChart>
+            </ResponsiveContainer>
+          ) : (
+            <div style={{ height: 240, display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.textFaint, fontSize: 13 }}>Sync at least twice to plot your equity curve over time.</div>
+          )}
+        </div>
+        <div className="card-lg" style={{ padding: 20 }}>
+          <div style={{ fontSize: 14, fontWeight: 600, color: theme.text, marginBottom: 14 }}>Allocation</div>
+          {allocation.length ? (
+            <ResponsiveContainer width="100%" height={240}>
+              <PieChart>
+                <Pie data={allocation} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={55} outerRadius={90} paddingAngle={2}>
+                  {allocation.map((a, i) => <Cell key={i} fill={a.color} />)}
+                </Pie>
+                <Tooltip contentStyle={{ background: theme.card, border: `1px solid ${theme.cardBorder}`, borderRadius: 8, fontSize: 12 }} formatter={(v, n) => [fmt(v), n]} />
+              </PieChart>
+            </ResponsiveContainer>
+          ) : (
+            <div style={{ height: 240, display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.textFaint, fontSize: 13 }}>No balances.</div>
+          )}
+        </div>
+      </div>
+
+      <div className="card-lg" style={{ overflow: 'hidden' }}>
+        <div style={{ padding: '16px 20px', fontSize: 14, fontWeight: 600, color: theme.text, borderBottom: `1px solid ${theme.cardBorder}` }}>Open Positions</div>
+        {positions.length ? (
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead><tr>
+                {['Instrument', 'Side', 'Size', 'Avg Entry', 'Mark', 'uPnL', 'Lev', 'Liq. Price'].map(h => <th key={h} className="table-header" style={{ textAlign: h === 'Instrument' || h === 'Side' ? 'left' : 'right' }}>{h}</th>)}
+              </tr></thead>
+              <tbody>
+                {positions.map((p, i) => (
+                  <tr key={i} className="table-row" style={{ cursor: 'default' }}>
+                    <td style={{ padding: '12px 16px', fontSize: 13, fontWeight: 600, color: theme.text }}>{p.instId}</td>
+                    <td style={{ padding: '12px 16px' }}><span className="badge" style={{ background: p.posSide === 'long' ? 'rgba(16,185,129,0.15)' : 'rgba(239,68,68,0.15)', color: p.posSide === 'long' ? '#10b981' : '#ef4444' }}>{(p.posSide || '').toUpperCase()}</span></td>
+                    <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, color: theme.text, fontFamily: 'JetBrains Mono, monospace' }}>{p.pos}</td>
+                    <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, color: theme.textMuted, fontFamily: 'JetBrains Mono, monospace' }}>{p.avgPx}</td>
+                    <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, color: theme.textMuted, fontFamily: 'JetBrains Mono, monospace' }}>{p.markPx}</td>
+                    <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, fontWeight: 600, color: p.upl >= 0 ? '#10b981' : '#ef4444', fontFamily: 'JetBrains Mono, monospace' }}>{p.upl >= 0 ? '+' : ''}{fmt(p.upl)}</td>
+                    <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, color: theme.textMuted }}>{p.lever}x</td>
+                    <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, color: '#f59e0b', fontFamily: 'JetBrains Mono, monospace' }}>{p.liqPx || '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
-          <div><div style={{ fontSize: 16, fontWeight: 600, color: theme.text }}>{trade.symbol}</div><div style={{ fontSize: 12, color: theme.textFaint }}>{trade.date} · {trade.time}</div></div>
-        </div>
-        <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer' }}><X size={20} style={{ color: theme.textFaint }} /></button>
+        ) : (
+          <div style={{ padding: 32, textAlign: 'center', color: theme.textFaint, fontSize: 13 }}>No open positions.</div>
+        )}
       </div>
-      <div style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 16 }}>
-        <div className="flex justify-between items-center">
-          <span className="badge" style={{ background: trade.side === 'Long' ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)', color: trade.side === 'Long' ? '#10b981' : '#ef4444', padding: '8px 14px', fontSize: 13 }}>{trade.side}</span>
-          <span style={{ fontSize: 24, fontWeight: 700, color: trade.pnl >= 0 ? '#10b981' : '#ef4444' }}>{trade.pnl >= 0 ? '+' : ''}${trade.pnl?.toFixed(2)}</span>
-        </div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10 }}>
-          {[{ l: 'Entry', v: trade.entry }, { l: 'Exit', v: trade.exit }, { l: 'Lots', v: trade.lots }, { l: 'R:R', v: trade.riskReward }].map(x => (
-            <div key={x.l} style={{ padding: 14, borderRadius: 10, background: theme.hoverBg, textAlign: 'center' }}>
-              <div className="stat-label">{x.l}</div><div style={{ fontSize: 14, fontWeight: 600, color: theme.text, marginTop: 4 }}>{x.v}</div>
+    </div>
+  );
+}
+
+function CryptoChallengeView({ challenges, snapshots, liveEq, onUpdate, onDelete, fmt, theme }) {
+  if (!challenges.length) {
+    return (
+      <div className="card" style={{ padding: 48, textAlign: 'center' }}>
+        <Trophy size={40} style={{ color: theme.textFaint, margin: '0 auto 14px' }} />
+        <div style={{ fontSize: 16, fontWeight: 600, color: theme.text, marginBottom: 6 }}>No growth challenge yet</div>
+        <div style={{ fontSize: 13, color: theme.textMuted }}>Click <strong>New Challenge</strong> (top right) to set a start balance, target, and deadline — e.g. grow $1,000 → $10,000.</div>
+      </div>
+    );
+  }
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      {challenges.map(c => {
+        const current = (c.status === 'active' && typeof liveEq === 'number' && liveEq > 0) ? liveEq : (c.currentBalance || c.startBalance);
+        const span = (c.targetBalance - c.startBalance) || 1;
+        const pct = Math.max(0, Math.min(100, ((current - c.startBalance) / span) * 100));
+        const reached = current >= c.targetBalance;
+        const snaps = (snapshots || []).filter(s => !c.startDate || new Date(s.ts) >= new Date(c.startDate));
+        let projection = null;
+        if (snaps.length >= 2) {
+          const first = snaps[0], last = snaps[snaps.length - 1];
+          const days = Math.max(1, (new Date(last.ts) - new Date(first.ts)) / 86400000);
+          const perDay = (last.totalEq - first.totalEq) / days;
+          if (perDay > 0 && current < c.targetBalance) {
+            const daysLeft = (c.targetBalance - current) / perDay;
+            projection = new Date(Date.now() + daysLeft * 86400000);
+          }
+        }
+        const curve = snaps.map(s => ({ label: new Date(s.ts).toLocaleDateString(), eq: s.totalEq }));
+        return (
+          <div key={c.id} className="card-lg" style={{ padding: 22 }}>
+            <div className="flex items-center justify-between" style={{ marginBottom: 16 }}>
+              <div>
+                <div className="flex items-center gap-2">
+                  <span style={{ fontSize: 17, fontWeight: 700, color: theme.text }}>{c.name}</span>
+                  <span className="badge" style={{ background: reached ? 'rgba(16,185,129,0.15)' : c.status === 'active' ? 'rgba(99,102,241,0.15)' : 'rgba(148,163,184,0.15)', color: reached ? '#10b981' : c.status === 'active' ? '#6366f1' : theme.textMuted }}>{reached ? 'TARGET HIT' : c.status.toUpperCase()}</span>
+                </div>
+                <div style={{ fontSize: 12, color: theme.textMuted, marginTop: 4 }}>{fmt(c.startBalance, 0)} → {fmt(c.targetBalance, 0)}{c.targetDate ? ` · by ${new Date(c.targetDate).toLocaleDateString()}` : ''}</div>
+              </div>
+              <div className="flex items-center gap-2">
+                {!reached && c.status === 'active' && <button onClick={() => onUpdate({ ...c, status: 'completed' })} style={{ padding: 8, borderRadius: 8, border: `1px solid ${theme.cardBorder}`, background: theme.card, cursor: 'pointer' }} title="Mark complete"><CheckCircle size={16} style={{ color: '#10b981' }} /></button>}
+                <button onClick={() => onDelete(c.id)} style={{ padding: 8, borderRadius: 8, border: `1px solid ${theme.cardBorder}`, background: theme.card, cursor: 'pointer' }} title="Delete"><Trash2 size={16} style={{ color: '#ef4444' }} /></button>
+              </div>
             </div>
-          ))}
-        </div>
-        {(trade.commission || trade.swap) && (
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-            <div style={{ padding: 14, borderRadius: 10, background: theme.hoverBg }}><div className="stat-label">Commission</div><div style={{ fontSize: 14, fontWeight: 600, color: '#ef4444', marginTop: 4 }}>-${trade.commission?.toFixed(2)}</div></div>
-            <div style={{ padding: 14, borderRadius: 10, background: theme.hoverBg }}><div className="stat-label">Swap</div><div style={{ fontSize: 14, fontWeight: 600, color: trade.swap >= 0 ? '#10b981' : '#ef4444', marginTop: 4 }}>{trade.swap >= 0 ? '+' : ''}${trade.swap?.toFixed(2)}</div></div>
+
+            <div className="flex items-end justify-between" style={{ marginBottom: 8 }}>
+              <span style={{ fontSize: 26, fontWeight: 700, color: theme.text }}>{fmt(current)}</span>
+              <span style={{ fontSize: 14, fontWeight: 600, color: reached ? '#10b981' : '#6366f1' }}>{pct.toFixed(1)}%</span>
+            </div>
+            <div style={{ height: 10, borderRadius: 5, background: theme.hoverBg, overflow: 'hidden', marginBottom: 14 }}>
+              <div className="progress-bar-animate" style={{ width: `${pct}%`, height: '100%', background: reached ? '#10b981' : 'linear-gradient(90deg, #6366f1, #8b5cf6)' }}></div>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 12, marginBottom: 16 }}>
+              <div><div className="stat-label">P&L</div><div style={{ fontSize: 16, fontWeight: 700, color: (current - c.startBalance) >= 0 ? '#10b981' : '#ef4444' }}>{(current - c.startBalance) >= 0 ? '+' : ''}{fmt(current - c.startBalance)}</div></div>
+              <div><div className="stat-label">Remaining</div><div style={{ fontSize: 16, fontWeight: 700, color: theme.text }}>{fmt(Math.max(0, c.targetBalance - current))}</div></div>
+              <div><div className="stat-label">Return</div><div style={{ fontSize: 16, fontWeight: 700, color: theme.text }}>{(((current - c.startBalance) / c.startBalance) * 100).toFixed(1)}%</div></div>
+              <div><div className="stat-label">Proj. completion</div><div style={{ fontSize: 16, fontWeight: 700, color: theme.text }}>{reached ? 'Done' : projection ? projection.toLocaleDateString() : '—'}</div></div>
+            </div>
+
+            {curve.length > 1 && (
+              <ResponsiveContainer width="100%" height={160}>
+                <AreaChart data={curve}>
+                  <defs><linearGradient id={`cg${c.id}`} x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#10b981" stopOpacity={0.35} /><stop offset="100%" stopColor="#10b981" stopOpacity={0} /></linearGradient></defs>
+                  <XAxis dataKey="label" tick={{ fontSize: 10, fill: theme.textFaint }} />
+                  <YAxis tick={{ fontSize: 10, fill: theme.textFaint }} width={64} domain={['auto', 'auto']} />
+                  <Tooltip contentStyle={{ background: theme.card, border: `1px solid ${theme.cardBorder}`, borderRadius: 8, fontSize: 12 }} formatter={(v) => fmt(v)} />
+                  <ReferenceLine y={c.targetBalance} stroke="#6366f1" strokeDasharray="5 4" label={{ value: 'Target', fontSize: 10, fill: '#6366f1', position: 'insideTopRight' }} />
+                  <Area type="monotone" dataKey="eq" stroke="#10b981" strokeWidth={2} fill={`url(#cg${c.id})`} />
+                </AreaChart>
+              </ResponsiveContainer>
+            )}
+            {c.notes && <div style={{ marginTop: 12, fontSize: 13, color: theme.textMuted }}>{c.notes}</div>}
           </div>
-        )}
-        <div style={{ padding: 14, borderRadius: 10, background: theme.hoverBg, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <span style={{ fontSize: 13, color: theme.textMuted }}>Structure</span>
-          <span className="badge" style={{ background: MARKET_STRUCTURES[trade.marketStructure]?.color, color: 'white' }}>{MARKET_STRUCTURES[trade.marketStructure]?.label}</span>
-        </div>
-        {(chartImg || trade.chartLink) && (
-          <div style={{ borderRadius: 10, overflow: 'hidden', border: `1px solid ${theme.cardBorder}` }}>
-            {chartImg && <img src={chartImg} alt="Chart" style={{ width: '100%', height: 200, objectFit: 'cover' }} onError={(e) => e.target.style.display = 'none'} />}
-            {trade.chartLink && <a href={trade.chartLink} target="_blank" rel="noopener noreferrer" style={{ display: 'flex', alignItems: 'center', gap: 8, padding: 14, fontSize: 13, color: '#6366f1', textDecoration: 'none', background: theme.hoverBg }}><ExternalLink size={14} />Open in TradingView</a>}
+        );
+      })}
+    </div>
+  );
+}
+
+function CryptoTradesView({ trades, onAddTrade, onDeleteTrade, fmt, theme }) {
+  const [coin, setCoin] = useState('all');
+  const [showAdd, setShowAdd] = useState(false);
+  const coins = ['all', ...Array.from(new Set(trades.map(t => coinFromInst(t.instId)))).filter(Boolean)];
+  const filtered = coin === 'all' ? trades : trades.filter(t => coinFromInst(t.instId) === coin);
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div className="flex items-center gap-2" style={{ flexWrap: 'wrap' }}>
+        <select value={coin} onChange={(e) => setCoin(e.target.value)} className="input" style={{ width: 'auto', minWidth: 140 }}>
+          {coins.map(c => <option key={c} value={c}>{c === 'all' ? 'All coins' : c}</option>)}
+        </select>
+        <span style={{ fontSize: 13, color: theme.textMuted }}>{filtered.length} trade{filtered.length === 1 ? '' : 's'}</span>
+        <button onClick={() => setShowAdd(true)} className="btn-primary flex items-center gap-2" style={{ marginLeft: 'auto' }}><Plus size={15} />Add manual trade</button>
+      </div>
+
+      <div className="card-lg" style={{ overflow: 'hidden' }}>
+        {filtered.length ? (
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead><tr>
+                {['Time', 'Instrument', 'Side', 'Size', 'Price', 'P&L', 'Fee', 'Source', ''].map((h, i) => <th key={i} className="table-header" style={{ textAlign: i >= 3 && i <= 6 ? 'right' : 'left' }}>{h}</th>)}
+              </tr></thead>
+              <tbody>
+                {filtered.map(t => (
+                  <tr key={t.id} className="table-row" style={{ cursor: 'default' }}>
+                    <td style={{ padding: '12px 16px', fontSize: 12, color: theme.textMuted }}>{new Date(t.ts).toLocaleString()}</td>
+                    <td style={{ padding: '12px 16px', fontSize: 13, fontWeight: 600, color: theme.text }}>{t.instId}</td>
+                    <td style={{ padding: '12px 16px' }}><span className="badge" style={{ background: t.side === 'buy' ? 'rgba(16,185,129,0.15)' : 'rgba(239,68,68,0.15)', color: t.side === 'buy' ? '#10b981' : '#ef4444' }}>{(t.posSide && t.posSide !== 'net' ? t.posSide : t.side || '').toUpperCase()}</span></td>
+                    <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, color: theme.text, fontFamily: 'JetBrains Mono, monospace' }}>{t.fillSz}</td>
+                    <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, color: theme.textMuted, fontFamily: 'JetBrains Mono, monospace' }}>{t.fillPx}</td>
+                    <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, fontWeight: 600, color: t.pnl >= 0 ? '#10b981' : '#ef4444', fontFamily: 'JetBrains Mono, monospace' }}>{t.pnl ? (t.pnl >= 0 ? '+' : '') + fmt(t.pnl) : '—'}</td>
+                    <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 12, color: theme.textFaint, fontFamily: 'JetBrains Mono, monospace' }}>{t.fee ? fmt(t.fee) : '—'}</td>
+                    <td style={{ padding: '12px 16px', fontSize: 11, color: theme.textFaint }}>{t.source === 'manual' ? 'Manual' : 'OKX'}</td>
+                    <td style={{ padding: '12px 16px', textAlign: 'right' }}><button onClick={() => onDeleteTrade(t.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4 }}><Trash2 size={14} style={{ color: theme.textFaint }} /></button></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
+        ) : (
+          <div style={{ padding: 40, textAlign: 'center', color: theme.textFaint, fontSize: 13 }}>No trades yet. Sync OKX or add one manually.</div>
         )}
-        {trade.notes && <div><div className="stat-label" style={{ marginBottom: 8 }}>Notes</div><p style={{ fontSize: 14, color: theme.text, padding: 14, borderRadius: 10, background: theme.hoverBg }}>{trade.notes}</p></div>}
+      </div>
+
+      {showAdd && <AddCryptoTradeModal onClose={() => setShowAdd(false)} onSave={(t) => { onAddTrade(t); setShowAdd(false); }} theme={theme} />}
+    </div>
+  );
+}
+
+function CryptoAnalyticsView({ trades, fmt, theme }) {
+  if (!trades.length) {
+    return <div className="card" style={{ padding: 48, textAlign: 'center', color: theme.textMuted, fontSize: 14 }}>No trades to analyze yet. Sync OKX or add trades to see analytics.</div>;
+  }
+  const s = computeCryptoStats(trades);
+  const asc = [...trades].sort((a, b) => new Date(a.ts) - new Date(b.ts));
+  let cum = 0;
+  const cumData = asc.map(t => { cum += (t.pnl || 0) - Math.abs(t.fee || 0); return { label: new Date(t.ts).toLocaleDateString(), cum: +cum.toFixed(2) }; });
+  const byCoinMap = {};
+  trades.forEach(t => { const c = coinFromInst(t.instId); byCoinMap[c] = (byCoinMap[c] || 0) + (t.pnl || 0); });
+  const byCoin = Object.entries(byCoinMap).map(([name, pnl], i) => ({ name, pnl: +pnl.toFixed(2), color: pnl >= 0 ? '#10b981' : '#ef4444' })).sort((a, b) => b.pnl - a.pnl);
+  const pf = s.profitFactor === Infinity ? '∞' : s.profitFactor.toFixed(2);
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 14 }}>
+        <StatCard label="Net P&L" value={`${s.netPnl >= 0 ? '+' : ''}${fmt(s.netPnl)}`} color={s.netPnl >= 0 ? '#10b981' : '#ef4444'} sub={`${fmt(s.totalFees)} fees`} theme={theme} />
+        <StatCard label="Win Rate" value={`${s.winRate.toFixed(1)}%`} sub={`${s.winCount}W / ${s.lossCount}L`} theme={theme} />
+        <StatCard label="Profit Factor" value={pf} theme={theme} />
+        <StatCard label="Trades" value={s.tradeCount} sub={`${s.realizedCount} with P&L`} theme={theme} />
+        <StatCard label="Avg Win" value={fmt(s.avgWin)} color="#10b981" theme={theme} />
+        <StatCard label="Avg Loss" value={fmt(s.avgLoss)} color="#ef4444" theme={theme} />
+        <StatCard label="Largest Win" value={fmt(s.largestWin)} color="#10b981" theme={theme} />
+        <StatCard label="Largest Loss" value={fmt(s.largestLoss)} color="#ef4444" theme={theme} />
+      </div>
+
+      <div className="card-lg" style={{ padding: 20 }}>
+        <div style={{ fontSize: 14, fontWeight: 600, color: theme.text, marginBottom: 14 }}>Cumulative P&L (net of fees)</div>
+        <ResponsiveContainer width="100%" height={240}>
+          <AreaChart data={cumData}>
+            <defs><linearGradient id="cumGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#6366f1" stopOpacity={0.35} /><stop offset="100%" stopColor="#6366f1" stopOpacity={0} /></linearGradient></defs>
+            <XAxis dataKey="label" tick={{ fontSize: 10, fill: theme.textFaint }} />
+            <YAxis tick={{ fontSize: 11, fill: theme.textFaint }} width={70} />
+            <Tooltip contentStyle={{ background: theme.card, border: `1px solid ${theme.cardBorder}`, borderRadius: 8, fontSize: 12 }} formatter={(v) => fmt(v)} />
+            <ReferenceLine y={0} stroke={theme.textFaint} />
+            <Area type="monotone" dataKey="cum" stroke="#6366f1" strokeWidth={2} fill="url(#cumGrad)" />
+          </AreaChart>
+        </ResponsiveContainer>
+      </div>
+
+      <div className="card-lg" style={{ padding: 20 }}>
+        <div style={{ fontSize: 14, fontWeight: 600, color: theme.text, marginBottom: 14 }}>P&L by Coin</div>
+        <ResponsiveContainer width="100%" height={Math.max(160, byCoin.length * 38)}>
+          <BarChart data={byCoin} layout="vertical">
+            <XAxis type="number" tick={{ fontSize: 11, fill: theme.textFaint }} />
+            <YAxis type="category" dataKey="name" tick={{ fontSize: 12, fill: theme.textMuted }} width={70} />
+            <Tooltip contentStyle={{ background: theme.card, border: `1px solid ${theme.cardBorder}`, borderRadius: 8, fontSize: 12 }} formatter={(v) => fmt(v)} cursor={{ fill: theme.hoverBg }} />
+            <ReferenceLine x={0} stroke={theme.textFaint} />
+            <Bar dataKey="pnl" radius={[0, 4, 4, 0]}>{byCoin.map((d, i) => <Cell key={i} fill={d.color} />)}</Bar>
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
+  );
+}
+
+function AddCryptoTradeModal({ onClose, onSave, theme }) {
+  const now = new Date();
+  const [t, setT] = useState({ instId: '', side: 'buy', posSide: 'long', fillSz: '', fillPx: '', pnl: '', fee: '', date: now.toISOString().split('T')[0], time: now.toTimeString().slice(0, 5), notes: '' });
+  const save = () => {
+    if (!t.instId) return;
+    onSave({
+      instId: t.instId.toUpperCase(), side: t.side, posSide: t.posSide,
+      fillSz: parseFloat(t.fillSz) || 0, fillPx: parseFloat(t.fillPx) || 0,
+      pnl: parseFloat(t.pnl) || 0, fee: parseFloat(t.fee) || 0, feeCcy: 'USDT',
+      ts: new Date(`${t.date}T${t.time || '00:00'}`).toISOString(), notes: t.notes,
+    });
+  };
+  return (
+    <Modal width={460} onClose={onClose}>
+      <div style={{ padding: 20, borderBottom: `1px solid ${theme.cardBorder}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <h3 style={{ fontSize: 16, fontWeight: 600, color: theme.text }}>Add Manual Trade</h3>
+        <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4 }}><X size={20} style={{ color: theme.textFaint }} /></button>
+      </div>
+      <div style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <div><label className="label">Instrument</label><input value={t.instId} onChange={(e) => setT({ ...t, instId: e.target.value.toUpperCase() })} placeholder="BTC-USDT-SWAP" className="input" /></div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <div><label className="label">Side</label><select value={t.side} onChange={(e) => setT({ ...t, side: e.target.value })} className="input"><option value="buy">Buy</option><option value="sell">Sell</option></select></div>
+          <div><label className="label">Direction</label><select value={t.posSide} onChange={(e) => setT({ ...t, posSide: e.target.value })} className="input"><option value="long">Long</option><option value="short">Short</option><option value="net">Net</option></select></div>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <div><label className="label">Size</label><input type="number" step="any" value={t.fillSz} onChange={(e) => setT({ ...t, fillSz: e.target.value })} className="input" /></div>
+          <div><label className="label">Price</label><input type="number" step="any" value={t.fillPx} onChange={(e) => setT({ ...t, fillPx: e.target.value })} className="input" /></div>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <div><label className="label">Realized P&L ($)</label><input type="number" step="any" value={t.pnl} onChange={(e) => setT({ ...t, pnl: e.target.value })} className="input" /></div>
+          <div><label className="label">Fee ($)</label><input type="number" step="any" value={t.fee} onChange={(e) => setT({ ...t, fee: e.target.value })} className="input" /></div>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <div><label className="label">Date</label><input type="date" value={t.date} onChange={(e) => setT({ ...t, date: e.target.value })} className="input" /></div>
+          <div><label className="label">Time</label><input type="time" value={t.time} onChange={(e) => setT({ ...t, time: e.target.value })} className="input" /></div>
+        </div>
+        <div><label className="label">Notes</label><textarea value={t.notes} onChange={(e) => setT({ ...t, notes: e.target.value })} rows={2} className="input" style={{ resize: 'none' }} /></div>
       </div>
       <div style={{ padding: 20, borderTop: `1px solid ${theme.cardBorder}`, display: 'flex', justifyContent: 'space-between' }}>
-        {!confirmDelete ? <>
-          <button onClick={() => setConfirmDelete(true)} style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'none', border: 'none', fontSize: 14, color: '#ef4444', cursor: 'pointer' }}><Trash2 size={16} />Delete</button>
-          <div className="flex gap-2">
-            <button onClick={() => onEdit(trade)} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '10px 16px', borderRadius: 10, border: `1px solid ${theme.cardBorder}`, background: 'none', fontSize: 14, color: theme.text, cursor: 'pointer' }}><Edit3 size={16} />Edit</button>
-            <button onClick={onClose} className="btn-primary">Close</button>
-          </div>
-        </> : <>
-          <span style={{ fontSize: 14, color: theme.textMuted }}>Delete this trade?</span>
-          <div className="flex gap-2">
-            <button onClick={() => setConfirmDelete(false)} style={{ background: 'none', border: 'none', fontSize: 14, color: theme.textMuted, cursor: 'pointer' }}>Cancel</button>
-            <button onClick={() => onDelete(trade.id)} className="btn-primary" style={{ background: '#ef4444' }}>Delete</button>
-          </div>
-        </>}
+        <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: 14, color: theme.textMuted, cursor: 'pointer' }}>Cancel</button>
+        <button onClick={save} className="btn-primary">Save Trade</button>
+      </div>
+    </Modal>
+  );
+}
+
+function NewCryptoChallengeModal({ onClose, onSave, liveBalance }) {
+  const theme = useTheme();
+  const [c, setC] = useState({ name: '', startBalance: liveBalance ? Math.round(liveBalance) : 1000, targetBalance: 10000, startDate: new Date().toISOString().split('T')[0], targetDate: '', notes: '' });
+  const save = () => {
+    const start = parseFloat(c.startBalance) || 0;
+    const target = parseFloat(c.targetBalance) || 0;
+    if (target <= start) return;
+    onSave({
+      name: c.name || 'Growth Challenge', startBalance: start, targetBalance: target,
+      currentBalance: liveBalance || start, startDate: c.startDate, targetDate: c.targetDate || null,
+      milestones: [25, 50, 75, 100].map(p => ({ pct: p, hit: false })), notes: c.notes,
+    });
+  };
+  const start = parseFloat(c.startBalance) || 0, target = parseFloat(c.targetBalance) || 0;
+  const multiple = start > 0 ? (target / start).toFixed(1) : '—';
+  return (
+    <Modal width={460} onClose={onClose}>
+      <div style={{ padding: 20, borderBottom: `1px solid ${theme.cardBorder}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <h3 style={{ fontSize: 16, fontWeight: 600, color: theme.text }}>New Growth Challenge</h3>
+        <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4 }}><X size={20} style={{ color: theme.textFaint }} /></button>
+      </div>
+      <div style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <div><label className="label">Challenge name</label><input value={c.name} onChange={(e) => setC({ ...c, name: e.target.value })} placeholder="e.g. $1K to $10K Run" className="input" /></div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <div><label className="label">Start balance ($)</label><input type="number" step="any" value={c.startBalance} onChange={(e) => setC({ ...c, startBalance: e.target.value })} className="input" /></div>
+          <div><label className="label">Target balance ($)</label><input type="number" step="any" value={c.targetBalance} onChange={(e) => setC({ ...c, targetBalance: e.target.value })} className="input" /></div>
+        </div>
+        <div style={{ padding: 12, borderRadius: 10, background: theme.hoverBg, fontSize: 13, color: theme.textMuted }}>Goal: grow your account <strong style={{ color: '#6366f1' }}>{multiple}x</strong></div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <div><label className="label">Start date</label><input type="date" value={c.startDate} onChange={(e) => setC({ ...c, startDate: e.target.value })} className="input" /></div>
+          <div><label className="label">Target date (optional)</label><input type="date" value={c.targetDate} onChange={(e) => setC({ ...c, targetDate: e.target.value })} className="input" /></div>
+        </div>
+        <div><label className="label">Notes</label><textarea value={c.notes} onChange={(e) => setC({ ...c, notes: e.target.value })} rows={2} className="input" placeholder="Rules, strategy, risk per trade…" style={{ resize: 'none' }} /></div>
+      </div>
+      <div style={{ padding: 20, borderTop: `1px solid ${theme.cardBorder}`, display: 'flex', justifyContent: 'space-between' }}>
+        <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: 14, color: theme.textMuted, cursor: 'pointer' }}>Cancel</button>
+        <button onClick={save} className="btn-primary">Create Challenge</button>
       </div>
     </Modal>
   );
