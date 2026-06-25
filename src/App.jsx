@@ -661,22 +661,23 @@ export default function TradingJournal() {
           } catch {}
         }
 
-        // Load crypto trades, snapshots, challenges — tables may not exist yet
+        // Load crypto trades, snapshots, challenges — tables may not exist yet.
+        // NOTE: Supabase returns { data:null, error } instead of throwing when a
+        // table is missing, so we must check .error explicitly and fall back to
+        // localStorage per-resource (a plain try/catch never fires here).
+        const loadLocalCrypto = (key) => { try { return JSON.parse(localStorage.getItem(key) || '[]'); } catch { return []; } };
+        let ctRes = {}, csRes = {}, cchRes = {};
         try {
-          const [ctRes, csRes, cchRes] = await Promise.all([
+          [ctRes, csRes, cchRes] = await Promise.all([
             supabase.from('crypto_trades').select('*').order('ts', { ascending: false }).limit(1000),
             supabase.from('crypto_snapshots').select('*').order('ts', { ascending: true }).limit(1000),
             supabase.from('crypto_challenges').select('*').order('created_at', { ascending: false }),
           ]);
-          if (ctRes.data) setCryptoTrades(ctRes.data.map(mapCryptoTradeRow));
-          if (csRes.data) setCryptoSnapshots(csRes.data.map(mapSnapshotRow));
-          if (cchRes.data) setCryptoChallenges(cchRes.data.map(mapCryptoChallengeRow));
-        } catch (cryptoErr) {
-          console.warn('Crypto tables not available, using localStorage:', cryptoErr.message);
-          try { setCryptoTrades(JSON.parse(localStorage.getItem('ellipse_crypto_trades') || '[]')); } catch {}
-          try { setCryptoSnapshots(JSON.parse(localStorage.getItem('ellipse_crypto_snapshots') || '[]')); } catch {}
-          try { setCryptoChallenges(JSON.parse(localStorage.getItem('ellipse_crypto_challenges') || '[]')); } catch {}
-        }
+        } catch (e) { console.warn('Crypto load failed:', e?.message); }
+        setCryptoTrades((ctRes.data && !ctRes.error) ? ctRes.data.map(mapCryptoTradeRow) : loadLocalCrypto('ellipse_crypto_trades'));
+        setCryptoSnapshots((csRes.data && !csRes.error) ? csRes.data.map(mapSnapshotRow) : loadLocalCrypto('ellipse_crypto_snapshots'));
+        setCryptoChallenges((cchRes.data && !cchRes.error) ? cchRes.data.map(mapCryptoChallengeRow) : loadLocalCrypto('ellipse_crypto_challenges'));
+        if (cchRes.error) console.warn('crypto_challenges not in DB (using localStorage). Run supabase/crypto_migration.sql to persist across devices/deploys.');
 
         setSynced(true);
       } catch (err) {
@@ -703,9 +704,9 @@ export default function TradingJournal() {
   }, [journalEntries]);
 
   // Crypto localStorage fallbacks
-  useEffect(() => { if (cryptoTrades.length) localStorage.setItem('ellipse_crypto_trades', JSON.stringify(cryptoTrades.slice(0, 1000))); }, [cryptoTrades]);
-  useEffect(() => { if (cryptoSnapshots.length) localStorage.setItem('ellipse_crypto_snapshots', JSON.stringify(cryptoSnapshots.slice(-1000))); }, [cryptoSnapshots]);
-  useEffect(() => { if (cryptoChallenges.length) localStorage.setItem('ellipse_crypto_challenges', JSON.stringify(cryptoChallenges)); }, [cryptoChallenges]);
+  useEffect(() => { try { localStorage.setItem('ellipse_crypto_trades', JSON.stringify(cryptoTrades.slice(0, 1000))); } catch {} }, [cryptoTrades]);
+  useEffect(() => { try { localStorage.setItem('ellipse_crypto_snapshots', JSON.stringify(cryptoSnapshots.slice(-1000))); } catch {} }, [cryptoSnapshots]);
+  useEffect(() => { try { localStorage.setItem('ellipse_crypto_challenges', JSON.stringify(cryptoChallenges)); } catch {} }, [cryptoChallenges]);
 
   // ---- OKX sync: pull balance, positions, fills via serverless proxy ----
   const syncOKX = async () => {
