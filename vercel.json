@@ -1,5 +1,5 @@
 {
   "crons": [
-    { "path": "/api/cron/okx-sync", "schedule": "0 * * * *" }
+    { "path": "/api/cron/okx-sync", "schedule": "0 0 * * *" }
   ]
 }
