@@ -712,10 +712,19 @@ export default function TradingJournal() {
     setSyncingOKX(true);
     setOkxError(null);
     try {
+      const getJson = async (url) => {
+        const r = await fetch(url);
+        const ct = r.headers.get('content-type') || '';
+        if (!ct.includes('application/json')) {
+          await r.text().catch(() => '');
+          throw new Error(`API route ${url} returned ${r.status} (not JSON). The /api/okx serverless functions aren't reachable — make sure they're deployed to Vercel (they don't run under "vite dev"; use "vercel dev" locally).`);
+        }
+        return r.json();
+      };
       const [balRes, posRes, fillsRes] = await Promise.all([
-        fetch('/api/okx/balance').then(r => r.json()),
-        fetch('/api/okx/positions').then(r => r.json()),
-        fetch('/api/okx/fills?limit=100').then(r => r.json()),
+        getJson('/api/okx/balance'),
+        getJson('/api/okx/positions'),
+        getJson('/api/okx/fills?limit=100'),
       ]);
       if (balRes?.error || posRes?.error || fillsRes?.error) {
         throw new Error(balRes?.msg || posRes?.msg || fillsRes?.msg || balRes?.error || 'OKX sync failed. Check API keys / Vercel env vars.');
@@ -4643,7 +4652,7 @@ function NewCryptoChallengeModal({ onClose, onSave, liveBalance }) {
           <div><label className="label">Start date</label><input type="date" value={c.startDate} onChange={(e) => setC({ ...c, startDate: e.target.value })} className="input" /></div>
           <div><label className="label">Target date (optional)</label><input type="date" value={c.targetDate} onChange={(e) => setC({ ...c, targetDate: e.target.value })} className="input" /></div>
         </div>
-        <div><label className="label">Notes</label><textarea value={c.notes} onChange={(e) => setC({ ...c, notes: e.target.value })} rows={2} className="input" placeholder="Rules, strategy, risk per trade…" style={{ resize: 'none' }} /></div>
+        <div><label className="label">Notes</label><textarea value={c.notes} onChange={(e) => setC({ ...c, notes: e.target.value })} rows={2} className="input" placeholder="Rules, strategy, risk per trade" style={{ resize: 'none' }} /></div>
       </div>
       <div style={{ padding: 20, borderTop: `1px solid ${theme.cardBorder}`, display: 'flex', justifyContent: 'space-between' }}>
         <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: 14, color: theme.textMuted, cursor: 'pointer' }}>Cancel</button>
