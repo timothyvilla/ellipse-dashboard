@@ -1,0 +1,34 @@
+name: OKX hourly sync
+
+# Free hourly trigger that works on any Vercel plan (Hobby included).
+# It calls the server-side sync endpoint once an hour.
+#
+# Setup:
+#   1. In GitHub → repo → Settings → Secrets and variables → Actions,
+#      add a secret named OKX_SYNC_SECRET with the same value you set for
+#      CRON_SECRET in Vercel.
+#   2. (Optional) edit SYNC_URL below if your domain differs.
+#
+# Note: GitHub's scheduled runs can be delayed a few minutes under load,
+# and Actions schedules pause after ~60 days with no repo activity.
+
+on:
+  schedule:
+    - cron: "0 * * * *"      # top of every hour (UTC)
+  workflow_dispatch: {}       # lets you run it manually from the Actions tab
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call OKX sync endpoint
+        env:
+          SYNC_URL: https://ellipse-dashboard.vercel.app/api/cron/okx-sync
+          SECRET: ${{ secrets.OKX_SYNC_SECRET }}
+        run: |
+          echo "Triggering OKX sync..."
+          code=$(curl -sS -o /tmp/resp.json -w "%{http_code}" -X POST "$SYNC_URL" \
+            -H "Authorization: Bearer $SECRET")
+          echo "HTTP $code"
+          cat /tmp/resp.json
+          test "$code" = "200"
