@@ -4251,6 +4251,8 @@ function CryptoView({ subTab, setSubTab, trades, snapshots, challenges, live, sy
     { id: 'analytics', label: 'Analytics', icon: BarChart3 },
   ];
   const fmt = (n, d = 2) => (n < 0 ? '-' : '') + '$' + Math.abs(Number(n) || 0).toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
+  const [detailId, setDetailId] = useState(null);
+  const detailChallenge = detailId != null ? challenges.find(c => String(c.id) === String(detailId)) : null;
   const balance = live?.balance;
 
   return (
@@ -4275,7 +4277,11 @@ function CryptoView({ subTab, setSubTab, trades, snapshots, challenges, live, sy
       )}
 
       {subTab === 'portfolio' && <CryptoPortfolio balance={balance} positions={live?.positions || []} snapshots={snapshots} syncing={syncing} onSync={onSync} fmt={fmt} theme={theme} />}
-      {subTab === 'challenge' && <CryptoChallengeView challenges={challenges} snapshots={snapshots} liveEq={balance?.totalEq} onUpdate={onUpdateChallenge} onDelete={onDeleteChallenge} fmt={fmt} theme={theme} />}
+      {subTab === 'challenge' && (detailChallenge ? (
+        <CryptoChallengeDetail challenge={detailChallenge} trades={trades} snapshots={snapshots} liveEq={balance?.totalEq} onBack={() => setDetailId(null)} onUpdate={onUpdateChallenge} onDelete={(id) => { onDeleteChallenge(id); setDetailId(null); }} fmt={fmt} theme={theme} />
+      ) : (
+        <CryptoChallengeView challenges={challenges} snapshots={snapshots} liveEq={balance?.totalEq} onOpen={setDetailId} onUpdate={onUpdateChallenge} onDelete={onDeleteChallenge} fmt={fmt} theme={theme} />
+      ))}
       {subTab === 'trades' && <CryptoTradesView trades={trades} onAddTrade={onAddTrade} onDeleteTrade={onDeleteTrade} fmt={fmt} theme={theme} />}
       {subTab === 'analytics' && <CryptoAnalyticsView trades={trades} fmt={fmt} theme={theme} />}
     </div>
@@ -4395,7 +4401,7 @@ function CryptoPortfolio({ balance, positions, snapshots, syncing, onSync, fmt, 
   );
 }
 
-function CryptoChallengeView({ challenges, snapshots, liveEq, onUpdate, onDelete, fmt, theme }) {
+function CryptoChallengeView({ challenges, snapshots, liveEq, onOpen, onUpdate, onDelete, fmt, theme }) {
   if (!challenges.length) {
     return (
       <div className="card" style={{ padding: 48, textAlign: 'center' }}>
@@ -4435,6 +4441,7 @@ function CryptoChallengeView({ challenges, snapshots, liveEq, onUpdate, onDelete
                 <div style={{ fontSize: 12, color: theme.textMuted, marginTop: 4 }}>{fmt(c.startBalance, 0)} → {fmt(c.targetBalance, 0)}{c.targetDate ? ` · by ${new Date(c.targetDate).toLocaleDateString()}` : ''}</div>
               </div>
               <div className="flex items-center gap-2">
+                <button onClick={() => onOpen && onOpen(c.id)} style={{ padding: 8, borderRadius: 8, border: `1px solid ${theme.cardBorder}`, background: theme.card, cursor: 'pointer' }} title="View analytics"><BarChart3 size={16} style={{ color: '#6366f1' }} /></button>
                 {!reached && c.status === 'active' && <button onClick={() => onUpdate({ ...c, status: 'completed' })} style={{ padding: 8, borderRadius: 8, border: `1px solid ${theme.cardBorder}`, background: theme.card, cursor: 'pointer' }} title="Mark complete"><CheckCircle size={16} style={{ color: '#10b981' }} /></button>}
                 <button onClick={() => onDelete(c.id)} style={{ padding: 8, borderRadius: 8, border: `1px solid ${theme.cardBorder}`, background: theme.card, cursor: 'pointer' }} title="Delete"><Trash2 size={16} style={{ color: '#ef4444' }} /></button>
               </div>
@@ -4666,5 +4673,190 @@ function NewCryptoChallengeModal({ onClose, onSave, liveBalance }) {
         <button onClick={save} className="btn-primary">Create Challenge</button>
       </div>
     </Modal>
+  );
+}
+
+// ==================== CRYPTO CHALLENGE DETAIL (per-challenge analytics) ====================
+function CryptoChallengeDetail({ challenge, trades, snapshots, liveEq, onBack, onUpdate, onDelete, fmt, theme }) {
+  const c = challenge;
+  const today = new Date().toISOString().split('T')[0];
+  const [startD, setStartD] = useState(c.startDate || '');
+  const [endD, setEndD] = useState(c.targetDate && c.targetDate < today ? c.targetDate : today);
+
+  const inRange = trades.filter(t => {
+    const d = (t.ts || '').slice(0, 10);
+    if (startD && d < startD) return false;
+    if (endD && d > endD) return false;
+    return true;
+  });
+
+  const s = computeCryptoStats(inRange);
+  const ratio = s.avgLoss > 0 ? s.avgWin / s.avgLoss : (s.avgWin > 0 ? 2 : 0);
+  const pfNum = s.profitFactor === Infinity ? 2 : s.profitFactor;
+  const winRateScore = Math.min(s.winRate / 60 * 33, 33);
+  const ratioScore = Math.min(ratio / 2 * 33, 33);
+  const pfScore = Math.min(pfNum / 2 * 34, 34);
+  const ellipseScore = s.realizedCount >= 5 ? winRateScore + ratioScore + pfScore : 0;
+  const scoreColor = ellipseScore >= 70 ? '#10b981' : ellipseScore >= 40 ? '#f59e0b' : '#ef4444';
+  const returnPct = c.startBalance > 0 ? (s.netPnl / c.startBalance) * 100 : 0;
+  const pfLabel = s.profitFactor === Infinity ? '∞' : s.profitFactor.toFixed(2);
+
+  // Daily net + cumulative
+  const byDay = {};
+  inRange.forEach(t => { const d = t.ts.slice(0, 10); byDay[d] = (byDay[d] || 0) + (t.pnl || 0) - Math.abs(t.fee || 0); });
+  let cum = 0;
+  const dailyData = Object.entries(byDay).sort((a, b) => a[0] < b[0] ? -1 : 1)
+    .map(([d, net]) => { cum += net; return { date: d.slice(5), net: +net.toFixed(2), cum: +cum.toFixed(2) }; });
+
+  const recent = [...inRange].sort((a, b) => new Date(b.ts) - new Date(a.ts)).slice(0, 25);
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+      {/* Header */}
+      <div className="flex items-center justify-between" style={{ flexWrap: 'wrap', gap: 12 }}>
+        <div className="flex items-center gap-3">
+          <button onClick={onBack} style={{ padding: 8, borderRadius: 8, border: `1px solid ${theme.cardBorder}`, background: theme.card, cursor: 'pointer' }} title="Back to challenges"><ChevronLeft size={18} style={{ color: theme.textMuted }} /></button>
+          <div>
+            <div className="flex items-center gap-2">
+              <span style={{ fontSize: 18, fontWeight: 700, color: theme.text }}>{c.name}</span>
+              <span className="badge" style={{ background: c.status === 'active' ? 'rgba(99,102,241,0.15)' : 'rgba(148,163,184,0.15)', color: c.status === 'active' ? '#6366f1' : theme.textMuted }}>{c.status.toUpperCase()}</span>
+            </div>
+            <div style={{ fontSize: 12, color: theme.textMuted, marginTop: 2 }}>{fmt(c.startBalance, 0)} → {fmt(c.targetBalance, 0)}</div>
+          </div>
+        </div>
+        <div className="flex items-center gap-2" style={{ flexWrap: 'wrap' }}>
+          <div><label className="label" style={{ marginBottom: 2 }}>From</label><input type="date" value={startD} onChange={(e) => setStartD(e.target.value)} className="input input-sm" style={{ width: 'auto' }} /></div>
+          <div><label className="label" style={{ marginBottom: 2 }}>To</label><input type="date" value={endD} onChange={(e) => setEndD(e.target.value)} className="input input-sm" style={{ width: 'auto' }} /></div>
+        </div>
+      </div>
+
+      {/* Stat cards */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 14 }}>
+        <StatCard label="Net P&L" value={`${s.netPnl >= 0 ? '+' : ''}${fmt(s.netPnl)}`} color={s.netPnl >= 0 ? '#10b981' : '#ef4444'} sub={`${fmt(s.totalFees)} fees`} theme={theme} />
+        <StatCard label="Return" value={`${returnPct >= 0 ? '+' : ''}${returnPct.toFixed(1)}%`} color={returnPct >= 0 ? '#10b981' : '#ef4444'} sub="on start balance" theme={theme} />
+        <StatCard label="Win Rate" value={`${s.winRate.toFixed(1)}%`} sub={`${s.winCount}W / ${s.lossCount}L`} theme={theme} />
+        <StatCard label="Profit Factor" value={pfLabel} theme={theme} />
+        <StatCard label="Trades" value={s.tradeCount} sub={`${s.realizedCount} with P&L`} theme={theme} />
+      </div>
+
+      {/* Ellipse Score */}
+      <div className="card-lg" style={{ padding: 20, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 16 }}>
+        <div>
+          <div className="stat-label">Ellipse Score</div>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginTop: 6 }}>
+            <span style={{ fontSize: 34, fontWeight: 700, color: scoreColor }}>{s.realizedCount < 5 ? '--' : ellipseScore.toFixed(0)}</span>
+            <span style={{ fontSize: 14, color: theme.textMuted }}>/ 100</span>
+          </div>
+          <div style={{ fontSize: 12, color: theme.textFaint, marginTop: 4 }}>{s.realizedCount < 5 ? 'Needs 5+ closed trades' : 'Win rate + win/loss ratio + profit factor'}</div>
+        </div>
+        <div style={{ flex: 1, minWidth: 200, maxWidth: 360 }}>
+          {[['Win rate', winRateScore, 33], ['Win/Loss ratio', ratioScore, 33], ['Profit factor', pfScore, 34]].map(([label, val, max]) => (
+            <div key={label} style={{ marginBottom: 8 }}>
+              <div className="flex justify-between" style={{ fontSize: 11, color: theme.textMuted, marginBottom: 3 }}><span>{label}</span><span>{val.toFixed(0)}/{max}</span></div>
+              <div style={{ height: 6, borderRadius: 3, background: theme.hoverBg, overflow: 'hidden' }}><div style={{ width: `${(val / max) * 100}%`, height: '100%', background: scoreColor }}></div></div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Daily net + cumulative P&L */}
+      <div className="card-lg" style={{ padding: 20 }}>
+        <div style={{ fontSize: 14, fontWeight: 600, color: theme.text, marginBottom: 14 }}>Daily &amp; Cumulative Net P&L</div>
+        {dailyData.length ? (
+          <ResponsiveContainer width="100%" height={260}>
+            <ComposedChart data={dailyData}>
+              <XAxis dataKey="date" tick={{ fontSize: 10, fill: theme.textFaint }} />
+              <YAxis yAxisId="l" tick={{ fontSize: 11, fill: theme.textFaint }} width={64} />
+              <YAxis yAxisId="r" orientation="right" tick={{ fontSize: 11, fill: theme.textFaint }} width={64} />
+              <Tooltip contentStyle={{ background: theme.card, border: `1px solid ${theme.cardBorder}`, borderRadius: 8, fontSize: 12 }} formatter={(v, n) => [fmt(v), n === 'net' ? 'Daily net' : 'Cumulative']} />
+              <ReferenceLine yAxisId="l" y={0} stroke={theme.textFaint} />
+              <Bar yAxisId="l" dataKey="net" radius={[3, 3, 0, 0]}>{dailyData.map((d, i) => <Cell key={i} fill={d.net >= 0 ? '#10b981' : '#ef4444'} />)}</Bar>
+              <Line yAxisId="r" type="monotone" dataKey="cum" stroke="#6366f1" strokeWidth={2} dot={false} />
+            </ComposedChart>
+          </ResponsiveContainer>
+        ) : (
+          <div style={{ height: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.textFaint, fontSize: 13 }}>No trades in this date range.</div>
+        )}
+      </div>
+
+      {/* Recent trades */}
+      <div className="card-lg" style={{ overflow: 'hidden' }}>
+        <div style={{ padding: '16px 20px', fontSize: 14, fontWeight: 600, color: theme.text, borderBottom: `1px solid ${theme.cardBorder}` }}>Recent Trades</div>
+        {recent.length ? (
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead><tr>{['Time', 'Instrument', 'Side', 'Size', 'Price', 'P&L', 'Fee'].map((h, i) => <th key={i} className="table-header" style={{ textAlign: i >= 3 ? 'right' : 'left' }}>{h}</th>)}</tr></thead>
+              <tbody>
+                {recent.map(t => (
+                  <tr key={t.id} className="table-row" style={{ cursor: 'default' }}>
+                    <td style={{ padding: '12px 16px', fontSize: 12, color: theme.textMuted }}>{new Date(t.ts).toLocaleString()}</td>
+                    <td style={{ padding: '12px 16px', fontSize: 13, fontWeight: 600, color: theme.text }}>{t.instId}</td>
+                    <td style={{ padding: '12px 16px' }}><span className="badge" style={{ background: t.side === 'buy' ? 'rgba(16,185,129,0.15)' : 'rgba(239,68,68,0.15)', color: t.side === 'buy' ? '#10b981' : '#ef4444' }}>{(t.posSide && t.posSide !== 'net' ? t.posSide : t.side || '').toUpperCase()}</span></td>
+                    <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, color: theme.text, fontFamily: 'JetBrains Mono, monospace' }}>{t.fillSz}</td>
+                    <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, color: theme.textMuted, fontFamily: 'JetBrains Mono, monospace' }}>{t.fillPx}</td>
+                    <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, fontWeight: 600, color: t.pnl >= 0 ? '#10b981' : '#ef4444', fontFamily: 'JetBrains Mono, monospace' }}>{t.pnl ? (t.pnl >= 0 ? '+' : '') + fmt(t.pnl) : '—'}</td>
+                    <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 12, color: theme.textFaint, fontFamily: 'JetBrains Mono, monospace' }}>{t.fee ? fmt(t.fee) : '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div style={{ padding: 32, textAlign: 'center', color: theme.textFaint, fontSize: 13 }}>No trades in this date range.</div>
+        )}
+      </div>
+
+      {/* Trading calendar */}
+      <div>
+        <div style={{ fontSize: 14, fontWeight: 600, color: theme.text, marginBottom: 12 }}>Trading Calendar</div>
+        <CryptoTradingCalendar trades={inRange} fmt={fmt} theme={theme} initialMonth={endD ? new Date(endD + 'T00:00') : new Date()} />
+      </div>
+    </div>
+  );
+}
+
+function CryptoTradingCalendar({ trades, fmt, theme, initialMonth }) {
+  const [month, setMonth] = useState(initialMonth || new Date());
+  const firstDay = new Date(month.getFullYear(), month.getMonth(), 1).getDay();
+  const daysInMonth = new Date(month.getFullYear(), month.getMonth() + 1, 0).getDate();
+  const cells = [];
+  for (let i = 0; i < firstDay; i++) cells.push(null);
+  for (let i = 1; i <= daysInMonth; i++) cells.push(i);
+
+  const dayTrades = (day) => {
+    if (!day) return [];
+    const ds = `${month.getFullYear()}-${String(month.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    return trades.filter(t => (t.ts || '').slice(0, 10) === ds);
+  };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div className="flex items-center justify-between">
+        <h3 style={{ fontSize: 15, fontWeight: 600, color: theme.text }}>{month.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</h3>
+        <div className="flex gap-2">
+          <button onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() - 1))} style={{ padding: 8, borderRadius: 8, background: theme.hoverBg, border: 'none', cursor: 'pointer' }}><ChevronLeft size={18} style={{ color: theme.textMuted }} /></button>
+          <button onClick={() => setMonth(new Date())} style={{ padding: '8px 14px', fontSize: 13, color: theme.textMuted, background: theme.hoverBg, border: 'none', borderRadius: 8, cursor: 'pointer' }}>Today</button>
+          <button onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() + 1))} style={{ padding: 8, borderRadius: 8, background: theme.hoverBg, border: 'none', cursor: 'pointer' }}><ChevronRight size={18} style={{ color: theme.textMuted }} /></button>
+        </div>
+      </div>
+      <div className="card-lg" style={{ overflow: 'hidden' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)' }}>
+          {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(d => <div key={d} className="table-header" style={{ textAlign: 'center', padding: 10 }}>{d}</div>)}
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)' }}>
+          {cells.map((day, i) => {
+            const dt = dayTrades(day);
+            const net = dt.reduce((sum, t) => sum + (t.pnl || 0) - Math.abs(t.fee || 0), 0);
+            const has = dt.length > 0;
+            const bg = has ? (net >= 0 ? 'linear-gradient(135deg, rgba(16,185,129,0.06), rgba(16,185,129,0.2))' : 'linear-gradient(135deg, rgba(239,68,68,0.06), rgba(239,68,68,0.2))') : (!day ? (theme.dark ? '#0a0a0a' : '#f8fafc') : 'transparent');
+            return (
+              <div key={i} style={{ minHeight: 82, padding: 8, borderBottom: `1px solid ${theme.cardBorder}`, borderRight: `1px solid ${theme.cardBorder}`, background: bg, borderLeft: has ? `3px solid ${net >= 0 ? '#10b981' : '#ef4444'}` : undefined }}>
+                {day && <><div style={{ fontSize: 12, color: has ? (net >= 0 ? '#10b981' : '#ef4444') : theme.textMuted, fontWeight: has ? 600 : 400 }}>{day}</div>{has && <div style={{ marginTop: 5 }}><div style={{ fontSize: 12, fontWeight: 600, color: net >= 0 ? '#10b981' : '#ef4444' }}>{net >= 0 ? '+' : ''}{fmt(net)}</div><div style={{ fontSize: 10, color: theme.textFaint }}>{dt.length} trade{dt.length > 1 ? 's' : ''}</div></div>}</>}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
   );
 }
