@@ -536,7 +536,7 @@ const computeCryptoStats = (trades) => {
   };
 };
 
-const COIN_COLORS = ['#6366f1', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981', '#3b82f6', '#ef4444', '#14b8a6', '#a855f7', '#f97316'];
+const COIN_COLORS = ['#8b5cf6', '#22d3a5', '#a855f7', '#f59e0b', '#38bdf8', '#ec4899', '#f4557a', '#14b8a6', '#c084fc', '#f97316'];
 const coinFromInst = (instId) => (instId || '').split('-')[0] || instId;
 
 // ==================== MAIN APP ====================
@@ -1001,62 +1001,201 @@ export default function TradingJournal() {
   const todayLosses = todayTrades.filter(t => t.pnl < 0).length;
 
   const theme = {
-    dark: darkMode, bg: darkMode ? '#0a0a0a' : '#f8fafc',
-    card: darkMode ? '#111111' : '#ffffff', cardBorder: darkMode ? '#1f1f1f' : '#e2e8f0',
-    text: darkMode ? '#f1f5f9' : '#0f172a', textMuted: darkMode ? '#94a3b8' : '#64748b',
-    textFaint: darkMode ? '#64748b' : '#94a3b8', inputBg: darkMode ? '#1a1a1a' : '#ffffff',
-    inputBorder: darkMode ? '#2a2a2a' : '#e2e8f0', hoverBg: darkMode ? '#1a1a1a' : '#f1f5f9',
+    dark: darkMode,
+    // Base surfaces — near-black with a violet cast in dark, cool off-white in light
+    bg: darkMode ? '#07060c' : '#f6f5fb',
+    bgAlt: darkMode ? '#0b0a13' : '#eeecf7',
+    card: darkMode ? '#100e1a' : '#ffffff',
+    cardAlt: darkMode ? '#15121f' : '#faf9fe',
+    cardBorder: darkMode ? '#221e33' : '#e5e1f2',
+    borderStrong: darkMode ? '#302a47' : '#d5cfe9',
+    // Type
+    text: darkMode ? '#f3f1fb' : '#14111f',
+    textMuted: darkMode ? '#9d97b8' : '#615b7a',
+    textFaint: darkMode ? '#6b6588' : '#9691ae',
+    // Inputs
+    inputBg: darkMode ? '#15121f' : '#ffffff',
+    inputBorder: darkMode ? '#2a2440' : '#e0dbf0',
+    hoverBg: darkMode ? '#1a1728' : '#f1eefb',
+    // Accents
+    primary: '#8b5cf6',
+    primaryHi: '#a855f7',
+    primarySoft: darkMode ? 'rgba(139, 92, 246, 0.16)' : 'rgba(139, 92, 246, 0.10)',
+    primaryGrad: 'linear-gradient(135deg, #7c3aed 0%, #a855f7 100%)',
+    accent: '#22d3a5',
+    accentSoft: darkMode ? 'rgba(34, 211, 165, 0.14)' : 'rgba(34, 211, 165, 0.12)',
+    pos: darkMode ? '#22d3a5' : '#0d9c78',
+    neg: darkMode ? '#f4557a' : '#dc2f52',
+    warn: '#f59e0b',
+    // Effects
+    glow: darkMode ? '0 0 0 1px rgba(139,92,246,0.18), 0 8px 32px rgba(124,58,237,0.22)' : '0 4px 16px rgba(99,72,180,0.10)',
+    shadow: darkMode ? '0 4px 24px rgba(0,0,0,0.5)' : '0 2px 12px rgba(80,64,140,0.07)',
   };
 
   return (
     <ThemeContext.Provider value={theme}>
-      <div className="min-h-screen" style={{ background: theme.bg, fontFamily: "'Inter', system-ui, sans-serif" }}>
+      <div className="min-h-screen" style={{
+        background: darkMode
+          ? `radial-gradient(1100px 620px at 18% -12%, rgba(124,58,237,0.16), transparent 62%),
+             radial-gradient(900px 520px at 96% 8%, rgba(34,211,165,0.07), transparent 58%),
+             ${theme.bg}`
+          : `radial-gradient(1100px 620px at 18% -12%, rgba(139,92,246,0.10), transparent 62%),
+             ${theme.bg}`,
+        color: theme.text,
+        fontFamily: "'Inter', system-ui, sans-serif",
+      }}>
         <style>{`
-          @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+          @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
           * { box-sizing: border-box; }
-          .card { background: ${theme.card}; border: 1px solid ${theme.cardBorder}; border-radius: 12px; }
-          .card-lg { background: ${theme.card}; border: 1px solid ${theme.cardBorder}; border-radius: 16px; }
-          .input { background: ${theme.inputBg}; border: 1px solid ${theme.inputBorder}; border-radius: 10px; padding: 10px 14px; font-size: 14px; color: ${theme.text}; width: 100%; transition: border-color 0.15s; }
-          .input:focus { outline: none; border-color: #6366f1; box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1); }
-          .input-sm { padding: 8px 12px; font-size: 13px; }
-          .btn-primary { background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%); color: white; border: none; border-radius: 10px; padding: 10px 18px; font-size: 14px; font-weight: 500; cursor: pointer; transition: transform 0.15s, box-shadow 0.15s; }
-          .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3); }
-          .nav-item { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-radius: 10px; font-size: 14px; font-weight: 500; color: ${theme.textMuted}; cursor: pointer; transition: all 0.15s; }
-          .nav-item:hover { background: ${theme.hoverBg}; }
-          .nav-item.active { background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%); color: white; }
+          ::selection { background: rgba(139,92,246,0.32); color: ${theme.text}; }
+
+          /* ---- Surfaces ---- */
+          .card {
+            background: ${darkMode
+              ? 'linear-gradient(160deg, rgba(30,25,48,0.72) 0%, rgba(16,14,26,0.94) 58%)'
+              : theme.card};
+            border: 1px solid ${theme.cardBorder};
+            border-radius: 16px;
+            box-shadow: ${theme.shadow};
+          }
+          .card-lg {
+            background: ${darkMode
+              ? 'linear-gradient(160deg, rgba(34,28,55,0.68) 0%, rgba(16,14,26,0.96) 62%)'
+              : theme.card};
+            border: 1px solid ${theme.cardBorder};
+            border-radius: 20px;
+            box-shadow: ${theme.shadow};
+          }
+          .card-hover { transition: border-color 0.18s ease, transform 0.18s ease, box-shadow 0.18s ease; }
+          .card-hover:hover { border-color: ${theme.borderStrong}; transform: translateY(-2px); box-shadow: ${theme.glow}; }
+
+          /* ---- Inputs ---- */
+          .input { background: ${theme.inputBg}; border: 1px solid ${theme.inputBorder}; border-radius: 12px; padding: 11px 14px; font-size: 14px; color: ${theme.text}; width: 100%; transition: border-color 0.15s, box-shadow 0.15s, background 0.15s; }
+          .input::placeholder { color: ${theme.textFaint}; }
+          .input:hover { border-color: ${theme.borderStrong}; }
+          .input:focus { outline: none; border-color: ${theme.primary}; box-shadow: 0 0 0 3px ${theme.primarySoft}; background: ${darkMode ? '#191529' : '#ffffff'}; }
+          .input-sm { padding: 8px 12px; font-size: 13px; border-radius: 10px; }
+
+          /* ---- Buttons ---- */
+          .btn-primary {
+            position: relative; background: ${theme.primaryGrad}; color: #ffffff; border: none;
+            border-radius: 12px; padding: 10px 18px; font-size: 14px; font-weight: 600;
+            letter-spacing: 0.1px; cursor: pointer;
+            box-shadow: 0 2px 10px rgba(124,58,237,0.32), inset 0 1px 0 rgba(255,255,255,0.16);
+            transition: transform 0.15s ease, box-shadow 0.15s ease, filter 0.15s ease;
+          }
+          .btn-primary:hover { transform: translateY(-1px); filter: brightness(1.08); box-shadow: 0 6px 22px rgba(139,92,246,0.45), inset 0 1px 0 rgba(255,255,255,0.2); }
+          .btn-primary:active { transform: translateY(0); }
+          .btn-ghost {
+            background: ${darkMode ? 'rgba(255,255,255,0.03)' : '#ffffff'};
+            border: 1px solid ${theme.cardBorder}; border-radius: 12px; padding: 10px 16px;
+            font-size: 14px; font-weight: 500; color: ${theme.textMuted}; cursor: pointer;
+            transition: border-color 0.15s, color 0.15s, background 0.15s;
+          }
+          .btn-ghost:hover { border-color: ${theme.borderStrong}; color: ${theme.text}; background: ${theme.hoverBg}; }
+          .icon-btn {
+            display: inline-flex; align-items: center; justify-content: center;
+            padding: 10px; border-radius: 12px; border: 1px solid ${theme.cardBorder};
+            background: ${darkMode ? 'rgba(255,255,255,0.03)' : '#ffffff'}; cursor: pointer;
+            color: ${theme.textMuted}; transition: all 0.15s ease;
+          }
+          .icon-btn:hover { border-color: ${theme.primary}; color: ${theme.text}; background: ${theme.primarySoft}; }
+
+          /* ---- Navigation ---- */
+          .nav-item {
+            position: relative; display: flex; align-items: center; gap: 12px;
+            padding: 10px 14px; border-radius: 12px; font-size: 13.5px; font-weight: 500;
+            color: ${theme.textMuted}; cursor: pointer;
+            transition: color 0.15s ease, background 0.15s ease;
+          }
+          .nav-item:hover { background: ${theme.hoverBg}; color: ${theme.text}; }
+          .nav-item.active {
+            background: ${darkMode
+              ? 'linear-gradient(100deg, rgba(139,92,246,0.26) 0%, rgba(139,92,246,0.06) 100%)'
+              : 'linear-gradient(100deg, rgba(139,92,246,0.16) 0%, rgba(139,92,246,0.04) 100%)'};
+            color: ${darkMode ? '#ffffff' : '#5b21b6'}; font-weight: 600;
+            box-shadow: inset 0 0 0 1px ${darkMode ? 'rgba(139,92,246,0.28)' : 'rgba(139,92,246,0.22)'};
+          }
+          .nav-item.active::before {
+            content: ''; position: absolute; left: 0; top: 50%; transform: translateY(-50%);
+            width: 3px; height: 18px; border-radius: 0 3px 3px 0; background: ${theme.primaryHi};
+            box-shadow: 0 0 12px ${theme.primaryHi};
+          }
+          .nav-section {
+            display: flex; align-items: center; gap: 8px; padding: 16px 14px 8px;
+            font-size: 10px; font-weight: 700; letter-spacing: 0.9px; text-transform: uppercase;
+            color: ${theme.textFaint};
+          }
+
+          /* ---- Type ---- */
           .label { font-size: 12px; font-weight: 500; color: ${theme.textMuted}; margin-bottom: 6px; display: block; }
-          .stat-value { font-size: 24px; font-weight: 700; color: ${theme.text}; }
-          .stat-label { font-size: 11px; font-weight: 600; color: ${theme.textMuted}; text-transform: uppercase; letter-spacing: 0.5px; }
-          .table-header { font-size: 11px; font-weight: 600; color: ${theme.textMuted}; text-transform: uppercase; letter-spacing: 0.5px; padding: 12px 16px; background: ${darkMode ? '#0f0f0f' : '#f8fafc'}; border-bottom: 1px solid ${theme.cardBorder}; }
+          .stat-value { font-size: 25px; font-weight: 700; color: ${theme.text}; letter-spacing: -0.5px; font-variant-numeric: tabular-nums; }
+          .stat-label { font-size: 10.5px; font-weight: 600; color: ${theme.textFaint}; text-transform: uppercase; letter-spacing: 0.7px; }
+          .eyebrow {
+            display: inline-flex; align-items: center; gap: 7px; padding: 5px 12px;
+            border-radius: 999px; font-size: 10.5px; font-weight: 700; letter-spacing: 0.9px;
+            text-transform: uppercase; color: ${darkMode ? '#c4b5fd' : '#6d28d9'};
+            background: ${theme.primarySoft}; border: 1px solid ${darkMode ? 'rgba(139,92,246,0.26)' : 'rgba(139,92,246,0.2)'};
+          }
+
+          /* ---- Tables ---- */
+          .table-header { font-size: 10.5px; font-weight: 600; color: ${theme.textFaint}; text-transform: uppercase; letter-spacing: 0.7px; padding: 13px 16px; background: ${darkMode ? 'rgba(255,255,255,0.02)' : '#faf9fe'}; border-bottom: 1px solid ${theme.cardBorder}; }
           .table-row { padding: 14px 16px; border-bottom: 1px solid ${theme.cardBorder}; cursor: pointer; transition: background 0.15s; }
           .table-row:hover { background: ${theme.hoverBg}; }
           .table-row:last-child { border-bottom: none; }
-          .badge { font-size: 11px; font-weight: 600; padding: 4px 10px; border-radius: 6px; }
-          .scrollbar::-webkit-scrollbar { width: 6px; }
-          .scrollbar::-webkit-scrollbar-thumb { background: ${darkMode ? '#333' : '#ddd'}; border-radius: 3px; }
+
+          /* ---- Badges ---- */
+          .badge { display: inline-flex; align-items: center; gap: 5px; font-size: 10.5px; font-weight: 600; padding: 4px 11px; border-radius: 999px; letter-spacing: 0.2px; }
+          .chip {
+            display: inline-flex; align-items: center; gap: 5px; padding: 4px 11px; border-radius: 999px;
+            font-size: 11px; font-weight: 500; color: ${theme.textMuted};
+            background: ${darkMode ? 'rgba(255,255,255,0.045)' : 'rgba(20,17,31,0.045)'};
+            border: 1px solid ${theme.cardBorder};
+          }
+          .chip-live { color: ${theme.accent}; background: ${theme.accentSoft}; border-color: ${darkMode ? 'rgba(34,211,165,0.3)' : 'rgba(34,211,165,0.28)'}; }
+
+          /* ---- Scrollbar ---- */
+          .scrollbar::-webkit-scrollbar { width: 8px; height: 8px; }
+          .scrollbar::-webkit-scrollbar-track { background: transparent; }
+          .scrollbar::-webkit-scrollbar-thumb { background: ${darkMode ? '#2a2440' : '#ded9ee'}; border-radius: 999px; border: 2px solid transparent; background-clip: padding-box; }
+          .scrollbar::-webkit-scrollbar-thumb:hover { background: ${darkMode ? '#3b3358' : '#c9c2e3'}; background-clip: padding-box; }
+
+          /* ---- Motion ---- */
           @keyframes spin { to { transform: rotate(360deg); } }
           @keyframes pulse-warning { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+          @keyframes pulse-dot { 0%, 100% { box-shadow: 0 0 0 0 ${theme.accent}55; } 70% { box-shadow: 0 0 0 6px transparent; } }
           .pulse-warn { animation: pulse-warning 1.5s ease-in-out infinite; }
+          .pulse-dot { animation: pulse-dot 2s ease-out infinite; }
           .progress-bar-animate { transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1); }
+          @media (prefers-reduced-motion: reduce) {
+            * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+          }
         `}</style>
 
         <div className="flex h-screen">
           {/* Sidebar */}
-          <aside style={{ width: 240, background: theme.card, borderRight: `1px solid ${theme.cardBorder}` }} className="flex flex-col">
-            <div style={{ padding: 20, borderBottom: `1px solid ${theme.cardBorder}` }}>
+          <aside style={{
+            width: 244,
+            background: darkMode
+              ? 'linear-gradient(180deg, rgba(24,20,40,0.86) 0%, rgba(10,9,17,0.92) 100%)'
+              : 'rgba(255,255,255,0.86)',
+            backdropFilter: 'blur(14px)',
+            borderRight: `1px solid ${theme.cardBorder}`,
+          }} className="flex flex-col">
+            <div style={{ padding: '20px 18px', borderBottom: `1px solid ${theme.cardBorder}` }}>
               <div className="flex items-center gap-3">
-                <div style={{ width: 36, height: 36, borderRadius: 10, background: 'linear-gradient(135deg, #6366f1, #8b5cf6)', position: 'relative', overflow: 'hidden' }}>
-                  <div style={{ position: 'absolute', width: 22, height: 22, border: '2px solid rgba(255,255,255,0.9)', borderRadius: '50%', top: '50%', left: '50%', transform: 'translate(-50%, -50%)' }}></div>
-                  <div style={{ position: 'absolute', width: 10, height: 10, background: 'rgba(255,255,255,0.9)', borderRadius: '50%', top: 6, right: 6 }}></div>
+                <div style={{ width: 38, height: 38, borderRadius: 12, background: theme.primaryGrad, position: 'relative', overflow: 'hidden', boxShadow: '0 4px 16px rgba(124,58,237,0.45), inset 0 1px 0 rgba(255,255,255,0.22)' }}>
+                  <div style={{ position: 'absolute', width: 22, height: 22, border: '2px solid rgba(255,255,255,0.92)', borderRadius: '50%', top: '50%', left: '50%', transform: 'translate(-50%, -50%)' }}></div>
+                  <div style={{ position: 'absolute', width: 10, height: 10, background: 'rgba(255,255,255,0.95)', borderRadius: '50%', top: 6, right: 6 }}></div>
                 </div>
                 <div>
-                  <div style={{ fontSize: 16, fontWeight: 600, color: theme.text }}>Ellipse</div>
-                  <div style={{ fontSize: 11, color: theme.textFaint }}>Trading Journal</div>
+                  <div style={{ fontSize: 16.5, fontWeight: 700, color: theme.text, letterSpacing: '-0.2px' }}>Ellipse</div>
+                  <div style={{ fontSize: 10.5, color: theme.textFaint, letterSpacing: '0.6px', textTransform: 'uppercase', fontWeight: 600 }}>Trading Journal</div>
                 </div>
               </div>
             </div>
 
-            <nav style={{ flex: 1, padding: 12 }}>
+            <nav style={{ flex: 1, padding: '12px 12px', display: 'flex', flexDirection: 'column', gap: 2 }}>
               {[
                 { id: 'dashboard', label: 'Dashboard', icon: BarChart3 },
                 { id: 'challenges', label: 'Challenges', icon: Trophy },
@@ -1068,9 +1207,9 @@ export default function TradingJournal() {
                 { id: 'calendar', label: 'Calendar', icon: Calendar },
               ].map(item => (
                 <div key={item.id} onClick={() => setActiveTab(item.id)} className={`nav-item ${activeTab === item.id ? 'active' : ''}`}>
-                  <item.icon size={18} />{item.label}
+                  <item.icon size={17} />{item.label}
                   {item.id === 'challenges' && challenges.filter(c => c.status === 'active').length > 0 && (
-                    <span style={{ marginLeft: 'auto', fontSize: 10, padding: '2px 7px', borderRadius: 10, background: activeTab === 'challenges' ? 'rgba(255,255,255,0.2)' : '#6366f1', color: 'white', fontWeight: 600 }}>
+                    <span style={{ marginLeft: 'auto', fontSize: 10, padding: '2px 8px', borderRadius: 999, background: theme.primarySoft, border: `1px solid ${darkMode ? 'rgba(139,92,246,0.35)' : 'rgba(139,92,246,0.25)'}`, color: darkMode ? '#c4b5fd' : '#6d28d9', fontWeight: 700 }}>
                       {challenges.filter(c => c.status === 'active').length}
                     </span>
                   )}
@@ -1078,13 +1217,13 @@ export default function TradingJournal() {
               ))}
 
               {/* Crypto section */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '14px 16px 6px', fontSize: 10, fontWeight: 700, letterSpacing: '0.8px', textTransform: 'uppercase', color: theme.textFaint }}>
-                <span style={{ flex: 1, height: 1, background: theme.cardBorder }}></span>Crypto<span style={{ flex: 1, height: 1, background: theme.cardBorder }}></span>
+              <div className="nav-section">
+                Crypto<span style={{ flex: 1, height: 1, background: theme.cardBorder }}></span>
               </div>
               <div onClick={() => setActiveTab('crypto')} className={`nav-item ${activeTab === 'crypto' ? 'active' : ''}`}>
-                <Coins size={18} />OKX Trading
+                <Coins size={17} />OKX Trading
                 {cryptoChallenges.filter(c => c.status === 'active').length > 0 && (
-                  <span style={{ marginLeft: 'auto', fontSize: 10, padding: '2px 7px', borderRadius: 10, background: activeTab === 'crypto' ? 'rgba(255,255,255,0.2)' : '#f59e0b', color: 'white', fontWeight: 600 }}>
+                  <span style={{ marginLeft: 'auto', fontSize: 10, padding: '2px 8px', borderRadius: 999, background: 'rgba(245,158,11,0.16)', border: '1px solid rgba(245,158,11,0.32)', color: '#fbbf24', fontWeight: 700 }}>
                     {cryptoChallenges.filter(c => c.status === 'active').length}
                   </span>
                 )}
@@ -1092,19 +1231,32 @@ export default function TradingJournal() {
             </nav>
 
             <div style={{ padding: 12, borderTop: `1px solid ${theme.cardBorder}` }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 16px', marginBottom: 8, fontSize: 12, color: synced ? '#10b981' : '#ef4444' }}>
-                {loading ? <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} /> : synced ? <Cloud size={14} /> : <CloudOff size={14} />}
-                {loading ? 'Syncing...' : synced ? 'Synced to cloud' : 'Offline'}
+              <div
+                className={synced && !loading ? 'chip chip-live' : 'chip'}
+                style={{ width: '100%', justifyContent: 'center', marginBottom: 10, padding: '7px 12px', color: loading ? theme.textMuted : synced ? theme.accent : theme.neg }}
+              >
+                {loading
+                  ? <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} />
+                  : synced
+                    ? <span className="pulse-dot" style={{ width: 6, height: 6, borderRadius: 999, background: theme.accent, display: 'inline-block' }}></span>
+                    : <CloudOff size={13} />}
+                {loading ? 'Syncing…' : synced ? 'Synced to cloud' : 'Offline'}
               </div>
-              
-              <div className="card" style={{ padding: 16 }}>
-                <div className="stat-label">Today's P&L</div>
-                <div className="stat-value" style={{ color: todayPnl >= 0 ? '#10b981' : '#ef4444', marginTop: 4 }}>
-                  {todayPnl >= 0 ? '+' : ''}{todayPnl.toFixed(2)}
-                </div>
-                <div style={{ marginTop: 8, display: 'flex', gap: 12, fontSize: 12, color: theme.textMuted }}>
-                  <span className="flex items-center gap-1"><span style={{ width: 6, height: 6, borderRadius: 3, background: '#10b981' }}></span>{todayWins}W</span>
-                  <span className="flex items-center gap-1"><span style={{ width: 6, height: 6, borderRadius: 3, background: '#ef4444' }}></span>{todayLosses}L</span>
+
+              <div className="card" style={{ padding: 16, position: 'relative', overflow: 'hidden' }}>
+                <div style={{
+                  position: 'absolute', inset: 0, pointerEvents: 'none',
+                  background: `radial-gradient(340px 120px at 0% 0%, ${todayPnl >= 0 ? 'rgba(34,211,165,0.11)' : 'rgba(244,85,122,0.11)'}, transparent 70%)`,
+                }}></div>
+                <div style={{ position: 'relative' }}>
+                  <div className="stat-label">Today&apos;s P&amp;L</div>
+                  <div className="stat-value" style={{ color: todayPnl >= 0 ? theme.pos : theme.neg, marginTop: 5 }}>
+                    {todayPnl >= 0 ? '+' : ''}{todayPnl.toFixed(2)}
+                  </div>
+                  <div style={{ marginTop: 10, display: 'flex', gap: 14, fontSize: 11.5, color: theme.textMuted, fontWeight: 500 }}>
+                    <span className="flex items-center gap-1.5"><span style={{ width: 6, height: 6, borderRadius: 999, background: theme.pos }}></span>{todayWins}W</span>
+                    <span className="flex items-center gap-1.5"><span style={{ width: 6, height: 6, borderRadius: 999, background: theme.neg }}></span>{todayLosses}L</span>
+                  </div>
                 </div>
               </div>
             </div>
@@ -1112,10 +1264,15 @@ export default function TradingJournal() {
 
           {/* Main */}
           <main className="flex-1 overflow-hidden flex flex-col">
-            <header style={{ background: theme.card, borderBottom: `1px solid ${theme.cardBorder}`, padding: '16px 24px' }}>
-              <div className="flex items-center justify-between">
+            <header style={{
+              background: darkMode ? 'rgba(16,14,26,0.72)' : 'rgba(255,255,255,0.78)',
+              backdropFilter: 'blur(14px)',
+              borderBottom: `1px solid ${theme.cardBorder}`,
+              padding: '18px 28px',
+            }}>
+              <div className="flex items-center justify-between gap-4">
                 <div>
-                  <h1 style={{ fontSize: 18, fontWeight: 600, color: theme.text }}>
+                  <h1 style={{ fontSize: 21, fontWeight: 700, color: theme.text, letterSpacing: '-0.4px' }}>
                     {activeTab === 'dashboard' && 'Dashboard'}
                     {activeTab === 'challenges' && 'Prop Firm Challenges'}
                     {activeTab === 'simulator' && 'Monte Carlo Simulation'}
@@ -1126,7 +1283,7 @@ export default function TradingJournal() {
                     {activeTab === 'calendar' && 'Calendar'}
                     {activeTab === 'crypto' && 'Crypto — OKX'}
                   </h1>
-                  <p style={{ fontSize: 13, color: theme.textMuted, marginTop: 2 }}>
+                  <p style={{ fontSize: 13, color: theme.textMuted, marginTop: 4 }}>
                     {activeTab === 'dashboard' && 'Performance metrics and insights'}
                     {activeTab === 'challenges' && 'Track challenge phases, drawdown limits & profit targets'}
                     {activeTab === 'simulator' && 'Project challenge outcomes from your trade history'}
@@ -1139,14 +1296,14 @@ export default function TradingJournal() {
                   </p>
                 </div>
                 <div className="flex items-center gap-3">
-                  <button onClick={() => setDarkMode(!darkMode)} style={{ padding: 10, borderRadius: 10, border: `1px solid ${theme.cardBorder}`, background: theme.card, cursor: 'pointer' }}>
-                    {darkMode ? <Sun size={18} style={{ color: theme.textMuted }} /> : <Moon size={18} style={{ color: theme.textMuted }} />}
+                  <button onClick={() => setDarkMode(!darkMode)} className="icon-btn" title={darkMode ? 'Switch to light mode' : 'Switch to dark mode'}>
+                    {darkMode ? <Sun size={18} /> : <Moon size={18} />}
                   </button>
-                  
+
                   {activeTab === 'history' && (
                     <>
-                      <button onClick={() => setShowImport(true)} style={{ padding: 10, borderRadius: 10, border: `1px solid ${theme.cardBorder}`, background: theme.card, cursor: 'pointer' }} title="Import trades">
-                        <Upload size={18} style={{ color: theme.textMuted }} />
+                      <button onClick={() => setShowImport(true)} className="icon-btn" title="Import trades">
+                        <Upload size={18} />
                       </button>
                       <button onClick={() => setShowNewTrade(true)} className="btn-primary flex items-center gap-2"><Plus size={16} />Log Trade</button>
                     </>
@@ -1379,7 +1536,7 @@ function ChallengeCard({ challenge, trades, onSelect, onUpdate, onDelete, compac
   const isTotalCritical = totalDDUsed >= 90;
 
   const statusColors = {
-    active: { bg: 'rgba(99,102,241,0.1)', text: '#6366f1', label: 'Active' },
+    active: { bg: 'rgba(139,92,246,0.1)', text: '#8b5cf6', label: 'Active' },
     passed: { bg: 'rgba(16,185,129,0.1)', text: '#10b981', label: 'Passed' },
     failed: { bg: 'rgba(239,68,68,0.1)', text: '#ef4444', label: 'Failed' },
     funded: { bg: 'rgba(245,158,11,0.1)', text: '#f59e0b', label: 'Funded' }
@@ -1422,7 +1579,7 @@ function ChallengeCard({ challenge, trades, onSelect, onUpdate, onDelete, compac
       {/* Header */}
       <div style={{ padding: '18px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: `1px solid ${theme.cardBorder}` }}>
         <div className="flex items-center gap-3">
-          <div style={{ width: 42, height: 42, borderRadius: 10, background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ width: 42, height: 42, borderRadius: 10, background: 'linear-gradient(135deg, #7c3aed 0%, #a855f7 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <Shield size={20} style={{ color: 'white' }} />
           </div>
           <div>
@@ -1506,7 +1663,7 @@ function ChallengeCard({ challenge, trades, onSelect, onUpdate, onDelete, compac
                 </span>
               </div>
               <div style={{ height: 8, borderRadius: 4, background: theme.hoverBg, overflow: 'hidden' }}>
-                <div className="progress-bar-animate" style={{ height: '100%', borderRadius: 4, width: `${Math.max(profitProgress, 0)}%`, background: profitPct >= profitTargetPct ? 'linear-gradient(90deg, #10b981, #34d399)' : 'linear-gradient(90deg, #6366f1, #8b5cf6)' }} />
+                <div className="progress-bar-animate" style={{ height: '100%', borderRadius: 4, width: `${Math.max(profitProgress, 0)}%`, background: profitPct >= profitTargetPct ? 'linear-gradient(90deg, #10b981, #34d399)' : 'linear-gradient(90deg, #7c3aed, #a855f7)' }} />
               </div>
             </div>
           )}
@@ -1814,10 +1971,10 @@ function NewChallengeModal({ onClose, onSave, accounts }) {
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
                 {Object.entries(PROP_FIRM_PRESETS).map(([key, config]) => (
                   <button key={key} onClick={() => handlePresetChange(key)} style={{
-                    padding: 14, borderRadius: 10, border: `1px solid ${selectedPreset === key ? '#6366f1' : theme.cardBorder}`,
-                    background: selectedPreset === key ? 'rgba(99,102,241,0.1)' : 'transparent', cursor: 'pointer', textAlign: 'center'
+                    padding: 14, borderRadius: 10, border: `1px solid ${selectedPreset === key ? '#8b5cf6' : theme.cardBorder}`,
+                    background: selectedPreset === key ? 'rgba(139,92,246,0.1)' : 'transparent', cursor: 'pointer', textAlign: 'center'
                   }}>
-                    <div style={{ fontSize: 14, fontWeight: 500, color: selectedPreset === key ? '#6366f1' : theme.text }}>{config.name}</div>
+                    <div style={{ fontSize: 14, fontWeight: 500, color: selectedPreset === key ? '#8b5cf6' : theme.text }}>{config.name}</div>
                     <div style={{ fontSize: 11, color: theme.textFaint, marginTop: 2 }}>{config.phases.length} phases</div>
                   </button>
                 ))}
@@ -1868,7 +2025,7 @@ function NewChallengeModal({ onClose, onSave, accounts }) {
             {challenge.phases.map((phase, idx) => (
               <div key={idx} style={{ padding: 16, borderRadius: 10, border: `1px solid ${theme.cardBorder}` }}>
                 <div className="flex items-center gap-2" style={{ marginBottom: 12 }}>
-                  <div style={{ width: 24, height: 24, borderRadius: 6, background: 'linear-gradient(135deg, #6366f1, #8b5cf6)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 600, color: 'white' }}>{idx + 1}</div>
+                  <div style={{ width: 24, height: 24, borderRadius: 6, background: 'linear-gradient(135deg, #7c3aed, #a855f7)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 600, color: 'white' }}>{idx + 1}</div>
                   <input value={phase.name} onChange={(e) => updatePhase(idx, 'name', e.target.value)} className="input input-sm" style={{ fontWeight: 500 }} />
                 </div>
 
@@ -2043,7 +2200,7 @@ function ImportModal({ onClose, onImport, accounts }) {
           <label className="label">Platform</label>
           <div className="flex gap-2">
             {['MT5', 'cTrader'].map(p => (
-              <button key={p} onClick={() => setPlatform(p)} style={{ flex: 1, padding: 12, borderRadius: 10, fontSize: 14, fontWeight: 500, border: `1px solid ${platform === p ? '#6366f1' : theme.cardBorder}`, background: platform === p ? 'rgba(99,102,241,0.1)' : 'transparent', color: platform === p ? '#6366f1' : theme.textMuted, cursor: 'pointer' }}>{p}</button>
+              <button key={p} onClick={() => setPlatform(p)} style={{ flex: 1, padding: 12, borderRadius: 10, fontSize: 14, fontWeight: 500, border: `1px solid ${platform === p ? '#8b5cf6' : theme.cardBorder}`, background: platform === p ? 'rgba(139,92,246,0.1)' : 'transparent', color: platform === p ? '#8b5cf6' : theme.textMuted, cursor: 'pointer' }}>{p}</button>
             ))}
           </div>
         </div>
@@ -2061,7 +2218,7 @@ function ImportModal({ onClose, onImport, accounts }) {
                     <div style={{ flex: 1 }}>
                       <div className="flex items-center gap-2">
                         <span style={{ fontSize: 13, fontWeight: 600, color: theme.text }}>{phase}</span>
-                        <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, background: 'rgba(99,102,241,0.1)', color: '#6366f1' }}>{phaseTrades.length} trades</span>
+                        <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, background: 'rgba(139,92,246,0.1)', color: '#8b5cf6' }}>{phaseTrades.length} trades</span>
                       </div>
                       <div style={{ fontSize: 12, color: phasePnl >= 0 ? '#10b981' : '#ef4444', marginTop: 2 }}>
                         P&L: {phasePnl >= 0 ? '+' : ''}${phasePnl.toFixed(2)}
@@ -2096,10 +2253,10 @@ function ImportModal({ onClose, onImport, accounts }) {
 
         {/* Phase Detection Banner */}
         {phaseSplits.length > 0 && (
-          <div style={{ padding: 14, borderRadius: 10, background: 'rgba(99,102,241,0.08)', border: '1px solid rgba(99,102,241,0.2)', display: 'flex', alignItems: 'flex-start', gap: 10 }}>
-            <Flag size={18} style={{ color: '#6366f1', marginTop: 2, flexShrink: 0 }} />
+          <div style={{ padding: 14, borderRadius: 10, background: 'rgba(139,92,246,0.08)', border: '1px solid rgba(139,92,246,0.2)', display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+            <Flag size={18} style={{ color: '#8b5cf6', marginTop: 2, flexShrink: 0 }} />
             <div>
-              <div style={{ fontSize: 13, fontWeight: 600, color: '#6366f1' }}>Phase transition detected</div>
+              <div style={{ fontSize: 13, fontWeight: 600, color: '#8b5cf6' }}>Phase transition detected</div>
               <div style={{ fontSize: 12, color: theme.textMuted, marginTop: 4 }}>
                 {phaseSplits.map((s, i) => (
                   <div key={i}>→ <strong>{s.phaseName}</strong> starting {s.splitDate} ({s.note})</div>
@@ -2131,7 +2288,7 @@ function ImportModal({ onClose, onImport, accounts }) {
                   return (
                     <div key={phase}>
                       <div style={{ padding: '8px 10px', background: theme.hoverBg, borderBottom: `1px solid ${theme.cardBorder}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <span style={{ fontSize: 12, fontWeight: 600, color: '#6366f1' }}>{phase} ({phaseTrades.length} trades)</span>
+                        <span style={{ fontSize: 12, fontWeight: 600, color: '#8b5cf6' }}>{phase} ({phaseTrades.length} trades)</span>
                         <span style={{ fontSize: 11, fontWeight: 600, color: phasePnl >= 0 ? '#10b981' : '#ef4444' }}>{phasePnl >= 0 ? '+' : ''}${phasePnl.toFixed(2)}</span>
                       </div>
                       {phaseTrades.map((t, i) => (
@@ -2347,7 +2504,7 @@ function JournalIdeasView({ entries, onAdd, onUpdate, onDelete, autoNew }) {
                     {entry.confluences && entry.confluences.length > 0 && (
                       <div className="flex flex-wrap gap-2" style={{ marginBottom: 10 }}>
                         {entry.confluences.map((c, i) => (
-                          <span key={i} style={{ fontSize: 11, padding: '3px 10px', borderRadius: 6, background: 'rgba(99,102,241,0.1)', color: '#6366f1', fontWeight: 500 }}>{c}</span>
+                          <span key={i} style={{ fontSize: 11, padding: '3px 10px', borderRadius: 6, background: 'rgba(139,92,246,0.1)', color: '#8b5cf6', fontWeight: 500 }}>{c}</span>
                         ))}
                       </div>
                     )}
@@ -2424,7 +2581,7 @@ function JournalEntryForm({ entry, onSave, onCancel }) {
             <label className="label">Timeframe</label>
             <div className="flex gap-2">
               {TIMEFRAMES.map(tf => (
-                <button key={tf} onClick={() => setForm({ ...form, timeframe: tf })} style={{ flex: 1, padding: 10, borderRadius: 8, fontSize: 12, fontWeight: 500, border: `1px solid ${form.timeframe === tf ? '#6366f1' : theme.cardBorder}`, background: form.timeframe === tf ? 'rgba(99,102,241,0.1)' : 'transparent', color: form.timeframe === tf ? '#6366f1' : theme.textMuted, cursor: 'pointer' }}>{tf}</button>
+                <button key={tf} onClick={() => setForm({ ...form, timeframe: tf })} style={{ flex: 1, padding: 10, borderRadius: 8, fontSize: 12, fontWeight: 500, border: `1px solid ${form.timeframe === tf ? '#8b5cf6' : theme.cardBorder}`, background: form.timeframe === tf ? 'rgba(139,92,246,0.1)' : 'transparent', color: form.timeframe === tf ? '#8b5cf6' : theme.textMuted, cursor: 'pointer' }}>{tf}</button>
               ))}
             </div>
           </div>
@@ -2457,7 +2614,7 @@ function JournalEntryForm({ entry, onSave, onCancel }) {
           <label className="label">Confluences</label>
           <div className="flex flex-wrap gap-2">
             {CONFLUENCE_OPTIONS.map(c => (
-              <button key={c} onClick={() => toggleConfluence(c)} style={{ padding: '7px 14px', borderRadius: 8, fontSize: 12, fontWeight: 500, border: 'none', cursor: 'pointer', background: form.confluences.includes(c) ? '#6366f1' : theme.hoverBg, color: form.confluences.includes(c) ? 'white' : theme.textMuted, transition: 'all 0.15s' }}>{c}</button>
+              <button key={c} onClick={() => toggleConfluence(c)} style={{ padding: '7px 14px', borderRadius: 8, fontSize: 12, fontWeight: 500, border: 'none', cursor: 'pointer', background: form.confluences.includes(c) ? '#8b5cf6' : theme.hoverBg, color: form.confluences.includes(c) ? 'white' : theme.textMuted, transition: 'all 0.15s' }}>{c}</button>
             ))}
           </div>
         </div>
@@ -2492,7 +2649,7 @@ function JournalEntryForm({ entry, onSave, onCancel }) {
 }
 
 // ==================== NEWS / ECONOMIC CALENDAR VIEW ====================
-const IMPACT_COLORS = { High: '#ef4444', Medium: '#f59e0b', Low: '#6366f1', Holiday: '#64748b' };
+const IMPACT_COLORS = { High: '#ef4444', Medium: '#f59e0b', Low: '#8b5cf6', Holiday: '#64748b' };
 const NEWS_CURRENCIES = ['All', 'USD', 'EUR', 'GBP', 'JPY', 'AUD', 'CAD', 'CHF', 'NZD'];
 
 function NewsCalendarView() {
@@ -2681,7 +2838,7 @@ function NewsCalendarView() {
                 ? selectedCurrencies.size === 0
                 : groupCcys.length > 0 && groupCcys.every(c => selectedCurrencies.has(c)) && selectedCurrencies.size === groupCcys.length;
               return (
-                <button key={group} onClick={() => applyGroup(group)} style={{ padding: '4px 10px', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: 11, fontWeight: 500, background: isActive ? '#6366f1' : 'transparent', color: isActive ? 'white' : theme.textMuted }}>
+                <button key={group} onClick={() => applyGroup(group)} style={{ padding: '4px 10px', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: 11, fontWeight: 500, background: isActive ? '#8b5cf6' : 'transparent', color: isActive ? 'white' : theme.textMuted }}>
                   {group}
                 </button>
               );
@@ -2695,7 +2852,7 @@ function NewsCalendarView() {
           {NEWS_CURRENCIES.filter(c => c !== 'All').map(ccy => {
             const isSelected = selectedCurrencies.has(ccy);
             return (
-              <button key={ccy} onClick={() => toggleCurrency(ccy)} style={{ padding: '4px 10px', borderRadius: 6, fontSize: 11, fontWeight: 600, border: `1px solid ${isSelected ? '#6366f1' : theme.cardBorder}`, background: isSelected ? 'rgba(99,102,241,0.15)' : 'transparent', color: isSelected ? '#6366f1' : theme.textMuted, cursor: 'pointer', transition: 'all 0.15s' }}>
+              <button key={ccy} onClick={() => toggleCurrency(ccy)} style={{ padding: '4px 10px', borderRadius: 6, fontSize: 11, fontWeight: 600, border: `1px solid ${isSelected ? '#8b5cf6' : theme.cardBorder}`, background: isSelected ? 'rgba(139,92,246,0.15)' : 'transparent', color: isSelected ? '#8b5cf6' : theme.textMuted, cursor: 'pointer', transition: 'all 0.15s' }}>
                 {ccy}
               </button>
             );
@@ -2740,7 +2897,7 @@ function NewsCalendarView() {
         return (
           <div key={dateKey}>
             <div className="flex items-center gap-3" style={{ marginBottom: 8 }}>
-              <span style={{ fontSize: 12, fontWeight: 600, color: isToday ? '#6366f1' : theme.textMuted, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+              <span style={{ fontSize: 12, fontWeight: 600, color: isToday ? '#8b5cf6' : theme.textMuted, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
                 {isToday ? '📍 Today — ' : ''}{new Date(dateKey + 'T00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}
               </span>
               {highCount > 0 && <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 4, background: 'rgba(239,68,68,0.1)', color: '#ef4444', fontWeight: 600 }}>{highCount} high impact</span>}
@@ -2869,10 +3026,10 @@ function JournalView({ trades, accounts, filterAccount, setFilterAccount, onSele
             const chartImg = getTradingViewImageUrl(trade.chartLink) || trade.chartImage;
             const isSelected = selectedIds.has(trade.id);
             return (
-              <div key={trade.id} onClick={() => selectMode ? toggleSelect(trade.id, { stopPropagation: () => {} }) : onSelectTrade(trade)} className="table-row" style={{ display: 'grid', gridTemplateColumns: selectMode ? '36px 1.5fr 80px 100px 80px 100px' : '1.5fr 80px 100px 80px 100px 50px', gap: 12, alignItems: 'center', background: isSelected ? (theme.dark ? 'rgba(99,102,241,0.15)' : 'rgba(99,102,241,0.08)') : undefined }}>
+              <div key={trade.id} onClick={() => selectMode ? toggleSelect(trade.id, { stopPropagation: () => {} }) : onSelectTrade(trade)} className="table-row" style={{ display: 'grid', gridTemplateColumns: selectMode ? '36px 1.5fr 80px 100px 80px 100px' : '1.5fr 80px 100px 80px 100px 50px', gap: 12, alignItems: 'center', background: isSelected ? (theme.dark ? 'rgba(139,92,246,0.15)' : 'rgba(139,92,246,0.08)') : undefined }}>
                 {selectMode && (
                   <div onClick={(e) => toggleSelect(trade.id, e)} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
-                    <div style={{ width: 20, height: 20, borderRadius: 6, border: `2px solid ${isSelected ? '#6366f1' : theme.cardBorder}`, background: isSelected ? '#6366f1' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.15s' }}>
+                    <div style={{ width: 20, height: 20, borderRadius: 6, border: `2px solid ${isSelected ? '#8b5cf6' : theme.cardBorder}`, background: isSelected ? '#8b5cf6' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.15s' }}>
                       {isSelected && <CheckCircle size={14} style={{ color: 'white' }} />}
                     </div>
                   </div>
@@ -2905,11 +3062,11 @@ function JournalView({ trades, accounts, filterAccount, setFilterAccount, onSele
             const chartImg = getTradingViewImageUrl(trade.chartLink) || trade.chartImage;
             const isSelected = selectedIds.has(trade.id);
             return (
-              <div key={trade.id} onClick={() => selectMode ? toggleSelect(trade.id, { stopPropagation: () => {} }) : onSelectTrade(trade)} className="card" style={{ cursor: 'pointer', overflow: 'hidden', transition: 'transform 0.15s, box-shadow 0.15s', outline: isSelected ? '2px solid #6366f1' : 'none' }}
+              <div key={trade.id} onClick={() => selectMode ? toggleSelect(trade.id, { stopPropagation: () => {} }) : onSelectTrade(trade)} className="card" style={{ cursor: 'pointer', overflow: 'hidden', transition: 'transform 0.15s, box-shadow 0.15s', outline: isSelected ? '2px solid #8b5cf6' : 'none' }}
                 onMouseEnter={(e) => { if (!selectMode) { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.boxShadow = '0 8px 24px rgba(0,0,0,0.12)'; } }}
                 onMouseLeave={(e) => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = 'none'; }}>
                 {selectMode && (
-                  <div style={{ position: 'absolute', top: 8, left: 8, zIndex: 2, width: 22, height: 22, borderRadius: 6, border: `2px solid ${isSelected ? '#6366f1' : 'rgba(255,255,255,0.5)'}`, background: isSelected ? '#6366f1' : 'rgba(0,0,0,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <div style={{ position: 'absolute', top: 8, left: 8, zIndex: 2, width: 22, height: 22, borderRadius: 6, border: `2px solid ${isSelected ? '#8b5cf6' : 'rgba(255,255,255,0.5)'}`, background: isSelected ? '#8b5cf6' : 'rgba(0,0,0,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                     {isSelected && <CheckCircle size={14} style={{ color: 'white' }} />}
                   </div>
                 )}
@@ -3048,7 +3205,7 @@ function DashboardView({ trades, accounts, challenges, selectedAccount, setSelec
         <polygon points={outerPoints.map(p => `${p.x},${p.y}`).join(' ')} fill="none" stroke={theme.cardBorder} strokeWidth="1" />
         <polygon points={outerPoints.map(p => `${center + (p.x - center) * 0.66},${center + (p.y - center) * 0.66}`).join(' ')} fill="none" stroke={theme.cardBorder} strokeWidth="1" opacity="0.5" />
         <polygon points={outerPoints.map(p => `${center + (p.x - center) * 0.33},${center + (p.y - center) * 0.33}`).join(' ')} fill="none" stroke={theme.cardBorder} strokeWidth="1" opacity="0.3" />
-        <polygon points={points.map(p => `${p.x},${p.y}`).join(' ')} fill="rgba(99,102,241,0.3)" stroke="#6366f1" strokeWidth="2" />
+        <polygon points={points.map(p => `${p.x},${p.y}`).join(' ')} fill="rgba(139,92,246,0.3)" stroke="#8b5cf6" strokeWidth="2" />
         <rect x={center - 25} y={5} width={50} height={18} rx={9} fill={theme.hoverBg} /><text x={center} y={17} textAnchor="middle" fontSize="10" fill={theme.textMuted}>Win %</text>
         <rect x={5} y={size - 15} width={55} height={18} rx={9} fill={theme.hoverBg} /><text x={32} y={size - 2} textAnchor="middle" fontSize="10" fill={theme.textMuted}>Avg win/loss</text>
         <rect x={size - 60} y={size - 15} width={55} height={18} rx={9} fill={theme.hoverBg} /><text x={size - 32} y={size - 2} textAnchor="middle" fontSize="10" fill={theme.textMuted}>Profit factor</text>
@@ -3081,20 +3238,20 @@ function DashboardView({ trades, accounts, challenges, selectedAccount, setSelec
             const progress = targetPct ? Math.min((chProfitPct / targetPct) * 100, 100) : 0;
             
             return (
-              <div key={ch.id} className="card" style={{ padding: 16, borderLeft: '3px solid #6366f1' }}>
+              <div key={ch.id} className="card" style={{ padding: 16, borderLeft: '3px solid #8b5cf6' }}>
                 <div className="flex items-center justify-between" style={{ marginBottom: 8 }}>
                   <div>
                     <div style={{ fontSize: 13, fontWeight: 600, color: theme.text }}>{ch.name}</div>
                     <div style={{ fontSize: 11, color: theme.textFaint }}>{phase?.name}</div>
                   </div>
-                  <Shield size={16} style={{ color: '#6366f1' }} />
+                  <Shield size={16} style={{ color: '#8b5cf6' }} />
                 </div>
                 <div className="flex items-center justify-between" style={{ marginBottom: 6 }}>
                   <span style={{ fontSize: 16, fontWeight: 700, color: chPnl >= 0 ? '#10b981' : '#ef4444' }}>{chProfitPct.toFixed(2)}%</span>
                   <span style={{ fontSize: 12, color: theme.textFaint }}>/ {targetPct}%</span>
                 </div>
                 <div style={{ height: 6, borderRadius: 3, background: theme.hoverBg, overflow: 'hidden' }}>
-                  <div className="progress-bar-animate" style={{ height: '100%', borderRadius: 3, width: `${Math.max(progress, 0)}%`, background: progress >= 100 ? '#10b981' : '#6366f1' }} />
+                  <div className="progress-bar-animate" style={{ height: '100%', borderRadius: 3, width: `${Math.max(progress, 0)}%`, background: progress >= 100 ? '#10b981' : '#8b5cf6' }} />
                 </div>
               </div>
             );
@@ -3269,7 +3426,7 @@ function AccountsView({ accounts, challenges, trades, onUpdate, onDelete }) {
     });
 
     const statusColors = {
-      active: { bg: 'rgba(99,102,241,0.1)', text: '#6366f1', label: 'Active' },
+      active: { bg: 'rgba(139,92,246,0.1)', text: '#8b5cf6', label: 'Active' },
       passed: { bg: 'rgba(16,185,129,0.1)', text: '#10b981', label: 'Passed' },
       failed: { bg: 'rgba(239,68,68,0.1)', text: '#ef4444', label: 'Failed' },
       funded: { bg: 'rgba(245,158,11,0.1)', text: '#f59e0b', label: 'Funded' }
@@ -3326,7 +3483,7 @@ function AccountsView({ accounts, challenges, trades, onUpdate, onDelete }) {
                   {/* Main Row */}
                   <div onClick={() => setExpandedChallenge(isExpanded ? null : ch.id)} style={{ padding: '16px 20px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between', transition: 'background 0.15s' }} onMouseEnter={e => e.currentTarget.style.background = theme.hoverBg} onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
                     <div className="flex items-center gap-4">
-                      <div style={{ width: 48, height: 48, borderRadius: 12, background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                      <div style={{ width: 48, height: 48, borderRadius: 12, background: 'linear-gradient(135deg, #7c3aed 0%, #a855f7 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                         <Shield size={22} style={{ color: 'white' }} />
                       </div>
                       <div>
@@ -3368,16 +3525,16 @@ function AccountsView({ accounts, challenges, trades, onUpdate, onDelete }) {
                         <div style={{ display: 'flex', alignItems: 'center', gap: 0, position: 'relative' }}>
                           {phaseBreakdown.map((p, idx) => {
                             const isLast = idx === phaseBreakdown.length - 1;
-                            const dotColor = p.isPast ? '#10b981' : p.isCurrent ? '#6366f1' : theme.cardBorder;
+                            const dotColor = p.isPast ? '#10b981' : p.isCurrent ? '#8b5cf6' : theme.cardBorder;
                             const lineColor = p.isPast ? '#10b981' : theme.cardBorder;
                             return (
                               <div key={idx} style={{ flex: 1, display: 'flex', alignItems: 'center' }}>
                                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', zIndex: 1 }}>
-                                  <div style={{ width: p.isCurrent ? 16 : 12, height: p.isCurrent ? 16 : 12, borderRadius: '50%', background: dotColor, border: p.isCurrent ? '3px solid rgba(99,102,241,0.3)' : 'none', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                  <div style={{ width: p.isCurrent ? 16 : 12, height: p.isCurrent ? 16 : 12, borderRadius: '50%', background: dotColor, border: p.isCurrent ? '3px solid rgba(139,92,246,0.3)' : 'none', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                                     {p.isPast && <CheckCircle size={8} style={{ color: 'white' }} />}
                                   </div>
                                   <div style={{ marginTop: 8, textAlign: 'center' }}>
-                                    <div style={{ fontSize: 12, fontWeight: p.isCurrent ? 600 : 400, color: p.isCurrent ? '#6366f1' : p.isPast ? '#10b981' : theme.textFaint }}>{p.name}</div>
+                                    <div style={{ fontSize: 12, fontWeight: p.isCurrent ? 600 : 400, color: p.isCurrent ? '#8b5cf6' : p.isPast ? '#10b981' : theme.textFaint }}>{p.name}</div>
                                     {p.profitTarget && <div style={{ fontSize: 11, color: theme.textFaint }}>{p.profitTarget}% target</div>}
                                     {!p.profitTarget && p.name?.toLowerCase().includes('funded') && <div style={{ fontSize: 11, color: '#f59e0b' }}>Live</div>}
                                   </div>
@@ -3797,7 +3954,7 @@ function SimulatorView({ trades, accounts, challenges }) {
         <div style={{ fontWeight: 600, marginBottom: 4 }}>Day {label}</div>
         <div style={{ color: '#10b981' }}>P95: {fmt$(row.lower + row.band)}</div>
         <div style={{ color: '#8b5cf6' }}>P75: {fmt$(row.p75)}</div>
-        <div style={{ color: '#6366f1' }}>Median: {fmt$(row.p50)}</div>
+        <div style={{ color: '#8b5cf6' }}>Median: {fmt$(row.p50)}</div>
         <div style={{ color: '#8b5cf6' }}>P25: {fmt$(row.p25)}</div>
         <div style={{ color: '#ef4444' }}>P5: {fmt$(row.lower)}</div>
       </div>
@@ -3810,7 +3967,7 @@ function SimulatorView({ trades, accounts, challenges }) {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
       {/* Assumptions note */}
       <div style={{ ...card, padding: 14, display: 'flex', gap: 10, alignItems: 'flex-start' }}>
-        <AlertCircle size={16} style={{ color: '#6366f1', flexShrink: 0, marginTop: 2 }} />
+        <AlertCircle size={16} style={{ color: '#8b5cf6', flexShrink: 0, marginTop: 2 }} />
         <div style={{ fontSize: 12.5, color: theme.textMuted, lineHeight: 1.5 }}>
           This resamples your historical trade P&amp;L in random order to estimate how often a challenge would pass vs. breach its limits.
           It assumes trades are independent and your edge stays constant — treat the output as a <strong style={{ color: theme.text }}>risk-of-ruin estimate, not a prediction</strong>.
@@ -3867,7 +4024,7 @@ function SimulatorView({ trades, accounts, challenges }) {
             <label style={lbl}>Enforce limits</label>
             <div style={{ display: 'flex', gap: 8 }}>
               {[['enforceTotal', 'Total DD'], ['enforceDaily', 'Daily DD']].map(([k, t]) => (
-                <button key={k} onClick={() => setCfg({ ...cfg, [k]: !cfg[k] })} style={{ flex: 1, padding: '8px 6px', borderRadius: 8, fontSize: 12, fontWeight: 500, cursor: 'pointer', border: `1px solid ${cfg[k] ? '#6366f1' : theme.inputBorder}`, background: cfg[k] ? 'rgba(99,102,241,0.12)' : theme.inputBg, color: cfg[k] ? '#6366f1' : theme.textMuted }}>{t}</button>
+                <button key={k} onClick={() => setCfg({ ...cfg, [k]: !cfg[k] })} style={{ flex: 1, padding: '8px 6px', borderRadius: 8, fontSize: 12, fontWeight: 500, cursor: 'pointer', border: `1px solid ${cfg[k] ? '#8b5cf6' : theme.inputBorder}`, background: cfg[k] ? 'rgba(139,92,246,0.12)' : theme.inputBg, color: cfg[k] ? '#8b5cf6' : theme.textMuted }}>{t}</button>
               ))}
             </div>
           </div>
@@ -3926,8 +4083,8 @@ function SimulatorView({ trades, accounts, challenges }) {
                   <YAxis stroke={theme.textFaint} tick={{ fontSize: 11 }} tickLine={false} width={52} domain={['auto', 'auto']} tickFormatter={fmtK} />
                   <Tooltip content={<FanTip />} />
                   <Area dataKey="lower" stackId="band" stroke="none" fill="transparent" isAnimationActive={false} />
-                  <Area dataKey="band" stackId="band" stroke="none" fill="rgba(99,102,241,0.18)" isAnimationActive={false} />
-                  <Line dataKey="p50" stroke="#6366f1" strokeWidth={2} dot={false} isAnimationActive={false} />
+                  <Area dataKey="band" stackId="band" stroke="none" fill="rgba(139,92,246,0.18)" isAnimationActive={false} />
+                  <Line dataKey="p50" stroke="#8b5cf6" strokeWidth={2} dot={false} isAnimationActive={false} />
                   <ReferenceLine y={targetEq} stroke="#10b981" strokeDasharray="5 4" label={{ value: 'Target', position: 'insideTopRight', fill: '#10b981', fontSize: 11 }} />
                   <ReferenceLine y={floorEq} stroke="#ef4444" strokeDasharray="5 4" label={{ value: 'Max loss', position: 'insideBottomRight', fill: '#ef4444', fontSize: 11 }} />
                 </ComposedChart>
@@ -3968,8 +4125,14 @@ function SimulatorView({ trades, accounts, challenges }) {
 function Modal({ children, onClose, width = 420 }) {
   const theme = useTheme();
   return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: 16 }} onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="card-lg scrollbar" style={{ width: '100%', maxWidth: width, maxHeight: '90vh', overflow: 'auto' }}>{children}</div>
+    <div
+      style={{ position: 'fixed', inset: 0, background: theme.dark ? 'rgba(5,4,10,0.72)' : 'rgba(20,17,31,0.38)', backdropFilter: 'blur(6px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: 16 }}
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div
+        className="card-lg scrollbar"
+        style={{ width: '100%', maxWidth: width, maxHeight: '90vh', overflow: 'auto', boxShadow: theme.dark ? '0 24px 70px rgba(0,0,0,0.7), 0 0 0 1px rgba(139,92,246,0.14)' : '0 20px 60px rgba(60,45,110,0.22)' }}
+      >{children}</div>
     </div>
   );
 }
@@ -4060,12 +4223,12 @@ function NewTradeModal({ onClose, onSave, accounts }) {
               <label className="label" style={{ marginBottom: 12 }}>Market Structure</label>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                 {Object.entries(MARKET_STRUCTURES).map(([key, val]) => (
-                  <button key={key} onClick={() => setTrade({...trade, marketStructure: key})} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: 14, borderRadius: 10, border: `1px solid ${trade.marketStructure === key ? '#6366f1' : theme.cardBorder}`, background: trade.marketStructure === key ? 'rgba(99,102,241,0.1)' : 'transparent', cursor: 'pointer' }}>
+                  <button key={key} onClick={() => setTrade({...trade, marketStructure: key})} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: 14, borderRadius: 10, border: `1px solid ${trade.marketStructure === key ? '#8b5cf6' : theme.cardBorder}`, background: trade.marketStructure === key ? 'rgba(139,92,246,0.1)' : 'transparent', cursor: 'pointer' }}>
                     <div className="flex items-center gap-3">
                       <div style={{ width: 32, height: 32, borderRadius: 8, background: val.color + '20', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><div style={{ width: 10, height: 10, borderRadius: 5, background: val.color }}></div></div>
                       <div style={{ textAlign: 'left' }}><div style={{ fontSize: 14, fontWeight: 500, color: theme.text }}>{val.label}</div><div style={{ fontSize: 12, color: theme.textFaint }}>{val.description}</div></div>
                     </div>
-                    {trade.marketStructure === key && <CheckCircle size={20} style={{ color: '#6366f1' }} />}
+                    {trade.marketStructure === key && <CheckCircle size={20} style={{ color: '#8b5cf6' }} />}
                   </button>
                 ))}
               </div>
@@ -4073,7 +4236,7 @@ function NewTradeModal({ onClose, onSave, accounts }) {
             <div>
               <label className="label" style={{ marginBottom: 12 }}>Candle Type</label>
               <div className="flex gap-3">{Object.entries(CANDLE_TYPES).map(([key, val]) => (
-                <button key={key} onClick={() => setTrade({...trade, candleType: key})} style={{ flex: 1, padding: 14, borderRadius: 10, border: `1px solid ${trade.candleType === key ? '#6366f1' : theme.cardBorder}`, background: trade.candleType === key ? 'rgba(99,102,241,0.1)' : 'transparent', textAlign: 'left', cursor: 'pointer' }}>
+                <button key={key} onClick={() => setTrade({...trade, candleType: key})} style={{ flex: 1, padding: 14, borderRadius: 10, border: `1px solid ${trade.candleType === key ? '#8b5cf6' : theme.cardBorder}`, background: trade.candleType === key ? 'rgba(139,92,246,0.1)' : 'transparent', textAlign: 'left', cursor: 'pointer' }}>
                   <div style={{ fontSize: 14, fontWeight: 500, color: theme.text }}>{val.label}</div><div style={{ fontSize: 12, color: theme.textFaint }}>{val.description}</div>
                 </button>
               ))}</div>
@@ -4261,7 +4424,7 @@ function CryptoView({ subTab, setSubTab, trades, snapshots, challenges, live, sy
       {/* Sub-tab nav */}
       <div className="flex items-center gap-2" style={{ flexWrap: 'wrap' }}>
         {tabs.map(t => (
-          <button key={t.id} onClick={() => setSubTab(t.id)} className="flex items-center gap-2" style={{ padding: '8px 16px', borderRadius: 10, fontSize: 13, fontWeight: 500, cursor: 'pointer', border: `1px solid ${subTab === t.id ? '#6366f1' : theme.cardBorder}`, background: subTab === t.id ? 'linear-gradient(135deg, #6366f1, #8b5cf6)' : theme.card, color: subTab === t.id ? 'white' : theme.textMuted }}>
+          <button key={t.id} onClick={() => setSubTab(t.id)} className="flex items-center gap-2" style={{ padding: '8px 16px', borderRadius: 10, fontSize: 13, fontWeight: 500, cursor: 'pointer', border: `1px solid ${subTab === t.id ? '#8b5cf6' : theme.cardBorder}`, background: subTab === t.id ? 'linear-gradient(135deg, #7c3aed, #a855f7)' : theme.card, color: subTab === t.id ? 'white' : theme.textMuted }}>
             <t.icon size={15} />{t.label}
           </button>
         ))}
@@ -4337,11 +4500,11 @@ function CryptoPortfolio({ balance, positions, snapshots, syncing, onSync, fmt, 
           {curve.length > 1 ? (
             <ResponsiveContainer width="100%" height={240}>
               <AreaChart data={curve}>
-                <defs><linearGradient id="eqGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#6366f1" stopOpacity={0.4} /><stop offset="100%" stopColor="#6366f1" stopOpacity={0} /></linearGradient></defs>
+                <defs><linearGradient id="eqGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#8b5cf6" stopOpacity={0.4} /><stop offset="100%" stopColor="#8b5cf6" stopOpacity={0} /></linearGradient></defs>
                 <XAxis dataKey="label" tick={{ fontSize: 11, fill: theme.textFaint }} />
                 <YAxis tick={{ fontSize: 11, fill: theme.textFaint }} width={70} domain={['auto', 'auto']} />
                 <Tooltip contentStyle={{ background: theme.card, border: `1px solid ${theme.cardBorder}`, borderRadius: 8, fontSize: 12 }} formatter={(v) => fmt(v)} />
-                <Area type="monotone" dataKey="eq" stroke="#6366f1" strokeWidth={2} fill="url(#eqGrad)" />
+                <Area type="monotone" dataKey="eq" stroke="#8b5cf6" strokeWidth={2} fill="url(#eqGrad)" />
               </AreaChart>
             </ResponsiveContainer>
           ) : (
@@ -4437,12 +4600,12 @@ function CryptoChallengeView({ challenges, snapshots, liveEq, onOpen, onUpdate, 
               <div>
                 <div className="flex items-center gap-2">
                   <span style={{ fontSize: 17, fontWeight: 700, color: theme.text }}>{c.name}</span>
-                  <span className="badge" style={{ background: reached ? 'rgba(16,185,129,0.15)' : c.status === 'active' ? 'rgba(99,102,241,0.15)' : 'rgba(148,163,184,0.15)', color: reached ? '#10b981' : c.status === 'active' ? '#6366f1' : theme.textMuted }}>{reached ? 'TARGET HIT' : c.status.toUpperCase()}</span>
+                  <span className="badge" style={{ background: reached ? 'rgba(16,185,129,0.15)' : c.status === 'active' ? 'rgba(139,92,246,0.15)' : 'rgba(148,163,184,0.15)', color: reached ? '#10b981' : c.status === 'active' ? '#8b5cf6' : theme.textMuted }}>{reached ? 'TARGET HIT' : c.status.toUpperCase()}</span>
                 </div>
                 <div style={{ fontSize: 12, color: theme.textMuted, marginTop: 4 }}>{fmt(c.startBalance, 0)} → {fmt(c.targetBalance, 0)}{c.targetDate ? ` · by ${new Date(c.targetDate).toLocaleDateString()}` : ''}</div>
               </div>
               <div className="flex items-center gap-2">
-                <button onClick={() => onOpen && onOpen(c.id)} style={{ padding: 8, borderRadius: 8, border: `1px solid ${theme.cardBorder}`, background: theme.card, cursor: 'pointer' }} title="View analytics"><BarChart3 size={16} style={{ color: '#6366f1' }} /></button>
+                <button onClick={() => onOpen && onOpen(c.id)} style={{ padding: 8, borderRadius: 8, border: `1px solid ${theme.cardBorder}`, background: theme.card, cursor: 'pointer' }} title="View analytics"><BarChart3 size={16} style={{ color: '#8b5cf6' }} /></button>
                 {!reached && c.status === 'active' && <button onClick={() => onUpdate({ ...c, status: 'completed' })} style={{ padding: 8, borderRadius: 8, border: `1px solid ${theme.cardBorder}`, background: theme.card, cursor: 'pointer' }} title="Mark complete"><CheckCircle size={16} style={{ color: '#10b981' }} /></button>}
                 <button onClick={() => onDelete(c.id)} style={{ padding: 8, borderRadius: 8, border: `1px solid ${theme.cardBorder}`, background: theme.card, cursor: 'pointer' }} title="Delete"><Trash2 size={16} style={{ color: '#ef4444' }} /></button>
               </div>
@@ -4450,10 +4613,10 @@ function CryptoChallengeView({ challenges, snapshots, liveEq, onOpen, onUpdate, 
 
             <div className="flex items-end justify-between" style={{ marginBottom: 8 }}>
               <span style={{ fontSize: 26, fontWeight: 700, color: theme.text }}>{fmt(current)}</span>
-              <span style={{ fontSize: 14, fontWeight: 600, color: reached ? '#10b981' : '#6366f1' }}>{pct.toFixed(1)}%</span>
+              <span style={{ fontSize: 14, fontWeight: 600, color: reached ? '#10b981' : '#8b5cf6' }}>{pct.toFixed(1)}%</span>
             </div>
             <div style={{ height: 10, borderRadius: 5, background: theme.hoverBg, overflow: 'hidden', marginBottom: 14 }}>
-              <div className="progress-bar-animate" style={{ width: `${pct}%`, height: '100%', background: reached ? '#10b981' : 'linear-gradient(90deg, #6366f1, #8b5cf6)' }}></div>
+              <div className="progress-bar-animate" style={{ width: `${pct}%`, height: '100%', background: reached ? '#10b981' : 'linear-gradient(90deg, #7c3aed, #a855f7)' }}></div>
             </div>
 
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 12, marginBottom: 16 }}>
@@ -4470,7 +4633,7 @@ function CryptoChallengeView({ challenges, snapshots, liveEq, onOpen, onUpdate, 
                   <XAxis dataKey="label" tick={{ fontSize: 10, fill: theme.textFaint }} />
                   <YAxis tick={{ fontSize: 10, fill: theme.textFaint }} width={64} domain={['auto', 'auto']} />
                   <Tooltip contentStyle={{ background: theme.card, border: `1px solid ${theme.cardBorder}`, borderRadius: 8, fontSize: 12 }} formatter={(v) => fmt(v)} />
-                  <ReferenceLine y={c.targetBalance} stroke="#6366f1" strokeDasharray="5 4" label={{ value: 'Target', fontSize: 10, fill: '#6366f1', position: 'insideTopRight' }} />
+                  <ReferenceLine y={c.targetBalance} stroke="#8b5cf6" strokeDasharray="5 4" label={{ value: 'Target', fontSize: 10, fill: '#8b5cf6', position: 'insideTopRight' }} />
                   <Area type="monotone" dataKey="eq" stroke="#10b981" strokeWidth={2} fill={`url(#cg${c.id})`} />
                 </AreaChart>
               </ResponsiveContainer>
@@ -4563,12 +4726,12 @@ function CryptoAnalyticsView({ trades, fmt, theme }) {
         <div style={{ fontSize: 14, fontWeight: 600, color: theme.text, marginBottom: 14 }}>Cumulative P&L (net of fees)</div>
         <ResponsiveContainer width="100%" height={240}>
           <AreaChart data={cumData}>
-            <defs><linearGradient id="cumGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#6366f1" stopOpacity={0.35} /><stop offset="100%" stopColor="#6366f1" stopOpacity={0} /></linearGradient></defs>
+            <defs><linearGradient id="cumGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#8b5cf6" stopOpacity={0.35} /><stop offset="100%" stopColor="#8b5cf6" stopOpacity={0} /></linearGradient></defs>
             <XAxis dataKey="label" tick={{ fontSize: 10, fill: theme.textFaint }} />
             <YAxis tick={{ fontSize: 11, fill: theme.textFaint }} width={70} />
             <Tooltip contentStyle={{ background: theme.card, border: `1px solid ${theme.cardBorder}`, borderRadius: 8, fontSize: 12 }} formatter={(v) => fmt(v)} />
             <ReferenceLine y={0} stroke={theme.textFaint} />
-            <Area type="monotone" dataKey="cum" stroke="#6366f1" strokeWidth={2} fill="url(#cumGrad)" />
+            <Area type="monotone" dataKey="cum" stroke="#8b5cf6" strokeWidth={2} fill="url(#cumGrad)" />
           </AreaChart>
         </ResponsiveContainer>
       </div>
@@ -4662,7 +4825,7 @@ function NewCryptoChallengeModal({ onClose, onSave, liveBalance }) {
           <div><label className="label">Start balance ($)</label><input type="number" step="any" value={c.startBalance} onChange={(e) => setC({ ...c, startBalance: e.target.value })} className="input" /></div>
           <div><label className="label">Target balance ($)</label><input type="number" step="any" value={c.targetBalance} onChange={(e) => setC({ ...c, targetBalance: e.target.value })} className="input" /></div>
         </div>
-        <div style={{ padding: 12, borderRadius: 10, background: theme.hoverBg, fontSize: 13, color: theme.textMuted }}>Goal: grow your account <strong style={{ color: '#6366f1' }}>{multiple}x</strong></div>
+        <div style={{ padding: 12, borderRadius: 10, background: theme.hoverBg, fontSize: 13, color: theme.textMuted }}>Goal: grow your account <strong style={{ color: '#8b5cf6' }}>{multiple}x</strong></div>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
           <div><label className="label">Start date</label><input type="date" value={c.startDate} onChange={(e) => setC({ ...c, startDate: e.target.value })} className="input" /></div>
           <div><label className="label">Target date (optional)</label><input type="date" value={c.targetDate} onChange={(e) => setC({ ...c, targetDate: e.target.value })} className="input" /></div>
@@ -4720,7 +4883,7 @@ function CryptoChallengeDetail({ challenge, trades, snapshots, liveEq, onBack, o
           <div>
             <div className="flex items-center gap-2">
               <span style={{ fontSize: 18, fontWeight: 700, color: theme.text }}>{c.name}</span>
-              <span className="badge" style={{ background: c.status === 'active' ? 'rgba(99,102,241,0.15)' : 'rgba(148,163,184,0.15)', color: c.status === 'active' ? '#6366f1' : theme.textMuted }}>{c.status.toUpperCase()}</span>
+              <span className="badge" style={{ background: c.status === 'active' ? 'rgba(139,92,246,0.15)' : 'rgba(148,163,184,0.15)', color: c.status === 'active' ? '#8b5cf6' : theme.textMuted }}>{c.status.toUpperCase()}</span>
             </div>
             <div style={{ fontSize: 12, color: theme.textMuted, marginTop: 2 }}>{fmt(c.startBalance, 0)} → {fmt(c.targetBalance, 0)}</div>
           </div>
@@ -4772,7 +4935,7 @@ function CryptoChallengeDetail({ challenge, trades, snapshots, liveEq, onBack, o
               <Tooltip contentStyle={{ background: theme.card, border: `1px solid ${theme.cardBorder}`, borderRadius: 8, fontSize: 12 }} formatter={(v, n) => [fmt(v), n === 'net' ? 'Daily net' : 'Cumulative']} />
               <ReferenceLine yAxisId="l" y={0} stroke={theme.textFaint} />
               <Bar yAxisId="l" dataKey="net" radius={[3, 3, 0, 0]}>{dailyData.map((d, i) => <Cell key={i} fill={d.net >= 0 ? '#10b981' : '#ef4444'} />)}</Bar>
-              <Line yAxisId="r" type="monotone" dataKey="cum" stroke="#6366f1" strokeWidth={2} dot={false} />
+              <Line yAxisId="r" type="monotone" dataKey="cum" stroke="#8b5cf6" strokeWidth={2} dot={false} />
             </ComposedChart>
           </ResponsiveContainer>
         ) : (
