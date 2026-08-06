@@ -1153,6 +1153,9 @@ export default function TradingJournal() {
             border: 1px solid ${theme.cardBorder};
           }
           .chip-live { color: ${theme.accent}; background: ${theme.accentSoft}; border-color: ${darkMode ? 'rgba(34,211,165,0.3)' : 'rgba(34,211,165,0.28)'}; }
+          .news-row { transition: background 0.15s ease; }
+          .news-row:hover { background: ${theme.hoverBg} !important; }
+          .news-row:last-child { border-bottom: none !important; }
 
           /* ---- Scrollbar ---- */
           .scrollbar::-webkit-scrollbar { width: 8px; height: 8px; }
@@ -2652,6 +2655,199 @@ function JournalEntryForm({ entry, onSave, onCancel }) {
 const IMPACT_COLORS = { High: '#ef4444', Medium: '#f59e0b', Low: '#8b5cf6', Holiday: '#64748b' };
 const NEWS_CURRENCIES = ['All', 'USD', 'EUR', 'GBP', 'JPY', 'AUD', 'CAD', 'CHF', 'NZD'];
 
+// ---- Trading sessions (defined in UTC; rendered in the user's chosen timezone) ----
+const TRADING_SESSIONS = [
+  { id: 'sydney',  name: 'Sydney',       startUTC: 22 * 60, endUTC: 7 * 60,  color: '#a78bfa', tags: ['AUD', 'NZD', 'Asia-Pacific indices'], note: 'Often quieter, useful for AUD/NZD preparation.' },
+  { id: 'tokyo',   name: 'Tokyo / Asia', startUTC: 0,       endUTC: 9 * 60,  color: '#8b5cf6', tags: ['JPY', 'AUD/JPY', 'Asian indices'],    note: 'Important for JPY pairs and Asia risk tone.' },
+  { id: 'london',  name: 'London',       startUTC: 7 * 60,  endUTC: 16 * 60, color: '#7c3aed', tags: ['EUR', 'GBP', 'Gold', 'Major FX'],     note: 'Highest liquidity window for EUR and GBP.' },
+  { id: 'newyork', name: 'New York',     startUTC: 12 * 60, endUTC: 21 * 60, color: '#22d3a5', tags: ['USD', 'CAD', 'US indices', 'Gold'],   note: 'US data releases and the London/NY overlap.' },
+];
+
+const SESSION_TIMEZONES = [
+  'America/New_York', 'America/Chicago', 'America/Los_Angeles', 'America/Sao_Paulo',
+  'Europe/London', 'Europe/Berlin', 'Europe/Zurich', 'Europe/Moscow',
+  'Asia/Dubai', 'Asia/Kolkata', 'Asia/Singapore', 'Asia/Hong_Kong', 'Asia/Tokyo',
+  'Australia/Sydney', 'Pacific/Auckland', 'UTC',
+];
+
+const modMin = (n, m) => ((n % m) + m) % m;
+const inWindow = (t, s, e) => (s < e ? t >= s && t < e : t >= s || t < e);
+const fmtClock = (m) => `${String(Math.floor(modMin(m, 1440) / 60)).padStart(2, '0')}:${String(modMin(m, 1440) % 60).padStart(2, '0')}`;
+const fmtDuration = (m) => {
+  const t = Math.max(0, Math.round(m));
+  const h = Math.floor(t / 60), r = t % 60;
+  return h ? `${h}h ${r}m` : `${r}m`;
+};
+
+// Minutes to add to UTC to get local wall-clock time in `tz` at instant `at`.
+const tzOffsetMinutes = (tz, at) => {
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: tz, hour12: false,
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit',
+    }).formatToParts(at).filter(p => p.type !== 'literal');
+    const p = Object.fromEntries(parts.map(x => [x.type, x.value]));
+    const asUTC = Date.UTC(+p.year, p.month - 1, +p.day, p.hour === '24' ? 0 : +p.hour, +p.minute, +p.second);
+    return Math.round((asUTC - Math.floor(at.getTime() / 1000) * 1000) / 60000);
+  } catch { return 0; }
+};
+
+const getSessionState = (session, tz, now) => {
+  const offset = tzOffsetMinutes(tz, now);
+  const start = modMin(session.startUTC + offset, 1440);
+  const end = modMin(session.endUTC + offset, 1440);
+  const nowMin = modMin(Math.floor(now.getTime() / 60000) + offset, 1440);
+  const open = inWindow(nowMin, start, end);
+  const length = modMin(end - start, 1440) || 1440;
+  const elapsed = modMin(nowMin - start, 1440);
+  return {
+    start, end, open, nowMin,
+    range: `${fmtClock(start)} - ${fmtClock(end)}`,
+    countdown: fmtDuration(open ? modMin(end - nowMin, 1440) : modMin(start - nowMin, 1440)),
+    progress: open ? Math.min(100, (elapsed / length) * 100) : 0,
+    // Bar segments across a 24h track, split when the session crosses midnight.
+    segments: start < end
+      ? [{ left: (start / 1440) * 100, width: ((end - start) / 1440) * 100 }]
+      : [{ left: (start / 1440) * 100, width: ((1440 - start) / 1440) * 100 }, { left: 0, width: (end / 1440) * 100 }],
+  };
+};
+
+function LiveSessionsPanel({ tz, setTz, now }) {
+  const theme = useTheme();
+  return (
+    <div className="card-lg" style={{ padding: 22 }}>
+      <div className="flex items-start justify-between gap-3" style={{ marginBottom: 18 }}>
+        <div>
+          <h3 style={{ fontSize: 19, fontWeight: 700, color: theme.text, letterSpacing: '-0.3px' }}>Live Trading Sessions</h3>
+          <p style={{ fontSize: 12.5, color: theme.textMuted, marginTop: 5, maxWidth: 280, lineHeight: 1.5 }}>
+            Session cards, countdowns, and the timeline use one selected timezone.
+          </p>
+        </div>
+        <div style={{ position: 'relative', flexShrink: 0 }}>
+          <Link size={13} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: theme.textFaint, pointerEvents: 'none' }} />
+          <select
+            value={tz}
+            onChange={e => setTz(e.target.value)}
+            className="input input-sm"
+            style={{ paddingLeft: 32, paddingRight: 30, borderRadius: 999, cursor: 'pointer', appearance: 'none', width: 'auto', minWidth: 172, fontWeight: 500 }}
+          >
+            {SESSION_TIMEZONES.map(z => <option key={z} value={z}>{z.replace(/_/g, ' ')}</option>)}
+          </select>
+          <ChevronDown size={13} style={{ position: 'absolute', right: 11, top: '50%', transform: 'translateY(-50%)', color: theme.textFaint, pointerEvents: 'none' }} />
+        </div>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))', gap: 14 }}>
+        {TRADING_SESSIONS.map(session => {
+          const s = getSessionState(session, tz, now);
+          return (
+            <div
+              key={session.id}
+              className="card card-hover"
+              style={{
+                padding: 16,
+                borderColor: s.open ? 'rgba(34,211,165,0.42)' : theme.cardBorder,
+                background: s.open
+                  ? (theme.dark ? 'linear-gradient(155deg, rgba(34,211,165,0.10) 0%, rgba(16,14,26,0.94) 62%)' : 'rgba(34,211,165,0.06)')
+                  : undefined,
+              }}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span style={{ fontSize: 15, fontWeight: 700, color: theme.text }}>{session.name}</span>
+                <span className={s.open ? 'chip chip-live' : 'chip'} style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: '0.7px', textTransform: 'uppercase', padding: '3px 9px' }}>
+                  {s.open
+                    ? <span className="pulse-dot" style={{ width: 5, height: 5, borderRadius: 999, background: theme.accent, display: 'inline-block' }} />
+                    : <Moon size={10} />}
+                  {s.open ? 'Live' : 'Closed'}
+                </span>
+              </div>
+
+              <div style={{ fontSize: 12.5, color: theme.textMuted, marginTop: 6, fontFamily: "'JetBrains Mono', monospace" }}>{s.range}</div>
+
+              <div className="flex items-center gap-1.5" style={{ marginTop: 12, fontSize: 12.5, color: s.open ? theme.accent : theme.textMuted, fontWeight: 500 }}>
+                <Clock size={13} />
+                {s.open ? `Closes in ${s.countdown}` : `Opens in ${s.countdown}`}
+              </div>
+
+              <div style={{ height: 4, borderRadius: 999, background: theme.dark ? 'rgba(255,255,255,0.07)' : 'rgba(20,17,31,0.07)', marginTop: 10, overflow: 'hidden' }}>
+                <div className="progress-bar-animate" style={{ height: '100%', width: `${s.progress}%`, borderRadius: 999, background: theme.accent, boxShadow: s.open ? `0 0 10px ${theme.accent}` : 'none' }} />
+              </div>
+
+              <div className="flex flex-wrap gap-1.5" style={{ marginTop: 13 }}>
+                {session.tags.map(t => <span key={t} className="chip" style={{ fontSize: 10.5, padding: '3px 9px' }}>{t}</span>)}
+              </div>
+
+              <p style={{ fontSize: 11.5, color: theme.textFaint, marginTop: 12, lineHeight: 1.5 }}>{session.note}</p>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function SessionTimelinePanel({ tz, now }) {
+  const theme = useTheme();
+  const offset = tzOffsetMinutes(tz, now);
+  const nowMin = modMin(Math.floor(now.getTime() / 60000) + offset, 1440);
+  const nowPct = (nowMin / 1440) * 100;
+
+  return (
+    <div className="card-lg" style={{ padding: 22 }}>
+      <div className="flex items-start justify-between gap-3" style={{ marginBottom: 18 }}>
+        <div>
+          <h3 style={{ fontSize: 19, fontWeight: 700, color: theme.text, letterSpacing: '-0.3px' }}>24h Session Timeline</h3>
+          <p style={{ fontSize: 12.5, color: theme.textMuted, marginTop: 5 }}>
+            Current local time: <span style={{ color: theme.text, fontWeight: 600, fontFamily: "'JetBrains Mono', monospace" }}>{fmtClock(nowMin)}</span>
+          </p>
+        </div>
+        <Clock size={17} style={{ color: theme.textFaint, flexShrink: 0, marginTop: 4 }} />
+      </div>
+
+      <div style={{ position: 'relative', paddingTop: 22 }}>
+        {/* Now marker */}
+        <div style={{ position: 'absolute', top: 0, bottom: 0, left: `${nowPct}%`, width: 1.5, background: theme.dark ? 'rgba(255,255,255,0.85)' : 'rgba(20,17,31,0.65)', zIndex: 2, pointerEvents: 'none' }} />
+        <div style={{
+          position: 'absolute', top: 0, left: `${nowPct}%`, transform: 'translateX(-50%)', zIndex: 3,
+          background: theme.dark ? '#f3f1fb' : '#14111f', color: theme.dark ? '#14111f' : '#ffffff',
+          fontSize: 10.5, fontWeight: 700, padding: '3px 9px', borderRadius: 999, whiteSpace: 'nowrap',
+        }}>
+          Now {fmtClock(nowMin)}
+        </div>
+
+        {TRADING_SESSIONS.map(session => {
+          const s = getSessionState(session, tz, now);
+          return (
+            <div key={session.id} style={{ marginBottom: 14 }}>
+              <div className="flex items-center justify-between" style={{ marginBottom: 6 }}>
+                <span style={{ fontSize: 12.5, fontWeight: 600, color: s.open ? theme.text : theme.textMuted }}>{session.name}</span>
+                <span style={{ fontSize: 11.5, color: theme.textFaint, fontFamily: "'JetBrains Mono', monospace" }}>{s.range}</span>
+              </div>
+              <div style={{ position: 'relative', height: 14, borderRadius: 999, background: theme.dark ? 'rgba(255,255,255,0.05)' : 'rgba(20,17,31,0.05)', overflow: 'hidden' }}>
+                {s.segments.map((seg, i) => (
+                  <div key={i} style={{
+                    position: 'absolute', top: 0, bottom: 0,
+                    left: `${seg.left}%`, width: `${seg.width}%`,
+                    borderRadius: 999,
+                    background: s.open ? theme.accent : session.color,
+                    opacity: s.open ? 1 : (theme.dark ? 0.32 : 0.28),
+                    boxShadow: s.open ? `0 0 14px ${theme.accent}66` : 'none',
+                  }} />
+                ))}
+              </div>
+            </div>
+          );
+        })}
+
+        <div className="flex justify-between" style={{ marginTop: 10, fontSize: 10, color: theme.textFaint, fontFamily: "'JetBrains Mono', monospace" }}>
+          {['00:00', '06:00', '12:00', '18:00', '24:00'].map(t => <span key={t}>{t}</span>)}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function NewsCalendarView() {
   const theme = useTheme();
   const [events, setEvents] = useState([]);
@@ -2661,6 +2857,25 @@ function NewsCalendarView() {
   const [filterImpact, setFilterImpact] = useState('All');
   const [viewMode, setViewMode] = useState('week');
   const [lastFetched, setLastFetched] = useState(null);
+  const [tz, setTz] = useState(() => {
+    try { return localStorage.getItem('ellipse_news_tz') || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; }
+    catch { return 'UTC'; }
+  });
+  const [now, setNow] = useState(() => new Date());
+  const sessionsRef = useRef(null);
+  const calendarRef = useRef(null);
+
+  // Keep countdowns and the "now" marker live.
+  useEffect(() => {
+    const t = setInterval(() => setNow(new Date()), 30000);
+    return () => clearInterval(t);
+  }, []);
+
+  useEffect(() => {
+    try { localStorage.setItem('ellipse_news_tz', tz); } catch {}
+  }, [tz]);
+
+  const scrollTo = (ref) => ref.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
   // Preset currency groups
   const CURRENCY_GROUPS = {
@@ -2791,39 +3006,84 @@ function NewsCalendarView() {
   }).length;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+      {/* Hero */}
+      <div className="card-lg" style={{ padding: '38px 40px', position: 'relative', overflow: 'hidden' }}>
+        <div style={{
+          position: 'absolute', inset: 0, pointerEvents: 'none',
+          background: theme.dark
+            ? 'radial-gradient(620px 260px at 8% 0%, rgba(124,58,237,0.20), transparent 68%)'
+            : 'radial-gradient(620px 260px at 8% 0%, rgba(139,92,246,0.12), transparent 68%)',
+        }} />
+        <div style={{ position: 'relative', display: 'flex', flexWrap: 'wrap', alignItems: 'flex-end', justifyContent: 'space-between', gap: 24 }}>
+          <div style={{ minWidth: 280, flex: '1 1 420px' }}>
+            <span className="eyebrow"><Calendar size={12} />Market Preparation</span>
+            <h2 style={{ fontSize: 46, fontWeight: 800, color: theme.text, letterSpacing: '-1.6px', lineHeight: 1.05, margin: '18px 0 0' }}>
+              Economic Calendar
+            </h2>
+            <p style={{ fontSize: 14.5, color: theme.textMuted, marginTop: 14, maxWidth: 520, lineHeight: 1.65 }}>
+              Track important market events, active trading sessions, and high-impact releases before they affect forex, crypto, commodities, and global indices.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-3" style={{ flexShrink: 0 }}>
+            <button onClick={() => { setViewMode('today'); scrollTo(calendarRef); }} className="btn-primary">
+              View Today&apos;s Events
+            </button>
+            <button onClick={() => scrollTo(sessionsRef)} className="btn-ghost">
+              Review Sessions
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Sessions + Timeline */}
+      <div ref={sessionsRef} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(420px, 1fr))', gap: 20, alignItems: 'start' }}>
+        <LiveSessionsPanel tz={tz} setTz={setTz} now={now} />
+        <SessionTimelinePanel tz={tz} now={now} />
+      </div>
+
       {/* Filter Bar */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div ref={calendarRef} style={{ display: 'flex', flexDirection: 'column', gap: 10, scrollMarginTop: 12 }}>
         {/* Row 1: View mode + Impact + Status */}
         <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10 }}>
           {/* View mode toggle */}
-          <div className="flex" style={{ background: theme.hoverBg, borderRadius: 8, padding: 3 }}>
+          <div className="flex" style={{ background: theme.dark ? 'rgba(255,255,255,0.04)' : 'rgba(20,17,31,0.04)', borderRadius: 999, padding: 3, border: `1px solid ${theme.cardBorder}` }}>
             {['today', 'week'].map(m => (
-              <button key={m} onClick={() => setViewMode(m)} style={{ padding: '6px 16px', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 500, background: viewMode === m ? theme.card : 'transparent', color: viewMode === m ? theme.text : theme.textMuted, boxShadow: viewMode === m ? '0 1px 3px rgba(0,0,0,0.1)' : 'none' }}>
+              <button key={m} onClick={() => setViewMode(m)} style={{ padding: '6px 16px', borderRadius: 999, border: 'none', cursor: 'pointer', fontSize: 12.5, fontWeight: 600, background: viewMode === m ? theme.primaryGrad : 'transparent', color: viewMode === m ? '#ffffff' : theme.textMuted, boxShadow: viewMode === m ? '0 2px 10px rgba(124,58,237,0.35)' : 'none', transition: 'all 0.15s' }}>
                 {m === 'today' ? 'Today' : 'This Week'}
               </button>
             ))}
           </div>
 
           {/* Impact filter */}
-          <div className="flex" style={{ background: theme.hoverBg, borderRadius: 8, padding: 3 }}>
-            {['All', 'High', 'Medium', 'Low'].map(imp => (
-              <button key={imp} onClick={() => setFilterImpact(imp)} style={{ padding: '5px 12px', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: 11, fontWeight: 500, background: filterImpact === imp ? theme.card : 'transparent', color: filterImpact === imp ? (IMPACT_COLORS[imp] || theme.text) : theme.textMuted, boxShadow: filterImpact === imp ? '0 1px 3px rgba(0,0,0,0.1)' : 'none' }}>
-                {imp}
-              </button>
-            ))}
+          <div className="flex" style={{ background: theme.dark ? 'rgba(255,255,255,0.04)' : 'rgba(20,17,31,0.04)', borderRadius: 999, padding: 3, border: `1px solid ${theme.cardBorder}` }}>
+            {['All', 'High', 'Medium', 'Low'].map(imp => {
+              const active = filterImpact === imp;
+              const c = IMPACT_COLORS[imp] || theme.text;
+              return (
+                <button key={imp} onClick={() => setFilterImpact(imp)} style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '5px 12px', borderRadius: 999, border: 'none', cursor: 'pointer', fontSize: 11.5, fontWeight: 600, background: active ? (imp === 'All' ? theme.primarySoft : `${c}22`) : 'transparent', color: active ? (imp === 'All' ? theme.text : c) : theme.textMuted, transition: 'all 0.15s' }}>
+                  {imp !== 'All' && <span style={{ width: 6, height: 6, borderRadius: 999, background: c, opacity: active ? 1 : 0.5 }} />}
+                  {imp}
+                </button>
+              );
+            })}
           </div>
 
           <div style={{ flex: 1 }} />
 
           {/* Status */}
-          <div style={{ fontSize: 11, color: theme.textFaint }}>
-            {highImpactToday > 0 && <span style={{ color: '#ef4444', fontWeight: 600, marginRight: 8 }}>🔴 {highImpactToday} high-impact today</span>}
+          <div className="flex items-center gap-2" style={{ fontSize: 11, color: theme.textFaint }}>
+            {highImpactToday > 0 && (
+              <span className="chip" style={{ color: '#ef4444', background: 'rgba(239,68,68,0.12)', borderColor: 'rgba(239,68,68,0.28)', fontWeight: 600 }}>
+                <span className="pulse-warn" style={{ width: 6, height: 6, borderRadius: 999, background: '#ef4444', display: 'inline-block' }} />
+                {highImpactToday} high-impact today
+              </span>
+            )}
             {lastFetched && <span>Updated {lastFetched.toLocaleTimeString()}</span>}
           </div>
 
-          <button onClick={() => { localStorage.removeItem(`ellipse_news_${viewMode}`); localStorage.removeItem(`ellipse_news_${viewMode}_time`); loadEvents(viewMode); }} style={{ padding: '6px 12px', borderRadius: 8, border: `1px solid ${theme.cardBorder}`, background: 'none', fontSize: 12, color: theme.textMuted, cursor: 'pointer' }}>
-            Refresh
+          <button onClick={() => { localStorage.removeItem(`ellipse_news_${viewMode}`); localStorage.removeItem(`ellipse_news_${viewMode}_time`); loadEvents(viewMode); }} className="btn-ghost" style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '7px 14px', fontSize: 12.5, borderRadius: 999 }}>
+            <RefreshCw size={13} />Refresh
           </button>
         </div>
 
@@ -2831,14 +3091,14 @@ function NewsCalendarView() {
         <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
           {/* Group presets */}
           <span style={{ fontSize: 11, color: theme.textFaint, marginRight: 2 }}>Groups:</span>
-          <div className="flex" style={{ background: theme.hoverBg, borderRadius: 8, padding: 3 }}>
+          <div className="flex" style={{ background: theme.dark ? 'rgba(255,255,255,0.04)' : 'rgba(20,17,31,0.04)', borderRadius: 999, padding: 3, border: `1px solid ${theme.cardBorder}` }}>
             {Object.keys(CURRENCY_GROUPS).map(group => {
               const groupCcys = CURRENCY_GROUPS[group];
               const isActive = group === 'All'
                 ? selectedCurrencies.size === 0
                 : groupCcys.length > 0 && groupCcys.every(c => selectedCurrencies.has(c)) && selectedCurrencies.size === groupCcys.length;
               return (
-                <button key={group} onClick={() => applyGroup(group)} style={{ padding: '4px 10px', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: 11, fontWeight: 500, background: isActive ? '#8b5cf6' : 'transparent', color: isActive ? 'white' : theme.textMuted }}>
+                <button key={group} onClick={() => applyGroup(group)} style={{ padding: '4px 12px', borderRadius: 999, border: 'none', cursor: 'pointer', fontSize: 11, fontWeight: 600, background: isActive ? theme.primaryGrad : 'transparent', color: isActive ? '#ffffff' : theme.textMuted, boxShadow: isActive ? '0 2px 8px rgba(124,58,237,0.32)' : 'none', transition: 'all 0.15s' }}>
                   {group}
                 </button>
               );
@@ -2852,7 +3112,7 @@ function NewsCalendarView() {
           {NEWS_CURRENCIES.filter(c => c !== 'All').map(ccy => {
             const isSelected = selectedCurrencies.has(ccy);
             return (
-              <button key={ccy} onClick={() => toggleCurrency(ccy)} style={{ padding: '4px 10px', borderRadius: 6, fontSize: 11, fontWeight: 600, border: `1px solid ${isSelected ? '#8b5cf6' : theme.cardBorder}`, background: isSelected ? 'rgba(139,92,246,0.15)' : 'transparent', color: isSelected ? '#8b5cf6' : theme.textMuted, cursor: 'pointer', transition: 'all 0.15s' }}>
+              <button key={ccy} onClick={() => toggleCurrency(ccy)} style={{ padding: '4px 12px', borderRadius: 999, fontSize: 11, fontWeight: 600, border: `1px solid ${isSelected ? 'rgba(139,92,246,0.55)' : theme.cardBorder}`, background: isSelected ? theme.primarySoft : 'transparent', color: isSelected ? (theme.dark ? '#c4b5fd' : '#6d28d9') : theme.textMuted, cursor: 'pointer', transition: 'all 0.15s' }}>
                 {ccy}
               </button>
             );
@@ -2868,16 +3128,16 @@ function NewsCalendarView() {
 
       {/* Loading */}
       {loading && (
-        <div style={{ padding: 60, textAlign: 'center' }}>
-          <Loader2 size={28} style={{ color: theme.textMuted, animation: 'spin 1s linear infinite', margin: '0 auto 12px' }} />
-          <p style={{ fontSize: 13, color: theme.textFaint }}>Loading economic calendar...</p>
+        <div className="card-lg" style={{ padding: 60, textAlign: 'center' }}>
+          <Loader2 size={28} style={{ color: theme.primary, animation: 'spin 1s linear infinite', margin: '0 auto 12px' }} />
+          <p style={{ fontSize: 13, color: theme.textFaint }}>Loading economic calendar…</p>
         </div>
       )}
 
       {/* Error */}
       {error && (
-        <div style={{ padding: 16, borderRadius: 10, background: 'rgba(239,68,68,0.1)', display: 'flex', alignItems: 'center', gap: 8 }}>
-          <AlertCircle size={16} style={{ color: '#ef4444' }} />
+        <div style={{ padding: 16, borderRadius: 14, background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.28)', display: 'flex', alignItems: 'center', gap: 10 }}>
+          <AlertCircle size={16} style={{ color: '#ef4444', flexShrink: 0 }} />
           <span style={{ fontSize: 13, color: '#ef4444' }}>{error}</span>
         </div>
       )}
@@ -2896,24 +3156,29 @@ function NewsCalendarView() {
         const highCount = dayEvents.filter(e => e.impact === 'High').length;
         return (
           <div key={dateKey}>
-            <div className="flex items-center gap-3" style={{ marginBottom: 8 }}>
-              <span style={{ fontSize: 12, fontWeight: 600, color: isToday ? '#8b5cf6' : theme.textMuted, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                {isToday ? '📍 Today — ' : ''}{new Date(dateKey + 'T00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}
+            <div className="flex items-center gap-2.5 flex-wrap" style={{ marginBottom: 10 }}>
+              {isToday && <span className="eyebrow" style={{ padding: '3px 10px' }}>Today</span>}
+              <span style={{ fontSize: 12, fontWeight: 700, color: isToday ? theme.text : theme.textMuted, textTransform: 'uppercase', letterSpacing: '0.7px' }}>
+                {new Date(dateKey + 'T00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}
               </span>
-              {highCount > 0 && <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 4, background: 'rgba(239,68,68,0.1)', color: '#ef4444', fontWeight: 600 }}>{highCount} high impact</span>}
-              <span style={{ fontSize: 11, color: theme.textFaint }}>{dayEvents.length} events</span>
+              <span style={{ flex: 1, height: 1, background: theme.cardBorder, minWidth: 12 }} />
+              {highCount > 0 && (
+                <span className="chip" style={{ color: '#ef4444', background: 'rgba(239,68,68,0.12)', borderColor: 'rgba(239,68,68,0.28)', fontWeight: 600 }}>
+                  {highCount} high impact
+                </span>
+              )}
+              <span className="chip">{dayEvents.length} events</span>
             </div>
 
             <div className="card-lg" style={{ overflow: 'hidden' }}>
               {/* Table header */}
-              <div style={{ display: 'grid', gridTemplateColumns: '70px 50px 60px 1fr 80px 80px 80px', gap: 8, padding: '10px 16px', background: theme.hoverBg, borderBottom: `1px solid ${theme.cardBorder}` }}>
-                <span style={{ fontSize: 10, fontWeight: 600, color: theme.textFaint, textTransform: 'uppercase' }}>Time</span>
-                <span style={{ fontSize: 10, fontWeight: 600, color: theme.textFaint, textTransform: 'uppercase' }}>Ccy</span>
-                <span style={{ fontSize: 10, fontWeight: 600, color: theme.textFaint, textTransform: 'uppercase' }}>Impact</span>
-                <span style={{ fontSize: 10, fontWeight: 600, color: theme.textFaint, textTransform: 'uppercase' }}>Event</span>
-                <span style={{ fontSize: 10, fontWeight: 600, color: theme.textFaint, textTransform: 'uppercase', textAlign: 'right' }}>Forecast</span>
-                <span style={{ fontSize: 10, fontWeight: 600, color: theme.textFaint, textTransform: 'uppercase', textAlign: 'right' }}>Previous</span>
-                <span style={{ fontSize: 10, fontWeight: 600, color: theme.textFaint, textTransform: 'uppercase', textAlign: 'right' }}>Actual</span>
+              <div style={{ display: 'grid', gridTemplateColumns: '76px 54px 74px 1fr 82px 82px 82px', gap: 8, padding: '11px 18px', background: theme.dark ? 'rgba(255,255,255,0.02)' : '#faf9fe', borderBottom: `1px solid ${theme.cardBorder}` }}>
+                {['Time', 'Ccy', 'Impact', 'Event'].map(h => (
+                  <span key={h} style={{ fontSize: 10, fontWeight: 600, color: theme.textFaint, textTransform: 'uppercase', letterSpacing: '0.7px' }}>{h}</span>
+                ))}
+                {['Forecast', 'Previous', 'Actual'].map(h => (
+                  <span key={h} style={{ fontSize: 10, fontWeight: 600, color: theme.textFaint, textTransform: 'uppercase', letterSpacing: '0.7px', textAlign: 'right' }}>{h}</span>
+                ))}
               </div>
 
               {dayEvents.map((event, i) => {
@@ -2921,13 +3186,14 @@ function NewsCalendarView() {
                 const impactColor = IMPACT_COLORS[event.impact] || theme.textFaint;
                 const isHigh = event.impact === 'High';
                 return (
-                  <div key={i} style={{ display: 'grid', gridTemplateColumns: '70px 50px 60px 1fr 80px 80px 80px', gap: 8, padding: '12px 16px', borderBottom: `1px solid ${theme.cardBorder}`, background: isHigh ? (theme.dark ? 'rgba(239,68,68,0.05)' : 'rgba(239,68,68,0.03)') : 'transparent' }}>
-                    <span style={{ fontSize: 13, color: theme.textMuted, fontFamily: "'JetBrains Mono', monospace" }}>{eventTime}</span>
-                    <span style={{ fontSize: 12, fontWeight: 600, color: theme.text }}>{event.country}</span>
-                    <div className="flex items-center gap-1">
-                      <div style={{ width: 8, height: 8, borderRadius: 4, background: impactColor }} />
-                      <span style={{ fontSize: 11, color: impactColor, fontWeight: 500 }}>{event.impact}</span>
-                    </div>
+                  <div key={i} className="news-row" style={{ position: 'relative', display: 'grid', gridTemplateColumns: '76px 54px 74px 1fr 82px 82px 82px', gap: 8, padding: '13px 18px', borderBottom: `1px solid ${theme.cardBorder}`, background: isHigh ? (theme.dark ? 'rgba(239,68,68,0.055)' : 'rgba(239,68,68,0.035)') : 'transparent' }}>
+                    {isHigh && <span style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 2.5, background: '#ef4444' }} />}
+                    <span style={{ fontSize: 12.5, color: theme.textMuted, fontFamily: "'JetBrains Mono', monospace" }}>{eventTime}</span>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>{event.country}</span>
+                    <span className="badge" style={{ background: `${impactColor}1f`, color: impactColor, justifySelf: 'start' }}>
+                      <span style={{ width: 5, height: 5, borderRadius: 999, background: impactColor }} />
+                      {event.impact}
+                    </span>
                     <span style={{ fontSize: 13, color: theme.text, fontWeight: isHigh ? 600 : 400 }}>{event.title}</span>
                     <span style={{ fontSize: 13, color: theme.textMuted, textAlign: 'right', fontFamily: "'JetBrains Mono', monospace" }}>{event.forecast || '—'}</span>
                     <span style={{ fontSize: 13, color: theme.textMuted, textAlign: 'right', fontFamily: "'JetBrains Mono', monospace" }}>{event.previous || '—'}</span>
