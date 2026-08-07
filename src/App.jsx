@@ -1482,7 +1482,7 @@ function ChallengesView({ challenges, trades, accounts, onUpdate, onDelete }) {
             <p style={{ fontSize: 14, color: theme.textMuted, marginBottom: 20 }}>This will remove the challenge tracking. Your trades won't be affected.</p>
             <div className="flex gap-3">
               <button onClick={() => setDeleteId(null)} className="input" style={{ flex: 1, textAlign: 'center', cursor: 'pointer' }}>Cancel</button>
-              <button onClick={() => { onDelete(deleteId); setDeleteId(null); }} className="btn-primary" style={{ flex: 1, background: '#ef4444' }}>Delete</button>
+              <button onClick={() => { onDelete(deleteId); setDeleteId(null); }} className="btn-primary" style={{ flex: 1, background: theme.neg }}>Delete</button>
             </div>
           </div>
         </Modal>
@@ -1540,8 +1540,8 @@ function ChallengeCard({ challenge, trades, onSelect, onUpdate, onDelete, compac
 
   const statusColors = {
     active: { bg: 'rgba(139,92,246,0.1)', text: '#8b5cf6', label: 'Active' },
-    passed: { bg: 'rgba(16,185,129,0.1)', text: '#10b981', label: 'Passed' },
-    failed: { bg: 'rgba(239,68,68,0.1)', text: '#ef4444', label: 'Failed' },
+    passed: { bg: 'rgba(34,211,165,0.1)', text: theme.pos, label: 'Passed' },
+    failed: { bg: 'rgba(244,85,122,0.1)', text: theme.neg, label: 'Failed' },
     funded: { bg: 'rgba(245,158,11,0.1)', text: '#f59e0b', label: 'Funded' }
   };
   const statusStyle = statusColors[challenge.status] || statusColors.active;
@@ -1563,7 +1563,7 @@ function ChallengeCard({ challenge, trades, onSelect, onUpdate, onDelete, compac
           </div>
           <div className="flex items-center gap-3">
             <span className="badge" style={{ background: statusStyle.bg, color: statusStyle.text }}>{statusStyle.label}</span>
-            <span style={{ fontSize: 14, fontWeight: 600, color: totalPnl >= 0 ? '#10b981' : '#ef4444' }}>{totalPnl >= 0 ? '+' : ''}${totalPnl.toFixed(2)}</span>
+            <span style={{ fontSize: 14, fontWeight: 600, color: totalPnl >= 0 ? theme.pos : theme.neg }}>{totalPnl >= 0 ? '+' : ''}${totalPnl.toFixed(2)}</span>
             <button
               onClick={(e) => { e.stopPropagation(); onDelete(); }}
               title="Delete challenge"
@@ -1594,9 +1594,9 @@ function ChallengeCard({ challenge, trades, onSelect, onUpdate, onDelete, compac
         </div>
         <div className="flex items-center gap-2">
           {(isDailyCritical || isTotalCritical) && (
-            <div className="pulse-warn" style={{ padding: '6px 12px', borderRadius: 8, background: 'rgba(239,68,68,0.15)', display: 'flex', alignItems: 'center', gap: 6 }}>
-              <AlertTriangle size={14} style={{ color: '#ef4444' }} />
-              <span style={{ fontSize: 12, fontWeight: 600, color: '#ef4444' }}>DRAWDOWN WARNING</span>
+            <div className="pulse-warn" style={{ padding: '6px 12px', borderRadius: 8, background: 'rgba(244,85,122,0.15)', display: 'flex', alignItems: 'center', gap: 6 }}>
+              <AlertTriangle size={14} style={{ color: theme.neg }} />
+              <span style={{ fontSize: 12, fontWeight: 600, color: theme.neg }}>DRAWDOWN WARNING</span>
             </div>
           )}
           <span className="badge" style={{ background: statusStyle.bg, color: statusStyle.text, padding: '6px 12px' }}>{statusStyle.label}</span>
@@ -1612,7 +1612,7 @@ function ChallengeCard({ challenge, trades, onSelect, onUpdate, onDelete, compac
           {/* Current P&L */}
           <div style={{ padding: 14, borderRadius: 10, background: theme.hoverBg }}>
             <div className="stat-label">Current P&L</div>
-            <div style={{ fontSize: 20, fontWeight: 700, color: totalPnl >= 0 ? '#10b981' : '#ef4444', marginTop: 4 }}>
+            <div style={{ fontSize: 20, fontWeight: 700, color: totalPnl >= 0 ? theme.pos : theme.neg, marginTop: 4 }}>
               {totalPnl >= 0 ? '+' : ''}${totalPnl.toFixed(2)}
             </div>
             <div style={{ fontSize: 11, color: theme.textFaint, marginTop: 2 }}>
@@ -1634,7 +1634,7 @@ function ChallengeCard({ challenge, trades, onSelect, onUpdate, onDelete, compac
           {/* Trading Days */}
           <div style={{ padding: 14, borderRadius: 10, background: theme.hoverBg }}>
             <div className="stat-label">Trading Days</div>
-            <div style={{ fontSize: 20, fontWeight: 700, color: tradingDays >= minTradingDays ? '#10b981' : theme.text, marginTop: 4 }}>
+            <div style={{ fontSize: 20, fontWeight: 700, color: tradingDays >= minTradingDays ? theme.pos : theme.text, marginTop: 4 }}>
               {tradingDays}
             </div>
             <div style={{ fontSize: 11, color: theme.textFaint, marginTop: 2 }}>
@@ -1645,7 +1645,7 @@ function ChallengeCard({ challenge, trades, onSelect, onUpdate, onDelete, compac
           {/* Today's P&L */}
           <div style={{ padding: 14, borderRadius: 10, background: theme.hoverBg }}>
             <div className="stat-label">Today's P&L</div>
-            <div style={{ fontSize: 20, fontWeight: 700, color: todayPnl >= 0 ? '#10b981' : '#ef4444', marginTop: 4 }}>
+            <div style={{ fontSize: 20, fontWeight: 700, color: todayPnl >= 0 ? theme.pos : theme.neg, marginTop: 4 }}>
               {todayPnl >= 0 ? '+' : ''}${todayPnl.toFixed(2)}
             </div>
             <div style={{ fontSize: 11, color: theme.textFaint, marginTop: 2 }}>
@@ -1661,12 +1661,12 @@ function ChallengeCard({ challenge, trades, onSelect, onUpdate, onDelete, compac
             <div>
               <div className="flex justify-between items-center" style={{ marginBottom: 6 }}>
                 <span style={{ fontSize: 12, fontWeight: 500, color: theme.textMuted }}>Profit Progress</span>
-                <span style={{ fontSize: 12, fontWeight: 600, color: profitPct >= profitTargetPct ? '#10b981' : theme.text }}>
+                <span style={{ fontSize: 12, fontWeight: 600, color: profitPct >= profitTargetPct ? theme.pos : theme.text }}>
                   {profitPct.toFixed(2)}% / {profitTargetPct}%
                 </span>
               </div>
               <div style={{ height: 8, borderRadius: 4, background: theme.hoverBg, overflow: 'hidden' }}>
-                <div className="progress-bar-animate" style={{ height: '100%', borderRadius: 4, width: `${Math.max(profitProgress, 0)}%`, background: profitPct >= profitTargetPct ? 'linear-gradient(90deg, #10b981, #34d399)' : 'linear-gradient(90deg, #7c3aed, #a855f7)' }} />
+                <div className="progress-bar-animate" style={{ height: '100%', borderRadius: 4, width: `${Math.max(profitProgress, 0)}%`, background: profitPct >= profitTargetPct ? 'linear-gradient(90deg, #22d3a5, #5eead4)' : 'linear-gradient(90deg, #7c3aed, #a855f7)' }} />
               </div>
             </div>
           )}
@@ -1674,30 +1674,30 @@ function ChallengeCard({ challenge, trades, onSelect, onUpdate, onDelete, compac
           {/* Daily Drawdown */}
           <div>
             <div className="flex justify-between items-center" style={{ marginBottom: 6 }}>
-              <span style={{ fontSize: 12, fontWeight: 500, color: isDailyDanger ? '#ef4444' : theme.textMuted }}>
+              <span style={{ fontSize: 12, fontWeight: 500, color: isDailyDanger ? theme.neg : theme.textMuted }}>
                 Daily Drawdown {isDailyCritical && '⚠️'}
               </span>
-              <span style={{ fontSize: 12, fontWeight: 600, color: isDailyDanger ? '#ef4444' : theme.text }}>
+              <span style={{ fontSize: 12, fontWeight: 600, color: isDailyDanger ? theme.neg : theme.text }}>
                 {dailyDrawdownPct.toFixed(2)}% / {maxDailyDD}%
               </span>
             </div>
             <div style={{ height: 8, borderRadius: 4, background: theme.hoverBg, overflow: 'hidden' }}>
-              <div className="progress-bar-animate" style={{ height: '100%', borderRadius: 4, width: `${Math.min(dailyDDUsed, 100)}%`, background: isDailyCritical ? '#ef4444' : isDailyDanger ? 'linear-gradient(90deg, #f59e0b, #ef4444)' : 'linear-gradient(90deg, #10b981, #34d399)' }} />
+              <div className="progress-bar-animate" style={{ height: '100%', borderRadius: 4, width: `${Math.min(dailyDDUsed, 100)}%`, background: isDailyCritical ? theme.neg : isDailyDanger ? 'linear-gradient(90deg, #f59e0b, #f4557a)' : 'linear-gradient(90deg, #22d3a5, #5eead4)' }} />
             </div>
           </div>
 
           {/* Max Drawdown */}
           <div>
             <div className="flex justify-between items-center" style={{ marginBottom: 6 }}>
-              <span style={{ fontSize: 12, fontWeight: 500, color: isTotalDanger ? '#ef4444' : theme.textMuted }}>
+              <span style={{ fontSize: 12, fontWeight: 500, color: isTotalDanger ? theme.neg : theme.textMuted }}>
                 Max Drawdown {isTotalCritical && '⚠️'}
               </span>
-              <span style={{ fontSize: 12, fontWeight: 600, color: isTotalDanger ? '#ef4444' : theme.text }}>
+              <span style={{ fontSize: 12, fontWeight: 600, color: isTotalDanger ? theme.neg : theme.text }}>
                 {maxDrawdownPct.toFixed(2)}% / {maxTotalDD}%
               </span>
             </div>
             <div style={{ height: 8, borderRadius: 4, background: theme.hoverBg, overflow: 'hidden' }}>
-              <div className="progress-bar-animate" style={{ height: '100%', borderRadius: 4, width: `${Math.min(totalDDUsed, 100)}%`, background: isTotalCritical ? '#ef4444' : isTotalDanger ? 'linear-gradient(90deg, #f59e0b, #ef4444)' : 'linear-gradient(90deg, #10b981, #34d399)' }} />
+              <div className="progress-bar-animate" style={{ height: '100%', borderRadius: 4, width: `${Math.min(totalDDUsed, 100)}%`, background: isTotalCritical ? theme.neg : isTotalDanger ? 'linear-gradient(90deg, #f59e0b, #f4557a)' : 'linear-gradient(90deg, #22d3a5, #5eead4)' }} />
             </div>
           </div>
         </div>
@@ -1791,14 +1791,14 @@ function ChallengeDetailModal({ challenge, trades, onClose, onUpdate }) {
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 20 }}>
           <div style={{ padding: 14, borderRadius: 10, background: theme.hoverBg, textAlign: 'center' }}>
             <div className="stat-label">Net P&L</div>
-            <div style={{ fontSize: 22, fontWeight: 700, color: totalPnl >= 0 ? '#10b981' : '#ef4444', marginTop: 4 }}>
+            <div style={{ fontSize: 22, fontWeight: 700, color: totalPnl >= 0 ? theme.pos : theme.neg, marginTop: 4 }}>
               {totalPnl >= 0 ? '+' : ''}${totalPnl.toFixed(2)}
             </div>
             <div style={{ fontSize: 11, color: theme.textFaint }}>{profitPct.toFixed(2)}%</div>
           </div>
           <div style={{ padding: 14, borderRadius: 10, background: theme.hoverBg, textAlign: 'center' }}>
             <div className="stat-label">Max Drawdown</div>
-            <div style={{ fontSize: 22, fontWeight: 700, color: maxDD >= (phase?.maxTotalDrawdown || 10) * 0.7 ? '#ef4444' : theme.text, marginTop: 4 }}>
+            <div style={{ fontSize: 22, fontWeight: 700, color: maxDD >= (phase?.maxTotalDrawdown || 10) * 0.7 ? theme.neg : theme.text, marginTop: 4 }}>
               {maxDD.toFixed(2)}%
             </div>
             <div style={{ fontSize: 11, color: theme.textFaint }}>Limit: {phase?.maxTotalDrawdown || 10}%</div>
@@ -1813,10 +1813,10 @@ function ChallengeDetailModal({ challenge, trades, onClose, onUpdate }) {
         {/* Additional Stats */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, marginBottom: 20 }}>
           {[
-            { label: 'Best Day', value: `+$${bestDay.toFixed(2)}`, color: '#10b981' },
-            { label: 'Worst Day', value: `$${worstDay.toFixed(2)}`, color: '#ef4444' },
-            { label: 'Avg Daily', value: `$${avgDailyPnl.toFixed(2)}`, color: avgDailyPnl >= 0 ? '#10b981' : '#ef4444' },
-            { label: 'Consistency', value: `${consistencyPct.toFixed(0)}%`, color: consistencyPct <= 40 ? '#10b981' : '#f59e0b' }
+            { label: 'Best Day', value: `+$${bestDay.toFixed(2)}`, color: theme.pos },
+            { label: 'Worst Day', value: `$${worstDay.toFixed(2)}`, color: theme.neg },
+            { label: 'Avg Daily', value: `$${avgDailyPnl.toFixed(2)}`, color: avgDailyPnl >= 0 ? theme.pos : theme.neg },
+            { label: 'Consistency', value: `${consistencyPct.toFixed(0)}%`, color: consistencyPct <= 40 ? theme.pos : '#f59e0b' }
           ].map(stat => (
             <div key={stat.label} style={{ padding: 12, borderRadius: 8, background: theme.hoverBg }}>
               <div className="stat-label">{stat.label}</div>
@@ -1834,18 +1834,18 @@ function ChallengeDetailModal({ challenge, trades, onClose, onUpdate }) {
                 <AreaChart data={equityCurve}>
                   <defs>
                     <linearGradient id="eqGreen" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="#10b981" stopOpacity={0.3} />
-                      <stop offset="100%" stopColor="#10b981" stopOpacity={0} />
+                      <stop offset="0%" stopColor={theme.pos} stopOpacity={0.3} />
+                      <stop offset="100%" stopColor={theme.pos} stopOpacity={0} />
                     </linearGradient>
                     <linearGradient id="eqRed" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="#ef4444" stopOpacity={0.3} />
-                      <stop offset="100%" stopColor="#ef4444" stopOpacity={0} />
+                      <stop offset="0%" stopColor={theme.neg} stopOpacity={0.3} />
+                      <stop offset="100%" stopColor={theme.neg} stopOpacity={0} />
                     </linearGradient>
                   </defs>
                   <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: theme.textFaint }} />
                   <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: theme.textFaint }} tickFormatter={v => `$${v.toLocaleString()}`} domain={['dataMin - 100', 'dataMax + 100']} />
                   <Tooltip contentStyle={{ background: theme.card, border: `1px solid ${theme.cardBorder}`, borderRadius: 8, fontSize: 12 }} formatter={(v) => [`$${v.toLocaleString()}`, 'Equity']} />
-                  <Area type="monotone" dataKey="equity" stroke={totalPnl >= 0 ? '#10b981' : '#ef4444'} fill={totalPnl >= 0 ? 'url(#eqGreen)' : 'url(#eqRed)'} strokeWidth={2} />
+                  <Area type="monotone" dataKey="equity" stroke={totalPnl >= 0 ? theme.pos : theme.neg} fill={totalPnl >= 0 ? 'url(#eqGreen)' : 'url(#eqRed)'} strokeWidth={2} />
                 </AreaChart>
               </ResponsiveContainer>
             </div>
@@ -1870,13 +1870,13 @@ function ChallengeDetailModal({ challenge, trades, onClose, onUpdate }) {
                   const ddPct = (Math.abs(Math.min(data.pnl, 0)) / accountSize * 100);
                   const isDDAlert = ddPct >= (phase?.maxDailyDrawdown || 5) * 0.7;
                   return (
-                    <div key={date} style={{ display: 'grid', gridTemplateColumns: '1fr 80px 80px 80px', gap: 8, padding: '10px 14px', borderTop: `1px solid ${theme.cardBorder}`, background: isDDAlert ? 'rgba(239,68,68,0.05)' : 'transparent' }}>
-                      <span style={{ fontSize: 13, color: theme.text }}>{date} {isDDAlert && <AlertTriangle size={12} style={{ color: '#ef4444', verticalAlign: 'middle', marginLeft: 4 }} />}</span>
+                    <div key={date} style={{ display: 'grid', gridTemplateColumns: '1fr 80px 80px 80px', gap: 8, padding: '10px 14px', borderTop: `1px solid ${theme.cardBorder}`, background: isDDAlert ? 'rgba(244,85,122,0.05)' : 'transparent' }}>
+                      <span style={{ fontSize: 13, color: theme.text }}>{date} {isDDAlert && <AlertTriangle size={12} style={{ color: theme.neg, verticalAlign: 'middle', marginLeft: 4 }} />}</span>
                       <span style={{ fontSize: 13, color: theme.textMuted, textAlign: 'right' }}>{data.trades}</span>
-                      <span style={{ fontSize: 13, fontWeight: 600, color: data.pnl >= 0 ? '#10b981' : '#ef4444', textAlign: 'right' }}>
+                      <span style={{ fontSize: 13, fontWeight: 600, color: data.pnl >= 0 ? theme.pos : theme.neg, textAlign: 'right' }}>
                         {data.pnl >= 0 ? '+' : ''}${data.pnl.toFixed(2)}
                       </span>
-                      <span style={{ fontSize: 13, fontWeight: 500, color: cum >= 0 ? '#10b981' : '#ef4444', textAlign: 'right' }}>
+                      <span style={{ fontSize: 13, fontWeight: 500, color: cum >= 0 ? theme.pos : theme.neg, textAlign: 'right' }}>
                         {cum >= 0 ? '+' : ''}${cum.toFixed(2)}
                       </span>
                     </div>
@@ -1891,7 +1891,7 @@ function ChallengeDetailModal({ challenge, trades, onClose, onUpdate }) {
       {/* Footer Actions */}
       {challenge.status === 'active' && (
         <div style={{ padding: 20, borderTop: `1px solid ${theme.cardBorder}`, display: 'flex', justifyContent: 'space-between' }}>
-          <button onClick={handleMarkFailed} style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'none', border: 'none', fontSize: 14, color: '#ef4444', cursor: 'pointer' }}>
+          <button onClick={handleMarkFailed} style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'none', border: 'none', fontSize: 14, color: theme.neg, cursor: 'pointer' }}>
             <X size={16} />Mark Failed
           </button>
           <div className="flex gap-2">
@@ -1900,7 +1900,7 @@ function ChallengeDetailModal({ challenge, trades, onClose, onUpdate }) {
                 <Flag size={16} />Advance to {challenge.phases[challenge.currentPhase + 1]?.name || 'Next Phase'}
               </button>
             ) : (
-              <button onClick={handleMarkPassed} className="btn-primary" style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'linear-gradient(135deg, #10b981, #34d399)' }}>
+              <button onClick={handleMarkPassed} className="btn-primary" style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'linear-gradient(135deg, #22d3a5, #5eead4)' }}>
                 <Trophy size={16} />Mark as Passed
               </button>
             )}
@@ -2073,7 +2073,7 @@ function NewChallengeModal({ onClose, onSave, accounts }) {
                 + Add Phase
               </button>
               {challenge.phases.length > 1 && (
-                <button onClick={() => setChallenge(prev => ({ ...prev, phases: prev.phases.slice(0, -1) }))} style={{ padding: 10, borderRadius: 8, border: `1px dashed ${theme.cardBorder}`, background: 'none', cursor: 'pointer', fontSize: 13, color: '#ef4444' }}>
+                <button onClick={() => setChallenge(prev => ({ ...prev, phases: prev.phases.slice(0, -1) }))} style={{ padding: 10, borderRadius: 8, border: `1px dashed ${theme.cardBorder}`, background: 'none', cursor: 'pointer', fontSize: 13, color: theme.neg }}>
                   Remove Last
                 </button>
               )}
@@ -2223,7 +2223,7 @@ function ImportModal({ onClose, onImport, accounts }) {
                         <span style={{ fontSize: 13, fontWeight: 600, color: theme.text }}>{phase}</span>
                         <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, background: 'rgba(139,92,246,0.1)', color: '#8b5cf6' }}>{phaseTrades.length} trades</span>
                       </div>
-                      <div style={{ fontSize: 12, color: phasePnl >= 0 ? '#10b981' : '#ef4444', marginTop: 2 }}>
+                      <div style={{ fontSize: 12, color: phasePnl >= 0 ? theme.pos : theme.neg, marginTop: 2 }}>
                         P&L: {phasePnl >= 0 ? '+' : ''}${phasePnl.toFixed(2)}
                       </div>
                     </div>
@@ -2272,15 +2272,15 @@ function ImportModal({ onClose, onImport, accounts }) {
           </div>
         )}
 
-        {error && <div style={{ padding: 12, borderRadius: 10, background: 'rgba(239,68,68,0.1)', display: 'flex', alignItems: 'center', gap: 8 }}><AlertCircle size={16} style={{ color: '#ef4444' }} /><span style={{ fontSize: 13, color: '#ef4444' }}>{error}</span></div>}
-        {success && <div style={{ padding: 12, borderRadius: 10, background: 'rgba(16,185,129,0.1)', display: 'flex', alignItems: 'center', gap: 8 }}><CheckCircle size={16} style={{ color: '#10b981' }} /><span style={{ fontSize: 13, color: '#10b981' }}>{success}</span></div>}
+        {error && <div style={{ padding: 12, borderRadius: 10, background: 'rgba(244,85,122,0.1)', display: 'flex', alignItems: 'center', gap: 8 }}><AlertCircle size={16} style={{ color: theme.neg }} /><span style={{ fontSize: 13, color: theme.neg }}>{error}</span></div>}
+        {success && <div style={{ padding: 12, borderRadius: 10, background: 'rgba(34,211,165,0.1)', display: 'flex', alignItems: 'center', gap: 8 }}><CheckCircle size={16} style={{ color: theme.pos }} /><span style={{ fontSize: 13, color: theme.pos }}>{success}</span></div>}
 
         {/* Trade Preview — grouped by phase if phases detected */}
         {parsedTrades.length > 0 && (
           <div style={{ borderRadius: 10, border: `1px solid ${theme.cardBorder}`, overflow: 'hidden' }}>
             <div style={{ padding: 12, background: theme.hoverBg, display: 'flex', justifyContent: 'space-between' }}>
               <span style={{ fontSize: 13, fontWeight: 500, color: theme.text }}>Preview ({parsedTrades.length} trades)</span>
-              <span style={{ fontSize: 12, color: parsedTrades.reduce((s, t) => s + t.pnl, 0) >= 0 ? '#10b981' : '#ef4444' }}>Total: ${parsedTrades.reduce((s, t) => s + t.pnl, 0).toFixed(2)}</span>
+              <span style={{ fontSize: 12, color: parsedTrades.reduce((s, t) => s + t.pnl, 0) >= 0 ? theme.pos : theme.neg }}>Total: ${parsedTrades.reduce((s, t) => s + t.pnl, 0).toFixed(2)}</span>
             </div>
             <div style={{ maxHeight: 240, overflow: 'auto' }} className="scrollbar">
               {detectedPhases.length > 1 ? (
@@ -2292,18 +2292,18 @@ function ImportModal({ onClose, onImport, accounts }) {
                     <div key={phase}>
                       <div style={{ padding: '8px 10px', background: theme.hoverBg, borderBottom: `1px solid ${theme.cardBorder}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <span style={{ fontSize: 12, fontWeight: 600, color: '#8b5cf6' }}>{phase} ({phaseTrades.length} trades)</span>
-                        <span style={{ fontSize: 11, fontWeight: 600, color: phasePnl >= 0 ? '#10b981' : '#ef4444' }}>{phasePnl >= 0 ? '+' : ''}${phasePnl.toFixed(2)}</span>
+                        <span style={{ fontSize: 11, fontWeight: 600, color: phasePnl >= 0 ? theme.pos : theme.neg }}>{phasePnl >= 0 ? '+' : ''}${phasePnl.toFixed(2)}</span>
                       </div>
                       {phaseTrades.map((t, i) => (
                         <div key={i} style={{ padding: 10, borderBottom: `1px solid ${theme.cardBorder}`, display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
                           <div className="flex items-center gap-3">
                             <span style={{ fontWeight: 600, color: theme.text }}>{t.symbol}</span>
-                            <span style={{ color: t.side === 'Long' ? '#10b981' : '#ef4444' }}>{t.side}</span>
+                            <span style={{ color: t.side === 'Long' ? theme.pos : theme.neg }}>{t.side}</span>
                             <span style={{ color: theme.textFaint }}>{t.lots} lots</span>
                           </div>
                           <div className="flex items-center gap-3">
                             <span style={{ color: theme.textFaint }}>{t.date}</span>
-                            <span style={{ fontWeight: 600, color: t.pnl >= 0 ? '#10b981' : '#ef4444' }}>{t.pnl >= 0 ? '+' : ''}${t.pnl.toFixed(2)}</span>
+                            <span style={{ fontWeight: 600, color: t.pnl >= 0 ? theme.pos : theme.neg }}>{t.pnl >= 0 ? '+' : ''}${t.pnl.toFixed(2)}</span>
                           </div>
                         </div>
                       ))}
@@ -2316,12 +2316,12 @@ function ImportModal({ onClose, onImport, accounts }) {
                   <div key={i} style={{ padding: 10, borderBottom: `1px solid ${theme.cardBorder}`, display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
                     <div className="flex items-center gap-3">
                       <span style={{ fontWeight: 600, color: theme.text }}>{t.symbol}</span>
-                      <span style={{ color: t.side === 'Long' ? '#10b981' : '#ef4444' }}>{t.side}</span>
+                      <span style={{ color: t.side === 'Long' ? theme.pos : theme.neg }}>{t.side}</span>
                       <span style={{ color: theme.textFaint }}>{t.lots} lots</span>
                     </div>
                     <div className="flex items-center gap-3">
                       <span style={{ color: theme.textFaint }}>{t.date}</span>
-                      <span style={{ fontWeight: 600, color: t.pnl >= 0 ? '#10b981' : '#ef4444' }}>{t.pnl >= 0 ? '+' : ''}${t.pnl.toFixed(2)}</span>
+                      <span style={{ fontWeight: 600, color: t.pnl >= 0 ? theme.pos : theme.neg }}>{t.pnl >= 0 ? '+' : ''}${t.pnl.toFixed(2)}</span>
                     </div>
                   </div>
                 ))
@@ -2343,7 +2343,7 @@ function ImportModal({ onClose, onImport, accounts }) {
 // ==================== JOURNAL IDEAS VIEW ====================
 const TIMEFRAMES = ['Daily', 'Weekly', 'Monthly'];
 const BIAS_OPTIONS = ['Bullish', 'Bearish', 'Neutral', 'No Trade'];
-const BIAS_COLORS = { Bullish: '#10b981', Bearish: '#ef4444', Neutral: '#8b5cf6', 'No Trade': '#64748b' };
+const BIAS_COLORS = { Bullish: '#22d3a5', Bearish: '#f4557a', Neutral: '#8b5cf6', 'No Trade': '#64748b' };
 const COMMON_INSTRUMENTS = ['EURUSD', 'GBPUSD', 'USDJPY', 'XAUUSD', 'GBPJPY', 'EURJPY', 'NAS100', 'US30', 'AUDUSD', 'USDCAD'];
 
 function JournalIdeasView({ entries, onAdd, onUpdate, onDelete, autoNew }) {
@@ -2652,7 +2652,7 @@ function JournalEntryForm({ entry, onSave, onCancel }) {
 }
 
 // ==================== NEWS / ECONOMIC CALENDAR VIEW ====================
-const IMPACT_COLORS = { High: '#ef4444', Medium: '#f59e0b', Low: '#8b5cf6', Holiday: '#64748b' };
+const IMPACT_COLORS = { High: '#f4557a', Medium: '#f59e0b', Low: '#8b5cf6', Holiday: '#64748b' };
 const NEWS_CURRENCIES = ['All', 'USD', 'EUR', 'GBP', 'JPY', 'AUD', 'CAD', 'CHF', 'NZD'];
 
 // ---- Trading sessions (defined in UTC; rendered in the user's chosen timezone) ----
@@ -3074,8 +3074,8 @@ function NewsCalendarView() {
           {/* Status */}
           <div className="flex items-center gap-2" style={{ fontSize: 11, color: theme.textFaint }}>
             {highImpactToday > 0 && (
-              <span className="chip" style={{ color: '#ef4444', background: 'rgba(239,68,68,0.12)', borderColor: 'rgba(239,68,68,0.28)', fontWeight: 600 }}>
-                <span className="pulse-warn" style={{ width: 6, height: 6, borderRadius: 999, background: '#ef4444', display: 'inline-block' }} />
+              <span className="chip" style={{ color: theme.neg, background: 'rgba(244,85,122,0.12)', borderColor: 'rgba(244,85,122,0.28)', fontWeight: 600 }}>
+                <span className="pulse-warn" style={{ width: 6, height: 6, borderRadius: 999, background: theme.neg, display: 'inline-block' }} />
                 {highImpactToday} high-impact today
               </span>
             )}
@@ -3136,9 +3136,9 @@ function NewsCalendarView() {
 
       {/* Error */}
       {error && (
-        <div style={{ padding: 16, borderRadius: 14, background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.28)', display: 'flex', alignItems: 'center', gap: 10 }}>
-          <AlertCircle size={16} style={{ color: '#ef4444', flexShrink: 0 }} />
-          <span style={{ fontSize: 13, color: '#ef4444' }}>{error}</span>
+        <div style={{ padding: 16, borderRadius: 14, background: 'rgba(244,85,122,0.1)', border: '1px solid rgba(244,85,122,0.28)', display: 'flex', alignItems: 'center', gap: 10 }}>
+          <AlertCircle size={16} style={{ color: theme.neg, flexShrink: 0 }} />
+          <span style={{ fontSize: 13, color: theme.neg }}>{error}</span>
         </div>
       )}
 
@@ -3163,7 +3163,7 @@ function NewsCalendarView() {
               </span>
               <span style={{ flex: 1, height: 1, background: theme.cardBorder, minWidth: 12 }} />
               {highCount > 0 && (
-                <span className="chip" style={{ color: '#ef4444', background: 'rgba(239,68,68,0.12)', borderColor: 'rgba(239,68,68,0.28)', fontWeight: 600 }}>
+                <span className="chip" style={{ color: theme.neg, background: 'rgba(244,85,122,0.12)', borderColor: 'rgba(244,85,122,0.28)', fontWeight: 600 }}>
                   {highCount} high impact
                 </span>
               )}
@@ -3186,8 +3186,8 @@ function NewsCalendarView() {
                 const impactColor = IMPACT_COLORS[event.impact] || theme.textFaint;
                 const isHigh = event.impact === 'High';
                 return (
-                  <div key={i} className="news-row" style={{ position: 'relative', display: 'grid', gridTemplateColumns: '76px 54px 74px 1fr 82px 82px 82px', gap: 8, padding: '13px 18px', borderBottom: `1px solid ${theme.cardBorder}`, background: isHigh ? (theme.dark ? 'rgba(239,68,68,0.055)' : 'rgba(239,68,68,0.035)') : 'transparent' }}>
-                    {isHigh && <span style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 2.5, background: '#ef4444' }} />}
+                  <div key={i} className="news-row" style={{ position: 'relative', display: 'grid', gridTemplateColumns: '76px 54px 74px 1fr 82px 82px 82px', gap: 8, padding: '13px 18px', borderBottom: `1px solid ${theme.cardBorder}`, background: isHigh ? (theme.dark ? 'rgba(244,85,122,0.055)' : 'rgba(244,85,122,0.035)') : 'transparent' }}>
+                    {isHigh && <span style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 2.5, background: theme.neg }} />}
                     <span style={{ fontSize: 12.5, color: theme.textMuted, fontFamily: "'JetBrains Mono', monospace" }}>{eventTime}</span>
                     <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>{event.country}</span>
                     <span className="badge" style={{ background: `${impactColor}1f`, color: impactColor, justifySelf: 'start' }}>
@@ -3257,7 +3257,7 @@ function JournalView({ trades, accounts, filterAccount, setFilterAccount, onSele
                 {selectedIds.size === filtered.length ? 'Deselect All' : 'Select All'}
               </button>
               {selectedIds.size > 0 && (
-                <button onClick={handleBulkDelete} style={{ padding: '7px 14px', borderRadius: 8, border: 'none', background: '#ef4444', fontSize: 12, fontWeight: 500, color: 'white', cursor: 'pointer' }}>
+                <button onClick={handleBulkDelete} style={{ padding: '7px 14px', borderRadius: 8, border: 'none', background: theme.neg, fontSize: 12, fontWeight: 500, color: 'white', cursor: 'pointer' }}>
                   Delete {selectedIds.size}
                 </button>
               )}
@@ -3306,17 +3306,17 @@ function JournalView({ trades, accounts, filterAccount, setFilterAccount, onSele
                       <img src={chartImg} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={(e) => e.target.style.display = 'none'} />
                     </div>
                   ) : (
-                    <div style={{ width: 36, height: 36, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 600, background: trade.pnl >= 0 ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)', color: trade.pnl >= 0 ? '#10b981' : '#ef4444' }}>{trade.symbol?.slice(0, 2)}</div>
+                    <div style={{ width: 36, height: 36, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 600, background: trade.pnl >= 0 ? 'rgba(34,211,165,0.1)' : 'rgba(244,85,122,0.1)', color: trade.pnl >= 0 ? theme.pos : theme.neg }}>{trade.symbol?.slice(0, 2)}</div>
                   )}
                   <div>
                     <div style={{ fontSize: 14, fontWeight: 500, color: theme.text }}>{trade.symbol}</div>
                     <div style={{ fontSize: 12, color: theme.textFaint }}>{trade.date}</div>
                   </div>
                 </div>
-                <span className="badge" style={{ background: trade.side === 'Long' ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)', color: trade.side === 'Long' ? '#10b981' : '#ef4444' }}>{trade.side}</span>
+                <span className="badge" style={{ background: trade.side === 'Long' ? 'rgba(34,211,165,0.1)' : 'rgba(244,85,122,0.1)', color: trade.side === 'Long' ? theme.pos : theme.neg }}>{trade.side}</span>
                 <span className="badge" style={{ background: MARKET_STRUCTURES[trade.marketStructure]?.color, color: 'white' }}>{trade.marketStructure?.replace('_', ' ').slice(0, 8)}</span>
                 <span style={{ fontSize: 14, color: theme.text }}>{trade.lots}</span>
-                <span style={{ fontSize: 14, fontWeight: 600, color: trade.pnl >= 0 ? '#10b981' : '#ef4444', textAlign: 'right' }}>{trade.pnl >= 0 ? '+' : ''}${trade.pnl?.toFixed(2)}</span>
+                <span style={{ fontSize: 14, fontWeight: 600, color: trade.pnl >= 0 ? theme.pos : theme.neg, textAlign: 'right' }}>{trade.pnl >= 0 ? '+' : ''}${trade.pnl?.toFixed(2)}</span>
                 {!selectMode && <Eye size={16} style={{ color: theme.textFaint }} />}
               </div>
             );
@@ -3341,8 +3341,8 @@ function JournalView({ trades, accounts, filterAccount, setFilterAccount, onSele
                     <img src={chartImg} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={(e) => e.target.parentElement.style.display = 'none'} />
                   </div>
                 ) : (
-                  <div style={{ width: '100%', height: 80, background: trade.pnl >= 0 ? 'rgba(16,185,129,0.05)' : 'rgba(239,68,68,0.05)', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
-                    <span style={{ fontSize: 28, fontWeight: 700, color: trade.pnl >= 0 ? '#10b981' : '#ef4444', opacity: 0.3 }}>{trade.symbol}</span>
+                  <div style={{ width: '100%', height: 80, background: trade.pnl >= 0 ? 'rgba(34,211,165,0.05)' : 'rgba(244,85,122,0.05)', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
+                    <span style={{ fontSize: 28, fontWeight: 700, color: trade.pnl >= 0 ? theme.pos : theme.neg, opacity: 0.3 }}>{trade.symbol}</span>
                   </div>
                 )}
                 <div style={{ padding: 16 }}>
@@ -3351,10 +3351,10 @@ function JournalView({ trades, accounts, filterAccount, setFilterAccount, onSele
                       <div style={{ fontSize: 15, fontWeight: 600, color: theme.text }}>{trade.symbol}</div>
                       <div style={{ fontSize: 12, color: theme.textFaint }}>{trade.date} · {trade.time}</div>
                     </div>
-                    <span style={{ fontSize: 18, fontWeight: 700, color: trade.pnl >= 0 ? '#10b981' : '#ef4444' }}>{trade.pnl >= 0 ? '+' : ''}${trade.pnl?.toFixed(2)}</span>
+                    <span style={{ fontSize: 18, fontWeight: 700, color: trade.pnl >= 0 ? theme.pos : theme.neg }}>{trade.pnl >= 0 ? '+' : ''}${trade.pnl?.toFixed(2)}</span>
                   </div>
                   <div className="flex items-center gap-2" style={{ flexWrap: 'wrap' }}>
-                    <span className="badge" style={{ background: trade.side === 'Long' ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)', color: trade.side === 'Long' ? '#10b981' : '#ef4444' }}>{trade.side}</span>
+                    <span className="badge" style={{ background: trade.side === 'Long' ? 'rgba(34,211,165,0.1)' : 'rgba(244,85,122,0.1)', color: trade.side === 'Long' ? theme.pos : theme.neg }}>{trade.side}</span>
                     <span className="badge" style={{ background: MARKET_STRUCTURES[trade.marketStructure]?.color, color: 'white' }}>{MARKET_STRUCTURES[trade.marketStructure]?.label?.split(' ')[0]}</span>
                     <span style={{ fontSize: 12, color: theme.textMuted }}>{trade.lots} lots</span>
                   </div>
@@ -3435,10 +3435,12 @@ function DashboardView({ trades, accounts, challenges, selectedAccount, setSelec
   const sortedTrades = [...filtered].sort((a, b) => new Date(b.date + ' ' + b.time) - new Date(a.date + ' ' + a.time));
   const recentTrades = sortedTrades.slice(0, 5);
 
-  // Active challenges summary
-  const activeChallenges = challenges.filter(c => c.status === 'active');
+  // Active challenges summary — follows the account dropdown; hidden on "All Accounts".
+  const activeChallenges = selectedAccount === 'all'
+    ? []
+    : challenges.filter(c => c.status === 'active' && c.account === selectedAccount);
 
-  const DonutChart = ({ value, size = 60, strokeWidth = 6, color = '#10b981' }) => {
+  const DonutChart = ({ value, size = 60, strokeWidth = 6, color = theme.pos }) => {
     const radius = (size - strokeWidth) / 2;
     const circumference = 2 * Math.PI * radius;
     const offset = circumference - (value / 100) * circumference;
@@ -3493,8 +3495,8 @@ function DashboardView({ trades, accounts, challenges, selectedAccount, setSelec
 
       {/* Active Challenges Banner */}
       {activeChallenges.length > 0 && (
-        <div style={{ display: 'grid', gridTemplateColumns: `repeat(${Math.min(activeChallenges.length, 3)}, 1fr)`, gap: 12 }}>
-          {activeChallenges.slice(0, 3).map(ch => {
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 12 }}>
+          {activeChallenges.map(ch => {
             const chTrades = trades.filter(t => t.account === ch.account && (!ch.startDate || t.date >= ch.startDate));
             const chPnl = chTrades.reduce((s, t) => s + (parseFloat(t.pnl) || 0), 0);
             const chAccountSize = ch.accountSize || 1;
@@ -3513,11 +3515,11 @@ function DashboardView({ trades, accounts, challenges, selectedAccount, setSelec
                   <Shield size={16} style={{ color: '#8b5cf6' }} />
                 </div>
                 <div className="flex items-center justify-between" style={{ marginBottom: 6 }}>
-                  <span style={{ fontSize: 16, fontWeight: 700, color: chPnl >= 0 ? '#10b981' : '#ef4444' }}>{chProfitPct.toFixed(2)}%</span>
+                  <span style={{ fontSize: 16, fontWeight: 700, color: chPnl >= 0 ? theme.pos : theme.neg }}>{chProfitPct.toFixed(2)}%</span>
                   <span style={{ fontSize: 12, color: theme.textFaint }}>/ {targetPct}%</span>
                 </div>
                 <div style={{ height: 6, borderRadius: 3, background: theme.hoverBg, overflow: 'hidden' }}>
-                  <div className="progress-bar-animate" style={{ height: '100%', borderRadius: 3, width: `${Math.max(progress, 0)}%`, background: progress >= 100 ? '#10b981' : '#8b5cf6' }} />
+                  <div className="progress-bar-animate" style={{ height: '100%', borderRadius: 3, width: `${Math.max(progress, 0)}%`, background: progress >= 100 ? theme.pos : '#8b5cf6' }} />
                 </div>
               </div>
             );
@@ -3529,24 +3531,24 @@ function DashboardView({ trades, accounts, challenges, selectedAccount, setSelec
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 12 }}>
         <div className="card" style={{ padding: 16 }}>
           <div className="flex items-center gap-2"><div className="stat-label">Net P&L</div><div style={{ width: 18, height: 18, borderRadius: 4, background: theme.hoverBg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, color: theme.textFaint }}>{totalTrades}</div></div>
-          <div style={{ fontSize: 22, fontWeight: 700, color: totalPnl >= 0 ? '#10b981' : '#ef4444', marginTop: 6 }}>{totalPnl >= 0 ? '+' : ''}${totalPnl.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+          <div style={{ fontSize: 22, fontWeight: 700, color: totalPnl >= 0 ? theme.pos : theme.neg, marginTop: 6 }}>{totalPnl >= 0 ? '+' : ''}${totalPnl.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
         </div>
         <div className="card" style={{ padding: 16 }}>
           <div className="stat-label">Trade Expectancy</div>
-          <div style={{ fontSize: 22, fontWeight: 700, color: expectancy >= 0 ? '#10b981' : '#ef4444', marginTop: 6 }}>${expectancy.toFixed(2)}</div>
+          <div style={{ fontSize: 22, fontWeight: 700, color: expectancy >= 0 ? theme.pos : theme.neg, marginTop: 6 }}>${expectancy.toFixed(2)}</div>
         </div>
         <div className="card" style={{ padding: 16 }}>
           <div className="stat-label">Profit Factor</div>
           <div className="flex items-center gap-3" style={{ marginTop: 6 }}>
-            <span style={{ fontSize: 22, fontWeight: 700, color: profitFactor >= 1.5 ? '#10b981' : profitFactor >= 1 ? '#f59e0b' : '#ef4444' }}>{profitFactor >= 99 ? '∞' : profitFactor.toFixed(2)}</span>
-            <DonutChart value={Math.min(profitFactor / 3 * 100, 100)} size={40} strokeWidth={4} color={profitFactor >= 1.5 ? '#10b981' : profitFactor >= 1 ? '#f59e0b' : '#ef4444'} />
+            <span style={{ fontSize: 22, fontWeight: 700, color: profitFactor >= 1.5 ? theme.pos : profitFactor >= 1 ? '#f59e0b' : theme.neg }}>{profitFactor >= 99 ? '∞' : profitFactor.toFixed(2)}</span>
+            <DonutChart value={Math.min(profitFactor / 3 * 100, 100)} size={40} strokeWidth={4} color={profitFactor >= 1.5 ? theme.pos : profitFactor >= 1 ? '#f59e0b' : theme.neg} />
           </div>
         </div>
         <div className="card" style={{ padding: 16 }}>
-          <div className="flex items-center gap-2"><div className="stat-label">Win %</div><div style={{ display: 'flex', gap: 4 }}><span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 4, background: '#10b981', color: 'white' }}>{wins.length}</span><span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 4, background: '#ef4444', color: 'white' }}>{losses.length}</span></div></div>
+          <div className="flex items-center gap-2"><div className="stat-label">Win %</div><div style={{ display: 'flex', gap: 4 }}><span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 4, background: theme.pos, color: 'white' }}>{wins.length}</span><span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 4, background: theme.neg, color: 'white' }}>{losses.length}</span></div></div>
           <div className="flex items-center gap-3" style={{ marginTop: 6 }}>
             <span style={{ fontSize: 22, fontWeight: 700, color: theme.text }}>{winRate.toFixed(2)}%</span>
-            <DonutChart value={winRate} size={40} strokeWidth={4} color={winRate >= 50 ? '#10b981' : '#ef4444'} />
+            <DonutChart value={winRate} size={40} strokeWidth={4} color={winRate >= 50 ? theme.pos : theme.neg} />
           </div>
         </div>
         <div className="card" style={{ padding: 16 }}>
@@ -3554,8 +3556,8 @@ function DashboardView({ trades, accounts, challenges, selectedAccount, setSelec
           <div className="flex items-center gap-2" style={{ marginTop: 6 }}>
             <span style={{ fontSize: 22, fontWeight: 700, color: theme.text }}>{avgWinLossRatio.toFixed(1)}</span>
             <div style={{ display: 'flex', flexDirection: 'column', fontSize: 11 }}>
-              <span style={{ color: '#10b981' }}>${avgWin.toFixed(2)}</span>
-              <span style={{ color: '#ef4444' }}>${avgLoss.toFixed(2)}</span>
+              <span style={{ color: theme.pos }}>${avgWin.toFixed(2)}</span>
+              <span style={{ color: theme.neg }}>${avgLoss.toFixed(2)}</span>
             </div>
           </div>
         </div>
@@ -3569,7 +3571,7 @@ function DashboardView({ trades, accounts, challenges, selectedAccount, setSelec
             <RadarChart winRate={winRate} avgRatio={avgWinLossRatio} pf={profitFactor} size={160} />
             <div style={{ marginTop: 8, textAlign: 'center' }}>
               <span style={{ fontSize: 14, color: theme.textMuted }}>Your Score: </span>
-              <span style={{ fontSize: 24, fontWeight: 700, color: ellipseScore >= 70 ? '#10b981' : ellipseScore >= 40 ? '#f59e0b' : '#ef4444' }}>{totalTrades < 5 ? '--' : ellipseScore.toFixed(0)}</span>
+              <span style={{ fontSize: 24, fontWeight: 700, color: ellipseScore >= 70 ? theme.pos : ellipseScore >= 40 ? '#f59e0b' : theme.neg }}>{totalTrades < 5 ? '--' : ellipseScore.toFixed(0)}</span>
             </div>
           </div>
         </div>
@@ -3580,13 +3582,13 @@ function DashboardView({ trades, accounts, challenges, selectedAccount, setSelec
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={cumulativePnlData}>
                   <defs>
-                    <linearGradient id="cumGreen" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#10b981" stopOpacity={0.3} /><stop offset="100%" stopColor="#10b981" stopOpacity={0} /></linearGradient>
-                    <linearGradient id="cumRed" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#ef4444" stopOpacity={0.3} /><stop offset="100%" stopColor="#ef4444" stopOpacity={0} /></linearGradient>
+                    <linearGradient id="cumGreen" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={theme.pos} stopOpacity={0.3} /><stop offset="100%" stopColor={theme.pos} stopOpacity={0} /></linearGradient>
+                    <linearGradient id="cumRed" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={theme.neg} stopOpacity={0.3} /><stop offset="100%" stopColor={theme.neg} stopOpacity={0} /></linearGradient>
                   </defs>
                   <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: theme.textFaint }} />
                   <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: theme.textFaint }} tickFormatter={v => `$${v}`} width={60} />
                   <Tooltip contentStyle={{ background: theme.card, border: `1px solid ${theme.cardBorder}`, borderRadius: 8, fontSize: 12, color: theme.text }} labelStyle={{ color: theme.textMuted }} formatter={(v) => [`$${v.toFixed(2)}`, 'Cumulative']} />
-                  <Area type="monotone" dataKey="pnl" stroke={totalPnl >= 0 ? '#10b981' : '#ef4444'} fill={totalPnl >= 0 ? 'url(#cumGreen)' : 'url(#cumRed)'} strokeWidth={2} />
+                  <Area type="monotone" dataKey="pnl" stroke={totalPnl >= 0 ? theme.pos : theme.neg} fill={totalPnl >= 0 ? 'url(#cumGreen)' : 'url(#cumRed)'} strokeWidth={2} />
                 </AreaChart>
               </ResponsiveContainer>
             ) : <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.textFaint, fontSize: 12 }}>No data yet</div>}
@@ -3601,7 +3603,7 @@ function DashboardView({ trades, accounts, challenges, selectedAccount, setSelec
                   <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: theme.textFaint }} />
                   <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: theme.textFaint }} tickFormatter={v => `$${v}`} width={60} />
                   <Tooltip contentStyle={{ background: theme.card, border: `1px solid ${theme.cardBorder}`, borderRadius: 8, fontSize: 12, color: theme.text }} labelStyle={{ color: theme.textMuted }} formatter={(v) => [`$${v.toFixed(2)}`, 'Daily P&L']} cursor={{ fill: theme.hoverBg }} />
-                  <Bar dataKey="pnl" radius={[4, 4, 0, 0]}>{dailyPnlData.map((entry, index) => <Cell key={index} fill={entry.pnl >= 0 ? '#10b981' : '#ef4444'} />)}</Bar>
+                  <Bar dataKey="pnl" radius={[4, 4, 0, 0]}>{dailyPnlData.map((entry, index) => <Cell key={index} fill={entry.pnl >= 0 ? theme.pos : theme.neg} />)}</Bar>
                 </BarChart>
               </ResponsiveContainer>
             ) : <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.textFaint, fontSize: 12 }}>No data yet</div>}
@@ -3621,7 +3623,7 @@ function DashboardView({ trades, accounts, challenges, selectedAccount, setSelec
                     <div style={{ fontSize: 12, color: theme.textFaint }}>{t.date}</div>
                     <div style={{ fontSize: 13, fontWeight: 500, color: theme.text }}>{t.symbol}</div>
                   </div>
-                  <span style={{ fontSize: 13, fontWeight: 600, color: t.pnl >= 0 ? '#10b981' : '#ef4444' }}>{t.pnl >= 0 ? '+' : ''}${t.pnl.toFixed(2)}</span>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: t.pnl >= 0 ? theme.pos : theme.neg }}>{t.pnl >= 0 ? '+' : ''}${t.pnl.toFixed(2)}</span>
                 </div>
               ))}
           </div>
@@ -3635,7 +3637,7 @@ function DashboardView({ trades, accounts, challenges, selectedAccount, setSelec
               <button onClick={() => setDashboardMonth(new Date(dashboardMonth.getFullYear(), dashboardMonth.getMonth() + 1))} style={{ padding: 6, borderRadius: 6, border: 'none', background: theme.hoverBg, cursor: 'pointer' }}><ChevronRight size={16} style={{ color: theme.textMuted }} /></button>
             </div>
             <div className="flex items-center gap-3" style={{ fontSize: 12, color: theme.textMuted }}>
-              <span style={{ color: monthlyPnl >= 0 ? '#10b981' : '#ef4444', fontWeight: 600 }}>${monthlyPnl.toFixed(2)}</span>
+              <span style={{ color: monthlyPnl >= 0 ? theme.pos : theme.neg, fontWeight: 600 }}>${monthlyPnl.toFixed(2)}</span>
               <span>{monthlyTradeDays} days</span>
             </div>
           </div>
@@ -3645,12 +3647,12 @@ function DashboardView({ trades, accounts, challenges, selectedAccount, setSelec
               const data = getDayData(day);
               const dayBg = data 
                 ? data.pnl >= 0 
-                  ? 'linear-gradient(135deg, rgba(16,185,129,0.08) 0%, rgba(16,185,129,0.22) 100%)'
-                  : 'linear-gradient(135deg, rgba(239,68,68,0.08) 0%, rgba(239,68,68,0.22) 100%)'
+                  ? 'linear-gradient(135deg, rgba(34,211,165,0.08) 0%, rgba(34,211,165,0.22) 100%)'
+                  : 'linear-gradient(135deg, rgba(244,85,122,0.08) 0%, rgba(244,85,122,0.22) 100%)'
                 : 'transparent';
               return (
-                <div key={i} style={{ minHeight: 50, padding: 4, borderRadius: 6, background: dayBg, border: day ? `1px solid ${data ? (data.pnl >= 0 ? 'rgba(16,185,129,0.25)' : 'rgba(239,68,68,0.25)') : theme.cardBorder}` : 'none' }}>
-                  {day && <><div style={{ fontSize: 11, color: data ? (data.pnl >= 0 ? '#10b981' : '#ef4444') : theme.textMuted, fontWeight: data ? 600 : 400 }}>{day}</div>{data && <div style={{ marginTop: 2 }}><div style={{ fontSize: 11, fontWeight: 600, color: data.pnl >= 0 ? '#10b981' : '#ef4444' }}>{data.pnl >= 0 ? '+' : ''}{Math.abs(data.pnl) >= 1000 ? (data.pnl / 1000).toFixed(1) + 'K' : data.pnl.toFixed(0)}</div><div style={{ fontSize: 9, color: theme.textFaint }}>{data.trades}t</div></div>}</>}
+                <div key={i} style={{ minHeight: 50, padding: 4, borderRadius: 6, background: dayBg, border: day ? `1px solid ${data ? (data.pnl >= 0 ? 'rgba(34,211,165,0.25)' : 'rgba(244,85,122,0.25)') : theme.cardBorder}` : 'none' }}>
+                  {day && <><div style={{ fontSize: 11, color: data ? (data.pnl >= 0 ? theme.pos : theme.neg) : theme.textMuted, fontWeight: data ? 600 : 400 }}>{day}</div>{data && <div style={{ marginTop: 2 }}><div style={{ fontSize: 11, fontWeight: 600, color: data.pnl >= 0 ? theme.pos : theme.neg }}>{data.pnl >= 0 ? '+' : ''}{Math.abs(data.pnl) >= 1000 ? (data.pnl / 1000).toFixed(1) + 'K' : data.pnl.toFixed(0)}</div><div style={{ fontSize: 9, color: theme.textFaint }}>{data.trades}t</div></div>}</>}
                 </div>
               );
             })}
@@ -3693,8 +3695,8 @@ function AccountsView({ accounts, challenges, trades, onUpdate, onDelete }) {
 
     const statusColors = {
       active: { bg: 'rgba(139,92,246,0.1)', text: '#8b5cf6', label: 'Active' },
-      passed: { bg: 'rgba(16,185,129,0.1)', text: '#10b981', label: 'Passed' },
-      failed: { bg: 'rgba(239,68,68,0.1)', text: '#ef4444', label: 'Failed' },
+      passed: { bg: 'rgba(34,211,165,0.1)', text: theme.pos, label: 'Passed' },
+      failed: { bg: 'rgba(244,85,122,0.1)', text: theme.neg, label: 'Failed' },
       funded: { bg: 'rgba(245,158,11,0.1)', text: '#f59e0b', label: 'Funded' }
     };
 
@@ -3725,7 +3727,7 @@ function AccountsView({ accounts, challenges, trades, onUpdate, onDelete }) {
         </div>
         <div className="card" style={{ padding: 20 }}>
           <div className="stat-label">Merged Equity</div>
-          <div className="stat-value" style={{ color: totalEquity >= totalBalance ? '#10b981' : '#ef4444', marginTop: 6 }}>${totalEquity.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+          <div className="stat-value" style={{ color: totalEquity >= totalBalance ? theme.pos : theme.neg, marginTop: 6 }}>${totalEquity.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
         </div>
         <div className="card" style={{ padding: 20 }}>
           <div className="stat-label">Prop Challenges</div>
@@ -3769,13 +3771,13 @@ function AccountsView({ accounts, challenges, trades, onUpdate, onDelete }) {
                       </div>
                       <div style={{ textAlign: 'right' }}>
                         <div style={{ fontSize: 11, fontWeight: 600, color: theme.textMuted, textTransform: 'uppercase', letterSpacing: '0.5px' }}>P&L</div>
-                        <div style={{ fontSize: 15, fontWeight: 600, color: totalPnl >= 0 ? '#10b981' : '#ef4444', marginTop: 2 }}>
+                        <div style={{ fontSize: 15, fontWeight: 600, color: totalPnl >= 0 ? theme.pos : theme.neg, marginTop: 2 }}>
                           {totalPnl >= 0 ? '+' : ''}${totalPnl.toFixed(2)}
                         </div>
                       </div>
                       <div style={{ textAlign: 'right', minWidth: 100 }}>
                         <div style={{ fontSize: 11, fontWeight: 600, color: theme.textMuted, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Equity</div>
-                        <div style={{ fontSize: 18, fontWeight: 700, color: mergedEquity >= ch.accountSize ? '#10b981' : '#ef4444', marginTop: 2 }}>
+                        <div style={{ fontSize: 18, fontWeight: 700, color: mergedEquity >= ch.accountSize ? theme.pos : theme.neg, marginTop: 2 }}>
                           ${mergedEquity.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </div>
                       </div>
@@ -3791,8 +3793,8 @@ function AccountsView({ accounts, challenges, trades, onUpdate, onDelete }) {
                         <div style={{ display: 'flex', alignItems: 'center', gap: 0, position: 'relative' }}>
                           {phaseBreakdown.map((p, idx) => {
                             const isLast = idx === phaseBreakdown.length - 1;
-                            const dotColor = p.isPast ? '#10b981' : p.isCurrent ? '#8b5cf6' : theme.cardBorder;
-                            const lineColor = p.isPast ? '#10b981' : theme.cardBorder;
+                            const dotColor = p.isPast ? theme.pos : p.isCurrent ? '#8b5cf6' : theme.cardBorder;
+                            const lineColor = p.isPast ? theme.pos : theme.cardBorder;
                             return (
                               <div key={idx} style={{ flex: 1, display: 'flex', alignItems: 'center' }}>
                                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', zIndex: 1 }}>
@@ -3800,7 +3802,7 @@ function AccountsView({ accounts, challenges, trades, onUpdate, onDelete }) {
                                     {p.isPast && <CheckCircle size={8} style={{ color: 'white' }} />}
                                   </div>
                                   <div style={{ marginTop: 8, textAlign: 'center' }}>
-                                    <div style={{ fontSize: 12, fontWeight: p.isCurrent ? 600 : 400, color: p.isCurrent ? '#8b5cf6' : p.isPast ? '#10b981' : theme.textFaint }}>{p.name}</div>
+                                    <div style={{ fontSize: 12, fontWeight: p.isCurrent ? 600 : 400, color: p.isCurrent ? '#8b5cf6' : p.isPast ? theme.pos : theme.textFaint }}>{p.name}</div>
                                     {p.profitTarget && <div style={{ fontSize: 11, color: theme.textFaint }}>{p.profitTarget}% target</div>}
                                     {!p.profitTarget && p.name?.toLowerCase().includes('funded') && <div style={{ fontSize: 11, color: '#f59e0b' }}>Live</div>}
                                   </div>
@@ -3816,7 +3818,7 @@ function AccountsView({ accounts, challenges, trades, onUpdate, onDelete }) {
                       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10 }}>
                         <div style={{ padding: 14, borderRadius: 10, background: theme.hoverBg }}>
                           <div className="stat-label">Profit Target</div>
-                          <div style={{ fontSize: 16, fontWeight: 600, color: profitPct >= (phase.profitTarget || 999) ? '#10b981' : theme.text, marginTop: 4 }}>
+                          <div style={{ fontSize: 16, fontWeight: 600, color: profitPct >= (phase.profitTarget || 999) ? theme.pos : theme.text, marginTop: 4 }}>
                             {profitPct.toFixed(2)}% {phase.profitTarget ? `/ ${phase.profitTarget}%` : ''}
                           </div>
                         </div>
@@ -3830,7 +3832,7 @@ function AccountsView({ accounts, challenges, trades, onUpdate, onDelete }) {
                         </div>
                         <div style={{ padding: 14, borderRadius: 10, background: theme.hoverBg }}>
                           <div className="stat-label">Trading Days</div>
-                          <div style={{ fontSize: 16, fontWeight: 600, color: tradingDays >= (phase.minTradingDays || 0) ? '#10b981' : theme.text, marginTop: 4 }}>
+                          <div style={{ fontSize: 16, fontWeight: 600, color: tradingDays >= (phase.minTradingDays || 0) ? theme.pos : theme.text, marginTop: 4 }}>
                             {tradingDays} {phase.minTradingDays ? `/ ${phase.minTradingDays} min` : ''}
                           </div>
                         </div>
@@ -3848,7 +3850,7 @@ function AccountsView({ accounts, challenges, trades, onUpdate, onDelete }) {
                               <Edit3 size={14} style={{ color: theme.textFaint }} />
                             </button>
                             <button onClick={(e) => { e.stopPropagation(); setDeleteId(linkedAccount.id); }} title="Delete account" style={{ padding: 6, borderRadius: 6, background: 'transparent', border: 'none', cursor: 'pointer' }}>
-                              <Trash2 size={14} style={{ color: '#ef4444' }} />
+                              <Trash2 size={14} style={{ color: theme.neg }} />
                             </button>
                           </div>
                         </div>
@@ -3877,7 +3879,7 @@ function AccountsView({ accounts, challenges, trades, onUpdate, onDelete }) {
                 </div>
                 <div className="flex items-center gap-8">
                   <div style={{ textAlign: 'right' }}><div style={{ fontSize: 14, fontWeight: 600, color: theme.text }}>${acc.balance.toLocaleString()}</div><div style={{ fontSize: 11, color: theme.textFaint }}>Balance</div></div>
-                  <div style={{ textAlign: 'right' }}><div style={{ fontSize: 14, fontWeight: 600, color: acc.equity >= acc.balance ? '#10b981' : '#ef4444' }}>${acc.equity.toLocaleString()}</div><div style={{ fontSize: 11, color: theme.textFaint }}>Equity</div></div>
+                  <div style={{ textAlign: 'right' }}><div style={{ fontSize: 14, fontWeight: 600, color: acc.equity >= acc.balance ? theme.pos : theme.neg }}>${acc.equity.toLocaleString()}</div><div style={{ fontSize: 11, color: theme.textFaint }}>Equity</div></div>
                   <div className="flex gap-1">
                     <button onClick={() => setEditAcc(acc)} style={{ padding: 8, borderRadius: 8, background: 'transparent', border: 'none', cursor: 'pointer' }}><Edit3 size={16} style={{ color: theme.textFaint }} /></button>
                     <button onClick={() => setDeleteId(acc.id)} style={{ padding: 8, borderRadius: 8, background: 'transparent', border: 'none', cursor: 'pointer' }}><Trash2 size={16} style={{ color: theme.textFaint }} /></button>
@@ -3910,8 +3912,8 @@ function AccountsView({ accounts, challenges, trades, onUpdate, onDelete }) {
                 This will remove <strong style={{ color: theme.text }}>{acc?.name}</strong>.
               </p>
               {(linkedChallenges.length > 0 || tradeCount > 0) && (
-                <div style={{ padding: 12, borderRadius: 8, background: 'rgba(239,68,68,0.08)', marginBottom: 16, display: 'flex', gap: 10, alignItems: 'flex-start' }}>
-                  <AlertTriangle size={16} style={{ color: '#ef4444', flexShrink: 0, marginTop: 2 }} />
+                <div style={{ padding: 12, borderRadius: 8, background: 'rgba(244,85,122,0.08)', marginBottom: 16, display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+                  <AlertTriangle size={16} style={{ color: theme.neg, flexShrink: 0, marginTop: 2 }} />
                   <div style={{ fontSize: 12, color: theme.text, lineHeight: 1.5 }}>
                     {linkedChallenges.length > 0 && (
                       <div>
@@ -3928,7 +3930,7 @@ function AccountsView({ accounts, challenges, trades, onUpdate, onDelete }) {
               )}
               <div className="flex gap-3">
                 <button onClick={() => setDeleteId(null)} className="input" style={{ flex: 1, textAlign: 'center', cursor: 'pointer' }}>Cancel</button>
-                <button onClick={() => { onDelete(deleteId); setDeleteId(null); }} className="btn-primary" style={{ flex: 1, background: '#ef4444' }}>Remove</button>
+                <button onClick={() => { onDelete(deleteId); setDeleteId(null); }} className="btn-primary" style={{ flex: 1, background: theme.neg }}>Remove</button>
               </div>
             </div>
           </Modal>
@@ -3973,12 +3975,12 @@ function CalendarView({ trades }) {
             const hasTrades = dayTrades.length > 0;
             const dayBg = hasTrades
               ? pnl >= 0
-                ? 'linear-gradient(135deg, rgba(16,185,129,0.06) 0%, rgba(16,185,129,0.2) 100%)'
-                : 'linear-gradient(135deg, rgba(239,68,68,0.06) 0%, rgba(239,68,68,0.2) 100%)'
+                ? 'linear-gradient(135deg, rgba(34,211,165,0.06) 0%, rgba(34,211,165,0.2) 100%)'
+                : 'linear-gradient(135deg, rgba(244,85,122,0.06) 0%, rgba(244,85,122,0.2) 100%)'
               : !day ? (theme.dark ? '#0a0a0a' : '#f8fafc') : 'transparent';
             return (
-              <div key={i} style={{ minHeight: 90, padding: 10, borderBottom: `1px solid ${theme.cardBorder}`, borderRight: `1px solid ${theme.cardBorder}`, background: dayBg, borderLeft: hasTrades ? `3px solid ${pnl >= 0 ? '#10b981' : '#ef4444'}` : undefined }}>
-                {day && <><div style={{ fontSize: 13, color: hasTrades ? (pnl >= 0 ? '#10b981' : '#ef4444') : theme.textMuted, fontWeight: hasTrades ? 600 : 400 }}>{day}</div>{hasTrades && <div style={{ marginTop: 6 }}><div style={{ fontSize: 13, fontWeight: 600, color: pnl >= 0 ? '#10b981' : '#ef4444' }}>{pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}</div><div style={{ fontSize: 11, color: theme.textFaint }}>{dayTrades.length} trade{dayTrades.length > 1 ? 's' : ''}</div></div>}</>}
+              <div key={i} style={{ minHeight: 90, padding: 10, borderBottom: `1px solid ${theme.cardBorder}`, borderRight: `1px solid ${theme.cardBorder}`, background: dayBg, borderLeft: hasTrades ? `3px solid ${pnl >= 0 ? theme.pos : theme.neg}` : undefined }}>
+                {day && <><div style={{ fontSize: 13, color: hasTrades ? (pnl >= 0 ? theme.pos : theme.neg) : theme.textMuted, fontWeight: hasTrades ? 600 : 400 }}>{day}</div>{hasTrades && <div style={{ marginTop: 6 }}><div style={{ fontSize: 13, fontWeight: 600, color: pnl >= 0 ? theme.pos : theme.neg }}>{pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}</div><div style={{ fontSize: 11, color: theme.textFaint }}>{dayTrades.length} trade{dayTrades.length > 1 ? 's' : ''}</div></div>}</>}
               </div>
             );
           })}
@@ -4201,8 +4203,8 @@ function SimulatorView({ trades, accounts, challenges }) {
   );
 
   const OUTCOMES = [
-    { key: 'pass', label: 'Pass target', color: '#10b981' },
-    { key: 'failTotal', label: 'Hit max loss', color: '#ef4444' },
+    { key: 'pass', label: 'Pass target', color: theme.pos },
+    { key: 'failTotal', label: 'Hit max loss', color: theme.neg },
     { key: 'failDaily', label: 'Hit daily limit', color: '#f59e0b' },
     { key: 'timeout', label: 'Incomplete', color: theme.textFaint },
   ];
@@ -4218,11 +4220,11 @@ function SimulatorView({ trades, accounts, challenges }) {
     return (
       <div style={tipBox}>
         <div style={{ fontWeight: 600, marginBottom: 4 }}>Day {label}</div>
-        <div style={{ color: '#10b981' }}>P95: {fmt$(row.lower + row.band)}</div>
+        <div style={{ color: theme.pos }}>P95: {fmt$(row.lower + row.band)}</div>
         <div style={{ color: '#8b5cf6' }}>P75: {fmt$(row.p75)}</div>
         <div style={{ color: '#8b5cf6' }}>Median: {fmt$(row.p50)}</div>
         <div style={{ color: '#8b5cf6' }}>P25: {fmt$(row.p25)}</div>
-        <div style={{ color: '#ef4444' }}>P5: {fmt$(row.lower)}</div>
+        <div style={{ color: theme.neg }}>P5: {fmt$(row.lower)}</div>
       </div>
     );
   };
@@ -4325,11 +4327,11 @@ function SimulatorView({ trades, accounts, challenges }) {
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: 16 }}>
               {[
                 { l: 'Median end equity', v: fmt$(result.finals.p50), c: theme.text },
-                { l: 'Downside (P5)', v: fmt$(result.finals.p5), c: '#ef4444' },
-                { l: 'Upside (P95)', v: fmt$(result.finals.p95), c: '#10b981' },
+                { l: 'Downside (P5)', v: fmt$(result.finals.p5), c: theme.neg },
+                { l: 'Upside (P95)', v: fmt$(result.finals.p95), c: theme.pos },
                 { l: 'Avg max drawdown', v: fmt$(result.dd.mean), c: '#f59e0b' },
-                { l: 'Worst-case DD (P95)', v: fmt$(result.dd.p95), c: '#ef4444' },
-                { l: 'Any breach', v: pctStr(result.breachProb), c: '#ef4444' },
+                { l: 'Worst-case DD (P95)', v: fmt$(result.dd.p95), c: theme.neg },
+                { l: 'Any breach', v: pctStr(result.breachProb), c: theme.neg },
               ].map((s, i) => (
                 <div key={i}>
                   <div style={{ fontSize: 11, color: theme.textMuted, marginBottom: 4 }}>{s.l}</div>
@@ -4351,8 +4353,8 @@ function SimulatorView({ trades, accounts, challenges }) {
                   <Area dataKey="lower" stackId="band" stroke="none" fill="transparent" isAnimationActive={false} />
                   <Area dataKey="band" stackId="band" stroke="none" fill="rgba(139,92,246,0.18)" isAnimationActive={false} />
                   <Line dataKey="p50" stroke="#8b5cf6" strokeWidth={2} dot={false} isAnimationActive={false} />
-                  <ReferenceLine y={targetEq} stroke="#10b981" strokeDasharray="5 4" label={{ value: 'Target', position: 'insideTopRight', fill: '#10b981', fontSize: 11 }} />
-                  <ReferenceLine y={floorEq} stroke="#ef4444" strokeDasharray="5 4" label={{ value: 'Max loss', position: 'insideBottomRight', fill: '#ef4444', fontSize: 11 }} />
+                  <ReferenceLine y={targetEq} stroke={theme.pos} strokeDasharray="5 4" label={{ value: 'Target', position: 'insideTopRight', fill: theme.pos, fontSize: 11 }} />
+                  <ReferenceLine y={floorEq} stroke={theme.neg} strokeDasharray="5 4" label={{ value: 'Max loss', position: 'insideBottomRight', fill: theme.neg, fontSize: 11 }} />
                 </ComposedChart>
               </ResponsiveContainer>
             </div>
@@ -4369,7 +4371,7 @@ function SimulatorView({ trades, accounts, challenges }) {
                   <Tooltip cursor={{ fill: theme.hoverBg }} contentStyle={tipBox} formatter={(v) => [v, 'Sims']} labelFormatter={(v) => fmt$(v)} />
                   <ReferenceLine x={result.accountSize} stroke={theme.textFaint} strokeDasharray="4 4" />
                   <Bar dataKey="count" radius={[3, 3, 0, 0]}>
-                    {result.hist.map((d, i) => <Cell key={i} fill={d.x >= result.accountSize ? '#10b981' : '#ef4444'} />)}
+                    {result.hist.map((d, i) => <Cell key={i} fill={d.x >= result.accountSize ? theme.pos : theme.neg} />)}
                   </Bar>
                 </BarChart>
               </ResponsiveContainer>
@@ -4456,7 +4458,7 @@ function NewTradeModal({ onClose, onSave, accounts }) {
             <div>
               <label className="label">Side</label>
               <div className="flex gap-2">{['Long', 'Short'].map(s => (
-                <button key={s} onClick={() => setTrade({...trade, side: s})} style={{ flex: 1, padding: 12, borderRadius: 10, fontSize: 14, fontWeight: 500, border: 'none', cursor: 'pointer', background: trade.side === s ? (s === 'Long' ? '#10b981' : '#ef4444') : theme.hoverBg, color: trade.side === s ? 'white' : theme.textMuted }}>{s}</button>
+                <button key={s} onClick={() => setTrade({...trade, side: s})} style={{ flex: 1, padding: 12, borderRadius: 10, fontSize: 14, fontWeight: 500, border: 'none', cursor: 'pointer', background: trade.side === s ? (s === 'Long' ? theme.pos : theme.neg) : theme.hoverBg, color: trade.side === s ? 'white' : theme.textMuted }}>{s}</button>
               ))}</div>
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
@@ -4475,10 +4477,10 @@ function NewTradeModal({ onClose, onSave, accounts }) {
                 <div><label className="label">Swap ($)</label><input type="number" step="0.01" value={trade.swap} onChange={(e) => setTrade({...trade, swap: e.target.value})} placeholder="0.00" className="input" /></div>
               </div>
             </div>
-            <div style={{ padding: 16, borderRadius: 10, background: trade.pnl >= 0 ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)' }}>
+            <div style={{ padding: 16, borderRadius: 10, background: trade.pnl >= 0 ? 'rgba(34,211,165,0.1)' : 'rgba(244,85,122,0.1)' }}>
               <div className="flex justify-between items-center">
                 <span style={{ fontSize: 13, color: theme.textMuted }}>Calculated P&L</span>
-                <span style={{ fontSize: 20, fontWeight: 700, color: trade.pnl >= 0 ? '#10b981' : '#ef4444' }}>{trade.pnl >= 0 ? '+' : ''}${trade.pnl.toFixed(2)}</span>
+                <span style={{ fontSize: 20, fontWeight: 700, color: trade.pnl >= 0 ? theme.pos : theme.neg }}>{trade.pnl >= 0 ? '+' : ''}${trade.pnl.toFixed(2)}</span>
               </div>
             </div>
           </div>
@@ -4604,7 +4606,7 @@ function EditTradeModal({ trade: initialTrade, onClose, onSave, accounts }) {
             <div><label className="label">Account</label><select value={trade.account} onChange={(e) => setTrade({...trade, account: e.target.value})} className="input">{accounts.map(a => <option key={a.id} value={a.name}>{a.name}</option>)}</select></div>
           </div>
           <div><label className="label">Side</label><div className="flex gap-2">{['Long', 'Short'].map(s => (
-            <button key={s} onClick={() => setTrade({...trade, side: s})} style={{ flex: 1, padding: 12, borderRadius: 10, fontSize: 14, fontWeight: 500, border: 'none', cursor: 'pointer', background: trade.side === s ? (s === 'Long' ? '#10b981' : '#ef4444') : theme.hoverBg, color: trade.side === s ? 'white' : theme.textMuted }}>{s}</button>
+            <button key={s} onClick={() => setTrade({...trade, side: s})} style={{ flex: 1, padding: 12, borderRadius: 10, fontSize: 14, fontWeight: 500, border: 'none', cursor: 'pointer', background: trade.side === s ? (s === 'Long' ? theme.pos : theme.neg) : theme.hoverBg, color: trade.side === s ? 'white' : theme.textMuted }}>{s}</button>
           ))}</div></div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
             <div><label className="label">Entry</label><input type="number" step="any" value={trade.entry} onChange={(e) => setTrade({...trade, entry: e.target.value})} className="input" /></div>
@@ -4619,13 +4621,13 @@ function EditTradeModal({ trade: initialTrade, onClose, onSave, accounts }) {
             <div><label className="label">Commission ($)</label><input type="number" step="0.01" value={trade.commission} onChange={(e) => setTrade({...trade, commission: e.target.value})} className="input" /></div>
             <div><label className="label">Swap ($)</label><input type="number" step="0.01" value={trade.swap} onChange={(e) => setTrade({...trade, swap: e.target.value})} className="input" /></div>
           </div>
-          <div style={{ padding: 16, borderRadius: 10, background: (parseFloat(trade.pnl) || 0) >= 0 ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)' }}>
+          <div style={{ padding: 16, borderRadius: 10, background: (parseFloat(trade.pnl) || 0) >= 0 ? 'rgba(34,211,165,0.1)' : 'rgba(244,85,122,0.1)' }}>
             <div className="flex justify-between items-center" style={{ marginBottom: wasImported ? 10 : 0 }}>
               <span style={{ fontSize: 13, color: theme.textMuted }}>
                 {recomputePnl ? 'Calculated P&L' : 'Broker P&L (preserved)'}
               </span>
               {recomputePnl ? (
-                <span style={{ fontSize: 20, fontWeight: 700, color: (parseFloat(trade.pnl) || 0) >= 0 ? '#10b981' : '#ef4444' }}>
+                <span style={{ fontSize: 20, fontWeight: 700, color: (parseFloat(trade.pnl) || 0) >= 0 ? theme.pos : theme.neg }}>
                   {(parseFloat(trade.pnl) || 0) >= 0 ? '+' : ''}${(parseFloat(trade.pnl) || 0).toFixed(2)}
                 </span>
               ) : (
@@ -4635,7 +4637,7 @@ function EditTradeModal({ trade: initialTrade, onClose, onSave, accounts }) {
                   value={trade.pnl}
                   onChange={(e) => setTrade({ ...trade, pnl: e.target.value })}
                   className="input"
-                  style={{ width: 150, textAlign: 'right', fontSize: 16, fontWeight: 600, color: (parseFloat(trade.pnl) || 0) >= 0 ? '#10b981' : '#ef4444' }}
+                  style={{ width: 150, textAlign: 'right', fontSize: 16, fontWeight: 600, color: (parseFloat(trade.pnl) || 0) >= 0 ? theme.pos : theme.neg }}
                 />
               )}
             </div>
@@ -4700,8 +4702,8 @@ function CryptoView({ subTab, setSubTab, trades, snapshots, challenges, live, sy
       </div>
 
       {okxError && (
-        <div className="card" style={{ padding: 14, borderColor: '#ef4444', background: 'rgba(239,68,68,0.08)', display: 'flex', alignItems: 'center', gap: 10 }}>
-          <AlertTriangle size={18} style={{ color: '#ef4444' }} />
+        <div className="card" style={{ padding: 14, borderColor: theme.neg, background: 'rgba(244,85,122,0.08)', display: 'flex', alignItems: 'center', gap: 10 }}>
+          <AlertTriangle size={18} style={{ color: theme.neg }} />
           <div style={{ fontSize: 13, color: theme.text }}><strong>OKX sync error:</strong> {okxError}</div>
         </div>
       )}
@@ -4755,7 +4757,7 @@ function CryptoPortfolio({ balance, positions, snapshots, syncing, onSync, fmt, 
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 14 }}>
         <StatCard label="Total Equity" value={fmt(totalEq)} theme={theme} />
-        <StatCard label="Unrealized P&L" value={`${upl >= 0 ? '+' : ''}${fmt(upl)}`} color={upl >= 0 ? '#10b981' : '#ef4444'} theme={theme} />
+        <StatCard label="Unrealized P&L" value={`${upl >= 0 ? '+' : ''}${fmt(upl)}`} color={upl >= 0 ? theme.pos : theme.neg} theme={theme} />
         <StatCard label="Open Positions" value={positions.length} theme={theme} />
         <StatCard label="Assets" value={details.length} sub={details.slice(0, 4).map(d => d.ccy).join(', ')} theme={theme} />
       </div>
@@ -4811,11 +4813,11 @@ function CryptoPortfolio({ balance, positions, snapshots, syncing, onSync, fmt, 
                 {displayPositions.map((p, i) => (
                   <tr key={i} className="table-row" style={{ cursor: 'default' }}>
                     <td style={{ padding: '12px 16px', fontSize: 13, fontWeight: 600, color: theme.text }}>{p.instId}</td>
-                    <td style={{ padding: '12px 16px' }}><span className="badge" style={{ background: p.posSide === 'long' ? 'rgba(16,185,129,0.15)' : 'rgba(239,68,68,0.15)', color: p.posSide === 'long' ? '#10b981' : '#ef4444' }}>{(p.posSide || '').toUpperCase()}</span></td>
+                    <td style={{ padding: '12px 16px' }}><span className="badge" style={{ background: p.posSide === 'long' ? 'rgba(34,211,165,0.15)' : 'rgba(244,85,122,0.15)', color: p.posSide === 'long' ? theme.pos : theme.neg }}>{(p.posSide || '').toUpperCase()}</span></td>
                     <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, color: theme.text, fontFamily: 'JetBrains Mono, monospace' }}>{p.pos}</td>
                     <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, color: theme.textMuted, fontFamily: 'JetBrains Mono, monospace' }}>{p.avgPx}</td>
                     <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, color: theme.textMuted, fontFamily: 'JetBrains Mono, monospace' }}>{p.markPx}</td>
-                    <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, fontWeight: 600, color: p.upl >= 0 ? '#10b981' : '#ef4444', fontFamily: 'JetBrains Mono, monospace' }}>{p.upl >= 0 ? '+' : ''}{fmt(p.upl)}</td>
+                    <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, fontWeight: 600, color: p.upl >= 0 ? theme.pos : theme.neg, fontFamily: 'JetBrains Mono, monospace' }}>{p.upl >= 0 ? '+' : ''}{fmt(p.upl)}</td>
                     <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, color: theme.textMuted }}>{p.lever}x</td>
                     <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, color: '#f59e0b', fontFamily: 'JetBrains Mono, monospace' }}>{p.liqPx || '—'}</td>
                   </tr>
@@ -4866,27 +4868,27 @@ function CryptoChallengeView({ challenges, snapshots, liveEq, onOpen, onUpdate, 
               <div>
                 <div className="flex items-center gap-2">
                   <span style={{ fontSize: 17, fontWeight: 700, color: theme.text }}>{c.name}</span>
-                  <span className="badge" style={{ background: reached ? 'rgba(16,185,129,0.15)' : c.status === 'active' ? 'rgba(139,92,246,0.15)' : 'rgba(148,163,184,0.15)', color: reached ? '#10b981' : c.status === 'active' ? '#8b5cf6' : theme.textMuted }}>{reached ? 'TARGET HIT' : c.status.toUpperCase()}</span>
+                  <span className="badge" style={{ background: reached ? 'rgba(34,211,165,0.15)' : c.status === 'active' ? 'rgba(139,92,246,0.15)' : 'rgba(148,163,184,0.15)', color: reached ? theme.pos : c.status === 'active' ? '#8b5cf6' : theme.textMuted }}>{reached ? 'TARGET HIT' : c.status.toUpperCase()}</span>
                 </div>
                 <div style={{ fontSize: 12, color: theme.textMuted, marginTop: 4 }}>{fmt(c.startBalance, 0)} → {fmt(c.targetBalance, 0)}{c.targetDate ? ` · by ${new Date(c.targetDate).toLocaleDateString()}` : ''}</div>
               </div>
               <div className="flex items-center gap-2">
                 <button onClick={() => onOpen && onOpen(c.id)} style={{ padding: 8, borderRadius: 8, border: `1px solid ${theme.cardBorder}`, background: theme.card, cursor: 'pointer' }} title="View analytics"><BarChart3 size={16} style={{ color: '#8b5cf6' }} /></button>
-                {!reached && c.status === 'active' && <button onClick={() => onUpdate({ ...c, status: 'completed' })} style={{ padding: 8, borderRadius: 8, border: `1px solid ${theme.cardBorder}`, background: theme.card, cursor: 'pointer' }} title="Mark complete"><CheckCircle size={16} style={{ color: '#10b981' }} /></button>}
-                <button onClick={() => onDelete(c.id)} style={{ padding: 8, borderRadius: 8, border: `1px solid ${theme.cardBorder}`, background: theme.card, cursor: 'pointer' }} title="Delete"><Trash2 size={16} style={{ color: '#ef4444' }} /></button>
+                {!reached && c.status === 'active' && <button onClick={() => onUpdate({ ...c, status: 'completed' })} style={{ padding: 8, borderRadius: 8, border: `1px solid ${theme.cardBorder}`, background: theme.card, cursor: 'pointer' }} title="Mark complete"><CheckCircle size={16} style={{ color: theme.pos }} /></button>}
+                <button onClick={() => onDelete(c.id)} style={{ padding: 8, borderRadius: 8, border: `1px solid ${theme.cardBorder}`, background: theme.card, cursor: 'pointer' }} title="Delete"><Trash2 size={16} style={{ color: theme.neg }} /></button>
               </div>
             </div>
 
             <div className="flex items-end justify-between" style={{ marginBottom: 8 }}>
               <span style={{ fontSize: 26, fontWeight: 700, color: theme.text }}>{fmt(current)}</span>
-              <span style={{ fontSize: 14, fontWeight: 600, color: reached ? '#10b981' : '#8b5cf6' }}>{pct.toFixed(1)}%</span>
+              <span style={{ fontSize: 14, fontWeight: 600, color: reached ? theme.pos : '#8b5cf6' }}>{pct.toFixed(1)}%</span>
             </div>
             <div style={{ height: 10, borderRadius: 5, background: theme.hoverBg, overflow: 'hidden', marginBottom: 14 }}>
-              <div className="progress-bar-animate" style={{ width: `${pct}%`, height: '100%', background: reached ? '#10b981' : 'linear-gradient(90deg, #7c3aed, #a855f7)' }}></div>
+              <div className="progress-bar-animate" style={{ width: `${pct}%`, height: '100%', background: reached ? theme.pos : 'linear-gradient(90deg, #7c3aed, #a855f7)' }}></div>
             </div>
 
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 12, marginBottom: 16 }}>
-              <div><div className="stat-label">P&L</div><div style={{ fontSize: 16, fontWeight: 700, color: (current - c.startBalance) >= 0 ? '#10b981' : '#ef4444' }}>{(current - c.startBalance) >= 0 ? '+' : ''}{fmt(current - c.startBalance)}</div></div>
+              <div><div className="stat-label">P&L</div><div style={{ fontSize: 16, fontWeight: 700, color: (current - c.startBalance) >= 0 ? theme.pos : theme.neg }}>{(current - c.startBalance) >= 0 ? '+' : ''}{fmt(current - c.startBalance)}</div></div>
               <div><div className="stat-label">Remaining</div><div style={{ fontSize: 16, fontWeight: 700, color: theme.text }}>{fmt(Math.max(0, c.targetBalance - current))}</div></div>
               <div><div className="stat-label">Return</div><div style={{ fontSize: 16, fontWeight: 700, color: theme.text }}>{(((current - c.startBalance) / c.startBalance) * 100).toFixed(1)}%</div></div>
               <div><div className="stat-label">Proj. completion</div><div style={{ fontSize: 16, fontWeight: 700, color: theme.text }}>{reached ? 'Done' : projection ? projection.toLocaleDateString() : '—'}</div></div>
@@ -4895,12 +4897,12 @@ function CryptoChallengeView({ challenges, snapshots, liveEq, onOpen, onUpdate, 
             {curve.length > 1 && (
               <ResponsiveContainer width="100%" height={160}>
                 <AreaChart data={curve}>
-                  <defs><linearGradient id={`cg${c.id}`} x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#10b981" stopOpacity={0.35} /><stop offset="100%" stopColor="#10b981" stopOpacity={0} /></linearGradient></defs>
+                  <defs><linearGradient id={`cg${c.id}`} x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={theme.pos} stopOpacity={0.35} /><stop offset="100%" stopColor={theme.pos} stopOpacity={0} /></linearGradient></defs>
                   <XAxis dataKey="label" tick={{ fontSize: 10, fill: theme.textFaint }} />
                   <YAxis tick={{ fontSize: 10, fill: theme.textFaint }} width={64} domain={['auto', 'auto']} />
                   <Tooltip contentStyle={{ background: theme.card, border: `1px solid ${theme.cardBorder}`, borderRadius: 8, fontSize: 12 }} formatter={(v) => fmt(v)} />
                   <ReferenceLine y={c.targetBalance} stroke="#8b5cf6" strokeDasharray="5 4" label={{ value: 'Target', fontSize: 10, fill: '#8b5cf6', position: 'insideTopRight' }} />
-                  <Area type="monotone" dataKey="eq" stroke="#10b981" strokeWidth={2} fill={`url(#cg${c.id})`} />
+                  <Area type="monotone" dataKey="eq" stroke={theme.pos} strokeWidth={2} fill={`url(#cg${c.id})`} />
                 </AreaChart>
               </ResponsiveContainer>
             )}
@@ -4940,10 +4942,10 @@ function CryptoTradesView({ trades, onAddTrade, onDeleteTrade, fmt, theme }) {
                   <tr key={t.id} className="table-row" style={{ cursor: 'default' }}>
                     <td style={{ padding: '12px 16px', fontSize: 12, color: theme.textMuted }}>{new Date(t.ts).toLocaleString()}</td>
                     <td style={{ padding: '12px 16px', fontSize: 13, fontWeight: 600, color: theme.text }}>{t.instId}</td>
-                    <td style={{ padding: '12px 16px' }}><span className="badge" style={{ background: t.side === 'buy' ? 'rgba(16,185,129,0.15)' : 'rgba(239,68,68,0.15)', color: t.side === 'buy' ? '#10b981' : '#ef4444' }}>{(t.posSide && t.posSide !== 'net' ? t.posSide : t.side || '').toUpperCase()}</span></td>
+                    <td style={{ padding: '12px 16px' }}><span className="badge" style={{ background: t.side === 'buy' ? 'rgba(34,211,165,0.15)' : 'rgba(244,85,122,0.15)', color: t.side === 'buy' ? theme.pos : theme.neg }}>{(t.posSide && t.posSide !== 'net' ? t.posSide : t.side || '').toUpperCase()}</span></td>
                     <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, color: theme.text, fontFamily: 'JetBrains Mono, monospace' }}>{t.fillSz}</td>
                     <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, color: theme.textMuted, fontFamily: 'JetBrains Mono, monospace' }}>{t.fillPx}</td>
-                    <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, fontWeight: 600, color: t.pnl >= 0 ? '#10b981' : '#ef4444', fontFamily: 'JetBrains Mono, monospace' }}>{t.pnl ? (t.pnl >= 0 ? '+' : '') + fmt(t.pnl) : '—'}</td>
+                    <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, fontWeight: 600, color: t.pnl >= 0 ? theme.pos : theme.neg, fontFamily: 'JetBrains Mono, monospace' }}>{t.pnl ? (t.pnl >= 0 ? '+' : '') + fmt(t.pnl) : '—'}</td>
                     <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 12, color: theme.textFaint, fontFamily: 'JetBrains Mono, monospace' }}>{t.fee ? fmt(t.fee) : '—'}</td>
                     <td style={{ padding: '12px 16px', fontSize: 11, color: theme.textFaint }}>{t.source === 'manual' ? 'Manual' : 'OKX'}</td>
                     <td style={{ padding: '12px 16px', textAlign: 'right' }}><button onClick={() => onDeleteTrade(t.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4 }}><Trash2 size={14} style={{ color: theme.textFaint }} /></button></td>
@@ -4972,20 +4974,20 @@ function CryptoAnalyticsView({ trades, fmt, theme }) {
   const cumData = asc.map(t => { cum += (t.pnl || 0) - Math.abs(t.fee || 0); return { label: new Date(t.ts).toLocaleDateString(), cum: +cum.toFixed(2) }; });
   const byCoinMap = {};
   trades.forEach(t => { const c = coinFromInst(t.instId); byCoinMap[c] = (byCoinMap[c] || 0) + (t.pnl || 0); });
-  const byCoin = Object.entries(byCoinMap).map(([name, pnl], i) => ({ name, pnl: +pnl.toFixed(2), color: pnl >= 0 ? '#10b981' : '#ef4444' })).sort((a, b) => b.pnl - a.pnl);
+  const byCoin = Object.entries(byCoinMap).map(([name, pnl], i) => ({ name, pnl: +pnl.toFixed(2), color: pnl >= 0 ? theme.pos : theme.neg })).sort((a, b) => b.pnl - a.pnl);
   const pf = s.profitFactor === Infinity ? '∞' : s.profitFactor.toFixed(2);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 14 }}>
-        <StatCard label="Net P&L" value={`${s.netPnl >= 0 ? '+' : ''}${fmt(s.netPnl)}`} color={s.netPnl >= 0 ? '#10b981' : '#ef4444'} sub={`${fmt(s.totalFees)} fees`} theme={theme} />
+        <StatCard label="Net P&L" value={`${s.netPnl >= 0 ? '+' : ''}${fmt(s.netPnl)}`} color={s.netPnl >= 0 ? theme.pos : theme.neg} sub={`${fmt(s.totalFees)} fees`} theme={theme} />
         <StatCard label="Win Rate" value={`${s.winRate.toFixed(1)}%`} sub={`${s.winCount}W / ${s.lossCount}L`} theme={theme} />
         <StatCard label="Profit Factor" value={pf} theme={theme} />
         <StatCard label="Trades" value={s.tradeCount} sub={`${s.realizedCount} with P&L`} theme={theme} />
-        <StatCard label="Avg Win" value={fmt(s.avgWin)} color="#10b981" theme={theme} />
-        <StatCard label="Avg Loss" value={fmt(s.avgLoss)} color="#ef4444" theme={theme} />
-        <StatCard label="Largest Win" value={fmt(s.largestWin)} color="#10b981" theme={theme} />
-        <StatCard label="Largest Loss" value={fmt(s.largestLoss)} color="#ef4444" theme={theme} />
+        <StatCard label="Avg Win" value={fmt(s.avgWin)} color={theme.pos} theme={theme} />
+        <StatCard label="Avg Loss" value={fmt(s.avgLoss)} color={theme.neg} theme={theme} />
+        <StatCard label="Largest Win" value={fmt(s.largestWin)} color={theme.pos} theme={theme} />
+        <StatCard label="Largest Loss" value={fmt(s.largestLoss)} color={theme.neg} theme={theme} />
       </div>
 
       <div className="card-lg" style={{ padding: 20 }}>
@@ -5127,7 +5129,7 @@ function CryptoChallengeDetail({ challenge, trades, snapshots, liveEq, onBack, o
   const ratioScore = Math.min(ratio / 2 * 33, 33);
   const pfScore = Math.min(pfNum / 2 * 34, 34);
   const ellipseScore = s.realizedCount >= 5 ? winRateScore + ratioScore + pfScore : 0;
-  const scoreColor = ellipseScore >= 70 ? '#10b981' : ellipseScore >= 40 ? '#f59e0b' : '#ef4444';
+  const scoreColor = ellipseScore >= 70 ? theme.pos : ellipseScore >= 40 ? '#f59e0b' : theme.neg;
   const returnPct = c.startBalance > 0 ? (s.netPnl / c.startBalance) * 100 : 0;
   const pfLabel = s.profitFactor === Infinity ? '∞' : s.profitFactor.toFixed(2);
 
@@ -5162,8 +5164,8 @@ function CryptoChallengeDetail({ challenge, trades, snapshots, liveEq, onBack, o
 
       {/* Stat cards */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 14 }}>
-        <StatCard label="Net P&L" value={`${s.netPnl >= 0 ? '+' : ''}${fmt(s.netPnl)}`} color={s.netPnl >= 0 ? '#10b981' : '#ef4444'} sub={`${fmt(s.totalFees)} fees`} theme={theme} />
-        <StatCard label="Return" value={`${returnPct >= 0 ? '+' : ''}${returnPct.toFixed(1)}%`} color={returnPct >= 0 ? '#10b981' : '#ef4444'} sub="on start balance" theme={theme} />
+        <StatCard label="Net P&L" value={`${s.netPnl >= 0 ? '+' : ''}${fmt(s.netPnl)}`} color={s.netPnl >= 0 ? theme.pos : theme.neg} sub={`${fmt(s.totalFees)} fees`} theme={theme} />
+        <StatCard label="Return" value={`${returnPct >= 0 ? '+' : ''}${returnPct.toFixed(1)}%`} color={returnPct >= 0 ? theme.pos : theme.neg} sub="on start balance" theme={theme} />
         <StatCard label="Win Rate" value={`${s.winRate.toFixed(1)}%`} sub={`${s.winCount}W / ${s.lossCount}L`} theme={theme} />
         <StatCard label="Profit Factor" value={pfLabel} theme={theme} />
         <StatCard label="Trades" value={s.tradeCount} sub={`${s.realizedCount} with P&L`} theme={theme} />
@@ -5200,7 +5202,7 @@ function CryptoChallengeDetail({ challenge, trades, snapshots, liveEq, onBack, o
               <YAxis yAxisId="r" orientation="right" tick={{ fontSize: 11, fill: theme.textFaint }} width={64} />
               <Tooltip contentStyle={{ background: theme.card, border: `1px solid ${theme.cardBorder}`, borderRadius: 8, fontSize: 12 }} formatter={(v, n) => [fmt(v), n === 'net' ? 'Daily net' : 'Cumulative']} />
               <ReferenceLine yAxisId="l" y={0} stroke={theme.textFaint} />
-              <Bar yAxisId="l" dataKey="net" radius={[3, 3, 0, 0]}>{dailyData.map((d, i) => <Cell key={i} fill={d.net >= 0 ? '#10b981' : '#ef4444'} />)}</Bar>
+              <Bar yAxisId="l" dataKey="net" radius={[3, 3, 0, 0]}>{dailyData.map((d, i) => <Cell key={i} fill={d.net >= 0 ? theme.pos : theme.neg} />)}</Bar>
               <Line yAxisId="r" type="monotone" dataKey="cum" stroke="#8b5cf6" strokeWidth={2} dot={false} />
             </ComposedChart>
           </ResponsiveContainer>
@@ -5221,10 +5223,10 @@ function CryptoChallengeDetail({ challenge, trades, snapshots, liveEq, onBack, o
                   <tr key={t.id} className="table-row" style={{ cursor: 'default' }}>
                     <td style={{ padding: '12px 16px', fontSize: 12, color: theme.textMuted }}>{new Date(t.ts).toLocaleString()}</td>
                     <td style={{ padding: '12px 16px', fontSize: 13, fontWeight: 600, color: theme.text }}>{t.instId}</td>
-                    <td style={{ padding: '12px 16px' }}><span className="badge" style={{ background: t.side === 'buy' ? 'rgba(16,185,129,0.15)' : 'rgba(239,68,68,0.15)', color: t.side === 'buy' ? '#10b981' : '#ef4444' }}>{(t.posSide && t.posSide !== 'net' ? t.posSide : t.side || '').toUpperCase()}</span></td>
+                    <td style={{ padding: '12px 16px' }}><span className="badge" style={{ background: t.side === 'buy' ? 'rgba(34,211,165,0.15)' : 'rgba(244,85,122,0.15)', color: t.side === 'buy' ? theme.pos : theme.neg }}>{(t.posSide && t.posSide !== 'net' ? t.posSide : t.side || '').toUpperCase()}</span></td>
                     <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, color: theme.text, fontFamily: 'JetBrains Mono, monospace' }}>{t.fillSz}</td>
                     <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, color: theme.textMuted, fontFamily: 'JetBrains Mono, monospace' }}>{t.fillPx}</td>
-                    <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, fontWeight: 600, color: t.pnl >= 0 ? '#10b981' : '#ef4444', fontFamily: 'JetBrains Mono, monospace' }}>{t.pnl ? (t.pnl >= 0 ? '+' : '') + fmt(t.pnl) : '—'}</td>
+                    <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, fontWeight: 600, color: t.pnl >= 0 ? theme.pos : theme.neg, fontFamily: 'JetBrains Mono, monospace' }}>{t.pnl ? (t.pnl >= 0 ? '+' : '') + fmt(t.pnl) : '—'}</td>
                     <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 12, color: theme.textFaint, fontFamily: 'JetBrains Mono, monospace' }}>{t.fee ? fmt(t.fee) : '—'}</td>
                   </tr>
                 ))}
@@ -5278,10 +5280,10 @@ function CryptoTradingCalendar({ trades, fmt, theme, initialMonth }) {
             const dt = dayTrades(day);
             const net = dt.reduce((sum, t) => sum + (t.pnl || 0) - Math.abs(t.fee || 0), 0);
             const has = dt.length > 0;
-            const bg = has ? (net >= 0 ? 'linear-gradient(135deg, rgba(16,185,129,0.06), rgba(16,185,129,0.2))' : 'linear-gradient(135deg, rgba(239,68,68,0.06), rgba(239,68,68,0.2))') : (!day ? (theme.dark ? '#0a0a0a' : '#f8fafc') : 'transparent');
+            const bg = has ? (net >= 0 ? 'linear-gradient(135deg, rgba(34,211,165,0.06), rgba(34,211,165,0.2))' : 'linear-gradient(135deg, rgba(244,85,122,0.06), rgba(244,85,122,0.2))') : (!day ? (theme.dark ? '#0a0a0a' : '#f8fafc') : 'transparent');
             return (
-              <div key={i} style={{ minHeight: 82, padding: 8, borderBottom: `1px solid ${theme.cardBorder}`, borderRight: `1px solid ${theme.cardBorder}`, background: bg, borderLeft: has ? `3px solid ${net >= 0 ? '#10b981' : '#ef4444'}` : undefined }}>
-                {day && <><div style={{ fontSize: 12, color: has ? (net >= 0 ? '#10b981' : '#ef4444') : theme.textMuted, fontWeight: has ? 600 : 400 }}>{day}</div>{has && <div style={{ marginTop: 5 }}><div style={{ fontSize: 12, fontWeight: 600, color: net >= 0 ? '#10b981' : '#ef4444' }}>{net >= 0 ? '+' : ''}{fmt(net)}</div><div style={{ fontSize: 10, color: theme.textFaint }}>{dt.length} trade{dt.length > 1 ? 's' : ''}</div></div>}</>}
+              <div key={i} style={{ minHeight: 82, padding: 8, borderBottom: `1px solid ${theme.cardBorder}`, borderRight: `1px solid ${theme.cardBorder}`, background: bg, borderLeft: has ? `3px solid ${net >= 0 ? theme.pos : theme.neg}` : undefined }}>
+                {day && <><div style={{ fontSize: 12, color: has ? (net >= 0 ? theme.pos : theme.neg) : theme.textMuted, fontWeight: has ? 600 : 400 }}>{day}</div>{has && <div style={{ marginTop: 5 }}><div style={{ fontSize: 12, fontWeight: 600, color: net >= 0 ? theme.pos : theme.neg }}>{net >= 0 ? '+' : ''}{fmt(net)}</div><div style={{ fontSize: 10, color: theme.textFaint }}>{dt.length} trade{dt.length > 1 ? 's' : ''}</div></div>}</>}
               </div>
             );
           })}
