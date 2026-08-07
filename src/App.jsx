@@ -4748,24 +4748,70 @@ function CryptoView({ subTab, setSubTab, trades, snapshots, challenges, live, sy
   const detailChallenge = detailId != null ? challenges.find(c => String(c.id) === String(detailId)) : null;
   const balance = live?.balance;
 
+  // Account scope. 'all' = main + every sub-account combined, 'main' = the master
+  // account, anything else = that sub-account's name.
+  const mainEq = balance?.totalEq || 0;
+  const subsTotal = subAccounts.reduce((s, a) => s + (a.totalEq || 0), 0);
+  const activeSub = subAccounts.find(a => a.subAcct === selectedAccount) || null;
+  const isSub = Boolean(activeSub);
+  const scopeLabel = selectedAccount === 'all' ? 'All Accounts'
+    : selectedAccount === 'main' ? 'Main Account'
+    : (activeSub?.label || selectedAccount);
+
+  // OKX exposes balances but not fills/positions for sub-accounts to a master key.
+  const subOnlyNotice = isSub && subTab !== 'portfolio';
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-      {/* Sub-tab nav */}
-      <div className="flex items-center gap-2" style={{ flexWrap: 'wrap' }}>
-        {tabs.map(t => (
-          <button key={t.id} onClick={() => setSubTab(t.id)} className="flex items-center gap-2" style={{ padding: '8px 16px', borderRadius: 10, fontSize: 13, fontWeight: 500, cursor: 'pointer', border: `1px solid ${subTab === t.id ? '#8b5cf6' : theme.cardBorder}`, background: subTab === t.id ? 'linear-gradient(135deg, #7c3aed, #a855f7)' : theme.card, color: subTab === t.id ? 'white' : theme.textMuted }}>
-            <t.icon size={15} />{t.label}
-          </button>
-        ))}
+      {/* Account scope selector — mirrors the Dashboard's "Dashboard for:" control */}
+      <div className="flex items-center gap-3" style={{ flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 13, color: theme.textMuted }}>Crypto account:</span>
+        <select
+          value={selectedAccount}
+          onChange={(e) => setSelectedAccount?.(e.target.value)}
+          className="input input-sm"
+          style={{ width: 240, fontWeight: 500, cursor: 'pointer' }}
+        >
+          {subAccounts.length > 0 && <option value="all">All Accounts — {fmt(mainEq + subsTotal)}</option>}
+          <option value="main">Main Account — {fmt(mainEq)}</option>
+          {subAccounts.map(a => (
+            <option key={a.subAcct} value={a.subAcct}>
+              {(a.label || a.subAcct)}{a.error ? ' — unavailable' : ` — ${fmt(a.totalEq || 0)}`}
+            </option>
+          ))}
+        </select>
+        {subAccounts.length === 0 && (
+          <span style={{ fontSize: 11.5, color: theme.textFaint }}>No sub-accounts found on this API key.</span>
+        )}
         <div style={{ marginLeft: 'auto', fontSize: 12, color: theme.textFaint }}>
           {lastSync ? `Last synced ${new Date(lastSync).toLocaleTimeString()}` : 'Not synced yet'}
         </div>
+      </div>
+
+      {/* Sub-tab nav */}
+      <div className="flex items-center gap-2" style={{ flexWrap: 'wrap' }}>
+        {tabs.map(t => (
+          <button key={t.id} onClick={() => setSubTab(t.id)} className="flex items-center gap-2" style={{ padding: '8px 16px', borderRadius: 12, fontSize: 13, fontWeight: 600, cursor: 'pointer', border: `1px solid ${subTab === t.id ? 'rgba(139,92,246,0.55)' : theme.cardBorder}`, background: subTab === t.id ? theme.primaryGrad : 'transparent', color: subTab === t.id ? 'white' : theme.textMuted, boxShadow: subTab === t.id ? '0 2px 10px rgba(124,58,237,0.32)' : 'none', transition: 'all 0.15s' }}>
+            <t.icon size={15} />{t.label}
+          </button>
+        ))}
       </div>
 
       {okxError && (
         <div className="card" style={{ padding: 14, borderColor: theme.neg, background: 'rgba(244,85,122,0.08)', display: 'flex', alignItems: 'center', gap: 10 }}>
           <AlertTriangle size={18} style={{ color: theme.neg }} />
           <div style={{ fontSize: 13, color: theme.text }}><strong>OKX sync error:</strong> {okxError}</div>
+        </div>
+      )}
+
+      {subOnlyNotice && (
+        <div className="card" style={{ padding: 14, display: 'flex', alignItems: 'flex-start', gap: 10, borderColor: 'rgba(245,158,11,0.32)', background: 'rgba(245,158,11,0.07)' }}>
+          <AlertCircle size={17} style={{ color: theme.warn, flexShrink: 0, marginTop: 1 }} />
+          <div style={{ fontSize: 12.5, color: theme.textMuted, lineHeight: 1.55 }}>
+            Showing <strong style={{ color: theme.text }}>main account</strong> data. OKX only exposes balances for
+            sub-accounts to a master key — trades, positions and challenges for <strong style={{ color: theme.text }}>{scopeLabel}</strong> need
+            a read-only key created inside that sub-account. Switch to <strong style={{ color: theme.text }}>Portfolio</strong> to see its balances.
+          </div>
         </div>
       )}
 
@@ -4798,61 +4844,55 @@ function StatCard({ label, value, color, sub, theme }) {
 }
 
 function CryptoPortfolio({ balance, positions, snapshots, syncing, onSync, fmt, theme, subAccounts = [], selectedAccount = 'main', setSelectedAccount }) {
-  const isSub = selectedAccount !== 'main';
-  const sub = isSub ? subAccounts.find(a => a.subAcct === selectedAccount) : null;
+  // Only a real, resolved sub-account counts — 'all' and 'main' must fall through
+  // to the aggregate / main views below.
+  const sub = subAccounts.find(a => a.subAcct === selectedAccount) || null;
+  const isSub = Boolean(sub);
 
-  const AccountSwitcher = () => {
-    if (!subAccounts.length) return null;
-    const combined = (balance?.totalEq || 0) + subAccounts.reduce((s, a) => s + (a.totalEq || 0), 0);
-    const opts = [{ key: 'main', label: 'Main account', eq: balance?.totalEq || 0 },
-      ...subAccounts.map(a => ({ key: a.subAcct, label: a.label || a.subAcct, eq: a.totalEq || 0, error: a.error }))];
+  // "All Accounts": combined equity across main + every sub-account.
+  if (selectedAccount === 'all' && subAccounts.length) {
+    const rows = [
+      { key: 'main', label: 'Main Account', eq: balance?.totalEq || 0, upl: balance?.upl || 0 },
+      ...subAccounts.map(a => ({ key: a.subAcct, label: a.label || a.subAcct, eq: a.totalEq || 0, upl: a.upl || 0, error: a.error })),
+    ];
+    const combinedEq = rows.reduce((s, r) => s + r.eq, 0);
+    const combinedUpl = rows.reduce((s, r) => s + r.upl, 0);
     return (
-      <div className="card" style={{ padding: 14 }}>
-        <div className="flex items-center justify-between gap-3" style={{ marginBottom: 12, flexWrap: 'wrap' }}>
-          <span className="stat-label">OKX Accounts</span>
-          <span style={{ fontSize: 12, color: theme.textMuted }}>
-            Combined equity <span style={{ color: theme.text, fontWeight: 700 }}>{fmt(combined)}</span>
-          </span>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 14 }}>
+          <StatCard label="Combined Equity" value={fmt(combinedEq)} sub={`${rows.length} accounts`} theme={theme} />
+          <StatCard label="Unrealized P&L" value={`${combinedUpl >= 0 ? '+' : ''}${fmt(combinedUpl)}`} color={combinedUpl >= 0 ? theme.pos : theme.neg} theme={theme} />
+          <StatCard label="Main Account" value={fmt(balance?.totalEq || 0)} theme={theme} />
+          <StatCard label="Sub-accounts" value={fmt(subAccounts.reduce((s, a) => s + (a.totalEq || 0), 0))} sub={`${subAccounts.length} linked`} theme={theme} />
         </div>
-        <div className="flex flex-wrap gap-2">
-          {opts.map(o => {
-            const active = selectedAccount === o.key;
+        <div className="card-lg" style={{ padding: 20 }}>
+          <div style={{ fontSize: 14, fontWeight: 600, color: theme.text, marginBottom: 14 }}>Equity by Account</div>
+          {rows.map(r => {
+            const pct = combinedEq > 0 ? (r.eq / combinedEq) * 100 : 0;
             return (
-              <button
-                key={o.key}
-                onClick={() => setSelectedAccount?.(o.key)}
-                style={{
-                  display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 2,
-                  padding: '8px 14px', borderRadius: 12, cursor: 'pointer', textAlign: 'left',
-                  border: `1px solid ${active ? 'rgba(139,92,246,0.55)' : theme.cardBorder}`,
-                  background: active ? theme.primarySoft : 'transparent',
-                  transition: 'all 0.15s',
-                }}
-              >
-                <span style={{ fontSize: 12.5, fontWeight: 600, color: active ? (theme.dark ? '#c4b5fd' : '#6d28d9') : theme.text }}>{o.label}</span>
-                <span style={{ fontSize: 11, color: o.error ? theme.neg : theme.textMuted, fontFamily: "'JetBrains Mono', monospace" }}>
-                  {o.error ? 'unavailable' : fmt(o.eq)}
-                </span>
-              </button>
+              <div key={r.key} style={{ padding: '11px 0', borderBottom: `1px solid ${theme.cardBorder}` }}>
+                <div className="flex items-center justify-between" style={{ marginBottom: 7 }}>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: theme.text }}>{r.label}</span>
+                  <span style={{ fontSize: 13, color: r.error ? theme.neg : theme.textMuted, fontFamily: "'JetBrains Mono', monospace" }}>
+                    {r.error ? 'unavailable' : `${fmt(r.eq)} · ${pct.toFixed(1)}%`}
+                  </span>
+                </div>
+                <div style={{ height: 5, borderRadius: 999, background: theme.dark ? 'rgba(255,255,255,0.06)' : 'rgba(20,17,31,0.06)', overflow: 'hidden' }}>
+                  <div className="progress-bar-animate" style={{ height: '100%', width: `${pct}%`, borderRadius: 999, background: theme.primaryGrad }} />
+                </div>
+              </div>
             );
           })}
         </div>
-        {isSub && (
-          <p style={{ fontSize: 11.5, color: theme.textFaint, marginTop: 12, lineHeight: 1.5 }}>
-            OKX only exposes balances for sub-accounts to a master key. Open positions, the equity curve and
-            trades below stay on the main account until you add a read-only key for this sub-account.
-          </p>
-        )}
       </div>
     );
-  };
+  }
 
   // Sub-account view: OKX gives balances only, so render just those.
   if (isSub) {
     const subDetails = (sub?.details || []).filter(d => (d.eqUsd || 0) > 0.01);
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-        <AccountSwitcher />
         {sub?.error ? (
           <div className="card" style={{ padding: 32, textAlign: 'center' }}>
             <AlertTriangle size={26} style={{ color: theme.neg, margin: '0 auto 10px' }} />
@@ -4906,7 +4946,6 @@ function CryptoPortfolio({ balance, positions, snapshots, syncing, onSync, fmt, 
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-      <AccountSwitcher />
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 14 }}>
         <StatCard label="Total Equity" value={fmt(totalEq)} theme={theme} />
         <StatCard label="Unrealized P&L" value={`${upl >= 0 ? '+' : ''}${fmt(upl)}`} color={upl >= 0 ? theme.pos : theme.neg} theme={theme} />
