@@ -107,6 +107,12 @@ const parseMT5Statement = (html) => {
         const commission = Math.abs(parseFloat(getValue(['commission']).replace(/[^-\d.]/g, '')) || 0);
         const swap = parseFloat(getValue(['swap']).replace(/[^-\d.]/g, '')) || 0;
         const timeStr = getValue(['time', 'open time', 'close time']);
+        // MT5 statements carry S/L and T/P on the Positions table; earlier
+        // versions of this parser ignored them and hardcoded 0, which left every
+        // imported trade with no risk data and no computable R-multiple.
+        // Header renders as "S / L" or "S/L" depending on build, so match loosely.
+        const stopLoss = parseFloat(getValue(['s/l', 's / l', 'stop loss', 'stoploss']).replace(/[^-\d.]/g, '')) || 0;
+        const takeProfit = parseFloat(getValue(['t/p', 't / p', 'take profit', 'takeprofit']).replace(/[^-\d.]/g, '')) || 0;
         
         if (!type.includes('buy') && !type.includes('sell')) continue;
         if (!symbol || volume === 0) continue;
@@ -124,7 +130,7 @@ const parseMT5Statement = (html) => {
           date, time, symbol, side: type.includes('buy') ? 'Long' : 'Short',
           entry: openPrice || closePrice, exit: closePrice || openPrice,
           lots: volume, pnl: profit, commission, swap,
-          stopLoss: 0, takeProfit: 0, marketStructure: '', candleType: '',
+          stopLoss, takeProfit, marketStructure: '', candleType: '',
           liquidityTaken: [], liquidityTarget: [],
           notes: 'Imported from MT5', chartLink: '', chartImage: ''
         });
@@ -244,6 +250,9 @@ const parseCTraderStatement = (html) => {
             if (h.includes('commission')) columnMap.commission = i;
             if (h.includes('net')) columnMap.net = i;
             if (h.includes('balance')) columnMap.balance = i;
+            // Risk levels — present on most cTrader closed-position reports.
+            if (h.includes('stop loss') || h === 's/l' || h === 'sl') columnMap.stopLoss = i;
+            if (h.includes('take profit') || h === 't/p' || h === 'tp') columnMap.takeProfit = i;
           });
           continue;
         }
@@ -263,6 +272,8 @@ const parseCTraderStatement = (html) => {
       const swap = parseNum(getText(columnMap.swap));
       const commission = Math.abs(parseNum(getText(columnMap.commission)));
       const netPnl = parseNum(getText(columnMap.net));
+      const stopLoss = parseNum(getText(columnMap.stopLoss));
+      const takeProfit = parseNum(getText(columnMap.takeProfit));
       const lotsMatch = quantityText.match(/([\d.]+)\s*Lots?/i);
       const lots = lotsMatch ? parseFloat(lotsMatch[1]) : parseNum(quantityText);
       
@@ -284,7 +295,7 @@ const parseCTraderStatement = (html) => {
         date, time, symbol: symbol.replace('/', '').toUpperCase(),
         side: directionText.includes('buy') ? 'Long' : 'Short',
         entry: entryPrice, exit: closePrice, lots, pnl: netPnl, commission, swap,
-        stopLoss: 0, takeProfit: 0, marketStructure: '', candleType: '',
+        stopLoss, takeProfit, marketStructure: '', candleType: '',
         liquidityTaken: [], liquidityTarget: [],
         notes: 'Imported from cTrader', chartLink: '', chartImage: '',
         _phase: phase
@@ -326,7 +337,10 @@ const parseCSV = (csv, platform) => {
     const profit = parseFloat((row.profit || row.pnl || row['p&l'] || '0').replace(/[^-\d.]/g, '')) || 0;
     const commission = Math.abs(parseFloat((row.commission || '0').replace(/[^-\d.]/g, ''))) || 0;
     const swap = parseFloat((row.swap || '0').replace(/[^-\d.]/g, '')) || 0;
-    
+    // Risk levels, so imported trades get a computable R-multiple.
+    const stopLoss = parseFloat(row['s/l'] || row.sl || row['stop loss'] || row.stoploss || '0') || 0;
+    const takeProfit = parseFloat(row['t/p'] || row.tp || row['take profit'] || row.takeprofit || '0') || 0;
+
     let date = row.date || row['close time'] || row['open time'] || '';
     const dateMatch = date.match(/(\d{4}[.\-/]\d{2}[.\-/]\d{2})/);
     date = dateMatch ? dateMatch[1].replace(/[./]/g, '-') : new Date().toISOString().split('T')[0];
@@ -340,7 +354,7 @@ const parseCSV = (csv, platform) => {
       date, time, symbol: symbol.replace('/', '').toUpperCase(),
       side: type.includes('buy') || type.includes('long') ? 'Long' : 'Short',
       entry, exit: exit || entry, lots: volume, pnl: profit, commission, swap,
-      stopLoss: 0, takeProfit: 0, marketStructure: '', candleType: '',
+      stopLoss, takeProfit, marketStructure: '', candleType: '',
       liquidityTaken: [], liquidityTarget: [],
       notes: `Imported from ${platform}`, chartLink: '', chartImage: ''
     });
@@ -542,9 +556,13 @@ const clamp01 = (n) => Math.max(0, Math.min(1, Number.isFinite(n) ? n : 0));
 
 // Realized R-multiple: profit measured in units of the risk actually taken.
 // (exit - entry) / (entry - stop) is symbol-independent, so it needs no pip values.
+// stopLoss === 0 means "no stop recorded", NOT "stop at price zero". Treating it
+// as a real level makes risk = the full entry price, so every R collapses to
+// ~0.00 while still reporting 100% stop coverage. Require a positive level.
 const realizedR = (t) => {
   const entry = parseFloat(t.entry), exit = parseFloat(t.exit), stop = parseFloat(t.stopLoss);
-  if (!Number.isFinite(entry) || !Number.isFinite(exit) || !Number.isFinite(stop) || stop === entry) return null;
+  if (!Number.isFinite(entry) || !Number.isFinite(exit) || !Number.isFinite(stop)) return null;
+  if (!(entry > 0) || !(stop > 0) || stop === entry) return null;
   const risk = Math.abs(entry - stop);
   const move = (t.side === 'Short' ? entry - exit : exit - entry);
   return move / risk;
@@ -552,7 +570,8 @@ const realizedR = (t) => {
 
 const plannedR = (t) => {
   const entry = parseFloat(t.entry), target = parseFloat(t.takeProfit), stop = parseFloat(t.stopLoss);
-  if (!Number.isFinite(entry) || !Number.isFinite(target) || !Number.isFinite(stop) || stop === entry) return null;
+  if (!Number.isFinite(entry) || !Number.isFinite(target) || !Number.isFinite(stop)) return null;
+  if (!(entry > 0) || !(stop > 0) || !(target > 0) || stop === entry) return null;
   return Math.abs(target - entry) / Math.abs(entry - stop);
 };
 
@@ -672,50 +691,51 @@ function computeEllipseScore(trades) {
 
 // ---- Per-trade quality score ------------------------------------------------
 // Deliberately NOT a profit measure: a loss taken at the planned stop is a good
-// trade, and a win from moving a stop is a bad one. This scores the process so
-// the trade list teaches something the P&L column cannot.
-//   Risk defined  30  was a stop set before entry
-//   Outcome       40  realized R
-//   Plan adherence 20 realized vs planned R, stop honoured
-//   Documentation 10  notes / market structure / chart attached
+// trade, and a win from moving a stop is a bad one.
+//
+// Two factors only. Documentation and plan-adherence were dropped because
+// exported broker statements carry neither notes nor the original plan, so they
+// scored every imported trade identically and added no signal.
+//   Risk defined  40  was a stop set, and was it honoured
+//   Outcome       60  realized R
+//
+// When no stop data exists at all, Risk defined is unavailable and Outcome is
+// rescaled to 100 rather than capping every imported trade at 60.
 function computeTradeScore(t) {
   if (!t || typeof t.pnl !== 'number') return null;
   const r = realizedR(t);
-  const p = plannedR(t);
   const hasStop = Number.isFinite(parseFloat(t.stopLoss)) && parseFloat(t.stopLoss) > 0;
 
-  const riskPts = hasStop ? 30 : 0;
-
-  // -1R = 0, 0R = 12, +3R and beyond = 40. Losses at the stop are not zeroed.
-  let outcomePts;
-  if (r === null) outcomePts = t.pnl > 0 ? 24 : 8;
-  else if (r >= 0) outcomePts = 12 + clamp01(r / 3) * 28;
-  else outcomePts = Math.max(0, 12 * (1 + r / 1.15));
-
-  let planPts = 0;
-  const planNotes = [];
-  if (r !== null) {
-    if (r < -1.15) { planNotes.push('exited beyond stop'); }
-    else planPts += 10;
-    if (p !== null && p > 0 && r > 0) { planPts += clamp01(r / p) * 10; if (r >= p * 0.9) planNotes.push('hit target'); }
-    else if (r > 0) planPts += 5;
+  // Risk: full marks for a stop that was respected, partial if blown through.
+  let riskPct = 0, riskNote = 'no stop-loss';
+  if (hasStop) {
+    if (r !== null && r < -1.15) { riskPct = 0.4; riskNote = 'exited beyond stop'; }
+    else { riskPct = 1; riskNote = 'stop set and held'; }
   }
 
-  const docFields = [t.notes, t.marketStructure, t.chartImage || t.chartLink].filter(v => v && String(v).trim());
-  const docPts = (docFields.length / 3) * 10;
+  // Outcome in R: -1R = 0, 0R = 30%, +3R and beyond = full.
+  let outcomePct;
+  if (r === null) outcomePct = t.pnl > 0 ? 0.6 : 0.2;
+  else if (r >= 0) outcomePct = 0.3 + clamp01(r / 3) * 0.7;
+  else outcomePct = Math.max(0, 0.3 * (1 + r / 1.15));
 
-  const score = Math.round(riskPts + outcomePts + planPts + docPts);
+  const parts = hasStop
+    ? [
+        { label: 'Risk defined', pct: riskPct, max: 40, note: riskNote },
+        { label: 'Outcome', pct: outcomePct, max: 60, note: r !== null ? `${r >= 0 ? '+' : ''}${r.toFixed(2)}R` : 'no R data' },
+      ]
+    : [
+        { label: 'Risk defined', pct: 0, max: 0, note: 'no stop-loss recorded' },
+        { label: 'Outcome', pct: outcomePct, max: 100, note: r !== null ? `${r >= 0 ? '+' : ''}${r.toFixed(2)}R` : (t.pnl >= 0 ? 'profit, no R data' : 'loss, no R data') },
+      ];
+
+  const score = Math.round(parts.reduce((s, p) => s + p.pct * p.max, 0));
   return {
     score,
     r,
-    plannedR: p,
+    hasStop,
     grade: score >= 80 ? 'A' : score >= 65 ? 'B' : score >= 50 ? 'C' : score >= 35 ? 'D' : 'F',
-    parts: [
-      { label: 'Risk defined', pts: riskPts, max: 30, note: hasStop ? 'stop set' : 'no stop-loss' },
-      { label: 'Outcome', pts: Math.round(outcomePts), max: 40, note: r !== null ? `${r >= 0 ? '+' : ''}${r.toFixed(2)}R` : 'no R data' },
-      { label: 'Plan adherence', pts: Math.round(planPts), max: 20, note: planNotes.join(', ') || (r === null ? 'no plan data' : 'partial') },
-      { label: 'Documentation', pts: Math.round(docPts), max: 10, note: `${docFields.length}/3 fields` },
-    ],
+    parts: parts.map(p => ({ ...p, pts: Math.round(p.pct * p.max) })),
   };
 }
 
@@ -774,22 +794,26 @@ function EllipseScorePanel({ trades, size = 168, compact = false }) {
             <span style={{ fontSize: 13, color: theme.textFaint }}>/ 100</span>
           </div>
 
-          {!compact && factors.map(f => (
-            <div key={f.key} style={{ marginBottom: 9 }}>
-              <div className="flex items-center justify-between" style={{ marginBottom: 4 }}>
-                <span style={{ fontSize: 11.5, fontWeight: 600, color: f.available ? theme.text : theme.textFaint }}>
-                  {f.label}{!f.available && ' · n/a'}
-                </span>
-                <span style={{ fontSize: 11, color: theme.textFaint, fontFamily: "'JetBrains Mono', monospace" }}>
-                  {f.available ? `${Math.round(f.value)}/${f.weight}` : '—'}
-                </span>
-              </div>
-              <div style={{ height: 4, borderRadius: 999, background: theme.dark ? 'rgba(255,255,255,0.06)' : 'rgba(20,17,31,0.06)', overflow: 'hidden' }}>
-                <div className="progress-bar-animate" style={{ height: '100%', width: `${(f.available ? f.pct : 0) * 100}%`, borderRadius: 999, background: theme.primaryGrad }} />
-              </div>
-              <div style={{ fontSize: 10.5, color: theme.textFaint, marginTop: 3 }}>{f.detail}</div>
+          {!compact && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 11 }}>
+              {factors.map(f => (
+                <div key={f.key} title={f.detail}>
+                  <div className="flex items-baseline justify-between gap-2" style={{ marginBottom: 5 }}>
+                    <span style={{ fontSize: 11.5, fontWeight: 600, color: f.available ? theme.text : theme.textFaint }}>
+                      {f.label}{!f.available && ' · n/a'}
+                    </span>
+                    <span style={{ fontSize: 10.5, color: theme.textFaint, fontFamily: "'JetBrains Mono', monospace", flexShrink: 0 }}>
+                      {f.available ? `${Math.round(f.value)}/${f.weight}` : '—'}
+                    </span>
+                  </div>
+                  <div style={{ height: 6, borderRadius: 999, background: theme.dark ? 'rgba(255,255,255,0.08)' : 'rgba(20,17,31,0.08)', overflow: 'hidden' }}>
+                    <div className="progress-bar-animate" style={{ height: '100%', width: `${(f.available ? f.pct : 0) * 100}%`, borderRadius: 999, background: theme.primaryGrad }} />
+                  </div>
+                  <div style={{ fontSize: 10, color: theme.textFaint, marginTop: 4, lineHeight: 1.35 }}>{f.detail}</div>
+                </div>
+              ))}
             </div>
-          ))}
+          )}
 
           {caps?.length > 0 && (
             <div style={{ marginTop: 10, padding: '8px 10px', borderRadius: 10, background: provisional ? 'rgba(245,158,11,0.1)' : 'rgba(244,85,122,0.1)', border: `1px solid ${provisional ? 'rgba(245,158,11,0.3)' : 'rgba(244,85,122,0.3)'}` }}>
@@ -1553,7 +1577,9 @@ export default function TradingJournal() {
             backdropFilter: 'blur(14px)',
             borderRight: `1px solid ${theme.cardBorder}`,
           }} className="flex flex-col">
-            <div style={{ padding: '20px 18px', borderBottom: `1px solid ${theme.cardBorder}` }}>
+            {/* Height is pinned so this bottom border lines up exactly with the
+                main header's — they sit side by side and were 3px apart. */}
+            <div style={{ height: 82, flexShrink: 0, padding: '0 18px', display: 'flex', alignItems: 'center', borderBottom: `1px solid ${theme.cardBorder}` }}>
               <div className="flex items-center gap-3">
                 <div style={{ width: 38, height: 38, borderRadius: 12, background: theme.primaryGrad, position: 'relative', overflow: 'hidden', boxShadow: '0 4px 16px rgba(124,58,237,0.45), inset 0 1px 0 rgba(255,255,255,0.22)' }}>
                   <div style={{ position: 'absolute', width: 22, height: 22, border: '2px solid rgba(255,255,255,0.92)', borderRadius: '50%', top: '50%', left: '50%', transform: 'translate(-50%, -50%)' }}></div>
@@ -1639,9 +1665,13 @@ export default function TradingJournal() {
               background: darkMode ? 'rgba(16,14,26,0.72)' : 'rgba(255,255,255,0.78)',
               backdropFilter: 'blur(14px)',
               borderBottom: `1px solid ${theme.cardBorder}`,
-              padding: '18px 28px',
+              height: 82,
+              flexShrink: 0,
+              padding: '0 28px',
+              display: 'flex',
+              alignItems: 'center',
             }}>
-              <div className="flex items-center justify-between gap-4">
+              <div className="flex items-center justify-between gap-4" style={{ width: '100%' }}>
                 <div>
                   <h1 style={{ fontSize: 21, fontWeight: 700, color: theme.text, letterSpacing: '-0.4px' }}>
                     {activeTab === 'dashboard' && 'Dashboard'}
@@ -3798,6 +3828,13 @@ function DashboardView({ trades, accounts, challenges, selectedAccount, setSelec
     cumulativePnlData.push({ date: date.slice(5), pnl: cumulative });
   });
 
+  // Where y=0 sits as a 0..1 fraction of the chart's vertical range, used to
+  // split the area gradient into green-above / red-below.
+  const cumValues = cumulativePnlData.map(d => d.pnl);
+  const cumMax = cumValues.length ? Math.max(...cumValues) : 0;
+  const cumMin = cumValues.length ? Math.min(...cumValues) : 0;
+  const cumZeroOffset = cumMax <= 0 ? 0 : cumMin >= 0 ? 1 : cumMax / (cumMax - cumMin);
+
   const sortedTrades = [...filtered].sort((a, b) => new Date(b.date + ' ' + b.time) - new Date(a.date + ' ' + a.time));
   const recentTrades = sortedTrades.slice(0, 5);
 
@@ -3910,14 +3947,25 @@ function DashboardView({ trades, accounts, challenges, selectedAccount, setSelec
             {cumulativePnlData.length > 0 ? (
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={cumulativePnlData}>
+                  {/* Split the gradient at y=0 so the curve is green above the
+                      line and red below it. Previously both stroke and fill were
+                      keyed off overall totalPnl, so a chart sitting entirely in
+                      the red still rendered green. */}
                   <defs>
-                    <linearGradient id="cumGreen" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={theme.pos} stopOpacity={0.3} /><stop offset="100%" stopColor={theme.pos} stopOpacity={0} /></linearGradient>
-                    <linearGradient id="cumRed" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={theme.neg} stopOpacity={0.3} /><stop offset="100%" stopColor={theme.neg} stopOpacity={0} /></linearGradient>
+                    <linearGradient id="cumFill" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset={cumZeroOffset} stopColor={theme.pos} stopOpacity={0.32} />
+                      <stop offset={cumZeroOffset} stopColor={theme.neg} stopOpacity={0.32} />
+                    </linearGradient>
+                    <linearGradient id="cumStroke" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset={cumZeroOffset} stopColor={theme.pos} />
+                      <stop offset={cumZeroOffset} stopColor={theme.neg} />
+                    </linearGradient>
                   </defs>
                   <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: theme.textFaint }} />
                   <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: theme.textFaint }} tickFormatter={v => `$${v}`} width={60} />
-                  <Tooltip contentStyle={{ background: theme.card, border: `1px solid ${theme.cardBorder}`, borderRadius: 8, fontSize: 12, color: theme.text }} labelStyle={{ color: theme.textMuted }} formatter={(v) => [`$${v.toFixed(2)}`, 'Cumulative']} />
-                  <Area type="monotone" dataKey="pnl" stroke={totalPnl >= 0 ? theme.pos : theme.neg} fill={totalPnl >= 0 ? 'url(#cumGreen)' : 'url(#cumRed)'} strokeWidth={2} />
+                  <Tooltip contentStyle={{ background: theme.card, border: `1px solid ${theme.cardBorder}`, borderRadius: 12, fontSize: 12, color: theme.text }} labelStyle={{ color: theme.textMuted }} formatter={(v) => [`$${v.toFixed(2)}`, 'Cumulative']} />
+                  <ReferenceLine y={0} stroke={theme.borderStrong} strokeDasharray="3 3" />
+                  <Area type="monotone" dataKey="pnl" stroke="url(#cumStroke)" fill="url(#cumFill)" strokeWidth={2} />
                 </AreaChart>
               </ResponsiveContainer>
             ) : <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.textFaint, fontSize: 12 }}>No data yet</div>}
