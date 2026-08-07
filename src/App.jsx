@@ -512,6 +512,112 @@ const mapCryptoChallengeRow = (r) => ({
   milestones: Array.isArray(r.milestones) ? r.milestones : [], notes: r.notes || '',
 });
 
+// ==================== CHALLENGE PHASE ENGINE ====================
+//
+// Phases used to record only a start date, stamped with the day you pressed
+// "Advance" rather than the day the phase actually began. With no end date the
+// filter was open-ended, so leaving a phase made it unreviewable and advancing
+// after you'd already traded the new phase hid those trades entirely.
+//
+// A phase boundary is now {start, end}, every transition is appended to
+// phaseHistory so it can be undone, and detected splits from broker statements
+// carry the real date.
+
+const todayISO = () => new Date().toISOString().split('T')[0];
+
+// Inclusive start, exclusive end. end === null means "still open".
+function phaseBounds(challenge, phaseIdx) {
+  const starts = challenge.phaseStartDates || {};
+  const start = starts[phaseIdx] || (phaseIdx === 0 ? challenge.startDate : null);
+  let end = null;
+  for (let i = phaseIdx + 1; i < (challenge.phases?.length || 0); i++) {
+    if (starts[i]) { end = starts[i]; break; }
+  }
+  return { start: start || null, end };
+}
+
+function tradesInPhase(trades, challenge, phaseIdx) {
+  const { start, end } = phaseBounds(challenge, phaseIdx);
+  return (trades || []).filter(t => {
+    if (t.account !== challenge.account) return false;
+    if (start && t.date < start) return false;
+    if (end && t.date >= end) return false;
+    return true;
+  });
+}
+
+// Append-only log so any transition can be stepped back.
+function pushHistory(challenge, entry) {
+  const history = Array.isArray(challenge.phaseHistory) ? challenge.phaseHistory : [];
+  return [...history, {
+    at: new Date().toISOString(),
+    fromPhase: challenge.currentPhase ?? 0,
+    fromStatus: challenge.status || 'active',
+    prevStartDates: { ...(challenge.phaseStartDates || {}) },
+    ...entry,
+  }];
+}
+
+// effectiveDate lets a detected split record when the phase really started.
+function advanceChallenge(challenge, { effectiveDate, source = 'manual', note = '' } = {}) {
+  const date = effectiveDate || todayISO();
+  const last = (challenge.phases?.length || 1) - 1;
+  const cur = challenge.currentPhase ?? 0;
+
+  if (cur >= last) {
+    return {
+      ...challenge,
+      status: 'funded',
+      phaseHistory: pushHistory(challenge, { action: 'complete', toPhase: cur, toStatus: 'funded', date, source, note }),
+    };
+  }
+  const next = cur + 1;
+  return {
+    ...challenge,
+    currentPhase: next,
+    phaseStartDates: { ...(challenge.phaseStartDates || {}), [next]: date },
+    phaseHistory: pushHistory(challenge, { action: 'advance', toPhase: next, toStatus: challenge.status || 'active', date, source, note }),
+  };
+}
+
+function setChallengeStatus(challenge, status, { source = 'manual' } = {}) {
+  return {
+    ...challenge,
+    status,
+    phaseHistory: pushHistory(challenge, { action: 'status', toPhase: challenge.currentPhase ?? 0, toStatus: status, date: todayISO(), source }),
+  };
+}
+
+// Step back one entry, restoring the phase index, status and start dates that
+// were in place before it.
+function undoLastPhaseChange(challenge) {
+  const history = Array.isArray(challenge.phaseHistory) ? challenge.phaseHistory : [];
+  if (!history.length) return challenge;
+  const last = history[history.length - 1];
+  return {
+    ...challenge,
+    currentPhase: last.fromPhase,
+    status: last.fromStatus,
+    phaseStartDates: { ...(last.prevStartDates || {}) },
+    phaseHistory: history.slice(0, -1),
+  };
+}
+
+// Splits detected from statement withdrawal notes that sit ahead of where the
+// challenge currently is. Returns the earliest unapplied one.
+function pendingPhaseSplit(challenge) {
+  const splits = Array.isArray(challenge.detectedSplits) ? challenge.detectedSplits : [];
+  if (!splits.length) return null;
+  const applied = new Set(
+    (challenge.phaseHistory || []).filter(h => h.source === 'detected').map(h => h.date + '|' + (h.note || ''))
+  );
+  const starts = challenge.phaseStartDates || {};
+  const currentStart = starts[challenge.currentPhase ?? 0] || challenge.startDate || '';
+  return [...splits]
+    .sort((a, b) => (a.splitDate || '').localeCompare(b.splitDate || ''))
+    .find(s => s.splitDate && s.splitDate > currentStart && !applied.has(s.splitDate + '|' + (s.note || ''))) || null;
+}
+
 // ==================== ELLIPSE SCORE (prop-fit) ====================
 //
 // Scores whether a trading pattern survives a prop firm's structure, not just
@@ -789,19 +895,24 @@ function EllipseScorePanel({ trades, rules, size = 168, compact = false, horizon
     );
   }
 
+  // Vertical column: sits beside stacked chart cards, so the factor list grows
+  // to absorb any extra row height instead of leaving a gap at the bottom.
   return (
-    <div className="card" style={{ padding: 18 }}>
+    <div className="card" style={{ padding: 18, display: 'flex', flexDirection: 'column' }}>
       <div className="flex items-center justify-between gap-2">
         <div className="stat-label">Ellipse Score</div>
         <span className="badge" style={{ background: `${band.color}1f`, color: band.color }}>{band.label}</span>
       </div>
+      {ruleLabel && (
+        <div style={{ fontSize: 10.5, color: theme.textFaint, marginTop: 4 }}>vs {ruleLabel}</div>
+      )}
       <div className="flex items-center justify-center" style={{ marginTop: 6 }}><Radar /></div>
-      <div className="flex items-baseline justify-center gap-2" style={{ marginTop: 4, marginBottom: 12 }}>
+      <div className="flex items-baseline justify-center gap-2" style={{ marginTop: 2, marginBottom: 14 }}>
         <span style={{ fontSize: 34, fontWeight: 800, color: band.color, letterSpacing: '-1px' }}>{score}</span>
         <span style={{ fontSize: 13, color: theme.textFaint }}>/ 100</span>
       </div>
       {!compact && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 11 }}>
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 11, justifyContent: 'space-between' }}>
           {factors.map(f => <FactorBar key={f.key} f={f} />)}
         </div>
       )}
@@ -1047,6 +1158,8 @@ export default function TradingJournal() {
               propFirm: c.prop_firm || 'Custom',
               accountSize: parseFloat(c.account_size) || 100000,
               currentPhase: c.current_phase || 0,
+              phaseHistory: Array.isArray(c.phase_history) ? c.phase_history : [],
+              detectedSplits: Array.isArray(c.detected_splits) ? c.detected_splits : [],
               phases: (Array.isArray(c.phases) ? c.phases : []) .length > 0 ? c.phases : [{ name: 'Phase 1', profitTarget: 10, maxDailyDrawdown: 5, maxTotalDrawdown: 10, minTradingDays: 1, maxTradingDays: 30, drawdownType: 'balance' }],
               account: c.account || '',
               startDate: c.start_date,
@@ -1457,7 +1570,9 @@ export default function TradingJournal() {
       const { error } = await supabase.from('challenges').update({
         name: challenge.name, current_phase: challenge.currentPhase,
         status: challenge.status, phases: challenge.phases, notes: challenge.notes,
-        phase_start_dates: challenge.phaseStartDates || {}
+        phase_start_dates: challenge.phaseStartDates || {},
+        phase_history: challenge.phaseHistory || [],
+        detected_splits: challenge.detectedSplits || []
       }).eq('id', challenge.id);
       if (error) throw error;
     } catch {}
@@ -2250,10 +2365,13 @@ function ChallengeCard({ challenge, trades, onSelect, onUpdate, onDelete, compac
 function ChallengeDetailModal({ challenge, trades, onClose, onUpdate }) {
   const theme = useTheme();
 
-  // FIX #2: Phase-scoped
-  const phaseStart = challenge.phaseStartDates?.[challenge.currentPhase] || challenge.startDate;
+  // Phase-scoped between the phase's real start and the next phase's start, so
+  // leaving a phase freezes it rather than making it unreachable.
+  const { start: phaseStart, end: phaseEnd } = phaseBounds(challenge, challenge.currentPhase ?? 0);
   const accountTrades = trades.filter(t => t.account === challenge.account);
-  const challengeTrades = accountTrades.filter(t => !phaseStart || t.date >= phaseStart);
+  const challengeTrades = tradesInPhase(trades, challenge, challenge.currentPhase ?? 0);
+  const pendingSplit = pendingPhaseSplit(challenge);
+  const history = Array.isArray(challenge.phaseHistory) ? challenge.phaseHistory : [];
   const phase = challenge.phases?.[challenge.currentPhase] || challenge.phases?.[0] || {};
   const accountSize = challenge.accountSize || 1;
 
@@ -2296,20 +2414,13 @@ function ChallengeDetailModal({ challenge, trades, onClose, onUpdate }) {
   const maxDailyProfit = dailyEntries.length > 0 ? Math.max(...dailyEntries.map(([, d]) => d.pnl)) : 0;
   const consistencyPct = totalPnl > 0 ? (maxDailyProfit / totalPnl) * 100 : 0;
 
-  const handlePhaseAdvance = () => {
-    // FIX #2: Stamp the new phase's start date so the next phase resets profit tracking
-    const today = new Date().toISOString().split('T')[0];
-    if (challenge.currentPhase < challenge.phases.length - 1) {
-      const nextPhaseIdx = challenge.currentPhase + 1;
-      const phaseStartDates = { ...(challenge.phaseStartDates || {}), [nextPhaseIdx]: today };
-      onUpdate({ ...challenge, currentPhase: nextPhaseIdx, phaseStartDates });
-    } else {
-      onUpdate({ ...challenge, status: 'funded' });
-    }
-  };
+  const [confirmAdvance, setConfirmAdvance] = useState(null); // null | {effectiveDate, source, note}
+  const isLastPhase = (challenge.currentPhase ?? 0) >= (challenge.phases?.length || 1) - 1;
 
-  const handleMarkPassed = () => onUpdate({ ...challenge, status: 'passed' });
-  const handleMarkFailed = () => onUpdate({ ...challenge, status: 'failed' });
+  const doAdvance = (opts) => { onUpdate(advanceChallenge(challenge, opts)); setConfirmAdvance(null); };
+  const handleMarkPassed = () => onUpdate(setChallengeStatus(challenge, 'passed'));
+  const handleMarkFailed = () => onUpdate(setChallengeStatus(challenge, 'failed'));
+  const handleUndo = () => onUpdate(undoLastPhaseChange(challenge));
 
   return (
     <Modal width={700} onClose={onClose}>
@@ -2320,6 +2431,27 @@ function ChallengeDetailModal({ challenge, trades, onClose, onUpdate }) {
         </div>
         <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4 }}><X size={20} style={{ color: theme.textFaint }} /></button>
       </div>
+      {pendingSplit && challenge.status === 'active' && !confirmAdvance && (
+        <div style={{ margin: '16px 20px 0', padding: 14, borderRadius: 14, border: `1px solid ${theme.primary}55`, background: theme.primarySoft, display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+          <Flag size={17} style={{ color: theme.primaryHi, flexShrink: 0, marginTop: 1 }} />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: theme.text }}>
+              {pendingSplit.phaseName} detected on {pendingSplit.splitDate}
+            </div>
+            <div style={{ fontSize: 11.5, color: theme.textMuted, marginTop: 3, lineHeight: 1.5 }}>
+              Found in your statement as a withdrawal note{pendingSplit.note ? <> — <span style={{ fontFamily: "'JetBrains Mono', monospace" }}>{truncate(pendingSplit.note, 60)}</span></> : ''}.
+              Applying it closes the current phase on that date rather than today.
+            </div>
+          </div>
+          <button
+            onClick={() => setConfirmAdvance({ effectiveDate: pendingSplit.splitDate, source: 'detected', note: pendingSplit.note || '' })}
+            className="btn-primary"
+            style={{ flexShrink: 0, padding: '7px 14px', fontSize: 12.5 }}
+          >
+            Review
+          </button>
+        </div>
+      )}
 
       <div style={{ padding: 20, maxHeight: '70vh', overflow: 'auto' }} className="scrollbar">
         {/* Summary Stats */}
@@ -2424,22 +2556,77 @@ function ChallengeDetailModal({ challenge, trades, onClose, onUpdate }) {
       </div>
 
       {/* Footer Actions */}
-      {challenge.status === 'active' && (
-        <div style={{ padding: 20, borderTop: `1px solid ${theme.cardBorder}`, display: 'flex', justifyContent: 'space-between' }}>
-          <button onClick={handleMarkFailed} style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'none', border: 'none', fontSize: 14, color: theme.neg, cursor: 'pointer' }}>
-            <X size={16} />Mark Failed
-          </button>
-          <div className="flex gap-2">
-            {challenge.currentPhase < challenge.phases.length - 1 ? (
-              <button onClick={handlePhaseAdvance} className="btn-primary" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <Flag size={16} />Advance to {challenge.phases[challenge.currentPhase + 1]?.name || 'Next Phase'}
+      {confirmAdvance ? (
+        <div style={{ padding: 20, borderTop: `1px solid ${theme.cardBorder}`, background: theme.dark ? 'rgba(245,158,11,0.07)' : 'rgba(245,158,11,0.06)' }}>
+          <div className="flex items-start gap-3" style={{ marginBottom: 14 }}>
+            <AlertTriangle size={18} style={{ color: theme.warn, flexShrink: 0, marginTop: 2 }} />
+            <div style={{ fontSize: 13, color: theme.text, lineHeight: 1.55 }}>
+              <strong>
+                {isLastPhase
+                  ? `Mark ${challenge.name} as funded?`
+                  : `Advance to ${challenge.phases[(challenge.currentPhase ?? 0) + 1]?.name || 'the next phase'}?`}
+              </strong>
+              <ul style={{ margin: '8px 0 0', paddingLeft: 18, color: theme.textMuted, fontSize: 12.5 }}>
+                <li>
+                  {challenge.phases[challenge.currentPhase ?? 0]?.name || 'This phase'} closes on{' '}
+                  <strong style={{ color: theme.text }}>{confirmAdvance.effectiveDate}</strong> and its{' '}
+                  {challengeTrades.length} trade{challengeTrades.length === 1 ? '' : 's'} are frozen for review.
+                </li>
+                {!isLastPhase && (
+                  <li>
+                    Trades on or after that date count toward the new phase, whose target becomes{' '}
+                    <strong style={{ color: theme.text }}>{challenge.phases[(challenge.currentPhase ?? 0) + 1]?.profitTarget ?? '—'}%</strong>.
+                  </li>
+                )}
+                <li>This is recorded in the phase history and can be undone.</li>
+              </ul>
+              <div style={{ marginTop: 12 }}>
+                <label className="label">Effective date</label>
+                <input
+                  type="date"
+                  value={confirmAdvance.effectiveDate}
+                  onChange={(e) => setConfirmAdvance({ ...confirmAdvance, effectiveDate: e.target.value })}
+                  className="input input-sm"
+                  style={{ width: 180 }}
+                />
+              </div>
+            </div>
+          </div>
+          <div className="flex justify-end gap-2">
+            <button onClick={() => setConfirmAdvance(null)} className="btn-ghost">Cancel</button>
+            <button onClick={() => doAdvance(confirmAdvance)} className="btn-primary" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <Flag size={16} />{isLastPhase ? 'Mark funded' : 'Confirm advance'}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div style={{ padding: 20, borderTop: `1px solid ${theme.cardBorder}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+          <div className="flex items-center gap-3">
+            {challenge.status === 'active' && (
+              <button onClick={handleMarkFailed} style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'none', border: 'none', fontSize: 14, color: theme.neg, cursor: 'pointer' }}>
+                <X size={16} />Mark Failed
               </button>
-            ) : (
-              <button onClick={handleMarkPassed} className="btn-primary" style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'linear-gradient(135deg, #22d3a5, #5eead4)' }}>
-                <Trophy size={16} />Mark as Passed
+            )}
+            {history.length > 0 && (
+              <button onClick={handleUndo} className="btn-ghost" style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}
+                title={`Undo: ${history[history.length - 1].action} on ${history[history.length - 1].date}`}>
+                <RefreshCw size={14} />Undo last change
               </button>
             )}
           </div>
+          {challenge.status === 'active' && (
+            <div className="flex gap-2">
+              {!isLastPhase ? (
+                <button onClick={() => setConfirmAdvance({ effectiveDate: new Date().toISOString().split('T')[0], source: 'manual' })} className="btn-primary" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <Flag size={16} />Advance to {challenge.phases[(challenge.currentPhase ?? 0) + 1]?.name || 'Next Phase'}
+                </button>
+              ) : (
+                <button onClick={handleMarkPassed} className="btn-primary" style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'linear-gradient(135deg, #22d3a5, #5eead4)' }}>
+                  <Trophy size={16} />Mark as Passed
+                </button>
+              )}
+            </div>
+          )}
         </div>
       )}
     </Modal>
@@ -4077,18 +4264,18 @@ function DashboardView({ trades, accounts, challenges, selectedAccount, setSelec
         </div>
       </div>
 
-      {/* Score — full width so the radar and five factors sit side by side
-          rather than stacking into a tall column that stretches its neighbours. */}
-      <EllipseScorePanel trades={filtered} rules={propRules} horizontal />
-
-      {/* P&L charts at a fixed, readable height */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: 12, alignItems: 'stretch' }}>
-        <ChartCard title="Daily Net Cumulative P&L" minHeight={230}>
-          <CumulativePnlChart data={cumulativePnlData} theme={theme} id="dashCum" />
-        </ChartCard>
-        <ChartCard title="Net Daily P&L" minHeight={230}>
-          <DailyPnlChart data={dailyPnlData} theme={theme} />
-        </ChartCard>
+      {/* Score column on the left; the two P&L charts stack to its right so the
+          score's natural height is filled rather than stretching chart cards. */}
+      <div style={{ display: 'grid', gridTemplateColumns: '340px minmax(0, 1fr)', gap: 12, alignItems: 'stretch' }}>
+        <EllipseScorePanel trades={filtered} rules={propRules} size={150} />
+        <div style={{ display: 'grid', gridTemplateRows: '1fr 1fr', gap: 12, minHeight: 0 }}>
+          <ChartCard title="Daily Net Cumulative P&L" minHeight={140}>
+            <CumulativePnlChart data={cumulativePnlData} theme={theme} id="dashCum" />
+          </ChartCard>
+          <ChartCard title="Net Daily P&L" minHeight={140}>
+            <DailyPnlChart data={dailyPnlData} theme={theme} />
+          </ChartCard>
+        </div>
       </div>
 
       {/* Third Row */}
@@ -5772,14 +5959,16 @@ function CryptoAnalyticsView({ trades, fmt, theme }) {
       </div>
 
       {/* Score + the two P&L charts, same layout as the Dashboard */}
-      <EllipseScorePanel trades={normalized} horizontal />
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: 12, alignItems: 'stretch' }}>
-        <ChartCard title="Daily Net Cumulative P&L" minHeight={230}>
-          <CumulativePnlChart data={cumulative} theme={theme} id="cryptoCum" />
-        </ChartCard>
-        <ChartCard title="Net Daily P&L" minHeight={230}>
-          <DailyPnlChart data={daily} theme={theme} />
-        </ChartCard>
+      <div style={{ display: 'grid', gridTemplateColumns: '340px minmax(0, 1fr)', gap: 12, alignItems: 'stretch' }}>
+        <EllipseScorePanel trades={normalized} size={150} />
+        <div style={{ display: 'grid', gridTemplateRows: '1fr 1fr', gap: 12, minHeight: 0 }}>
+          <ChartCard title="Daily Net Cumulative P&L" minHeight={140}>
+            <CumulativePnlChart data={cumulative} theme={theme} id="cryptoCum" />
+          </ChartCard>
+          <ChartCard title="Net Daily P&L" minHeight={140}>
+            <DailyPnlChart data={daily} theme={theme} />
+          </ChartCard>
+        </div>
       </div>
 
       {/* Recent trades + P&L by coin */}
