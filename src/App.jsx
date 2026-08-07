@@ -512,6 +512,314 @@ const mapCryptoChallengeRow = (r) => ({
   milestones: Array.isArray(r.milestones) ? r.milestones : [], notes: r.notes || '',
 });
 
+// ==================== ELLIPSE SCORE (multi-factor) ====================
+//
+// Replaces the old win-rate / avg-W-L / profit-factor score, whose three inputs
+// were not independent: profit factor is algebraically implied by the other two
+// (PF = W/(1-W) * avgWin/avgLoss), so it measured one thing three times and
+// ignored risk management entirely.
+//
+// Five independent factors, 100 points total:
+//   Edge               30  expectancy per unit risked (R), not dollars
+//   Risk discipline    25  stop usage + consistency of risk taken per trade
+//   Drawdown control   20  max drawdown vs peak, and recovery factor
+//   Execution quality  15  realized R vs planned R, and stop breaches
+//   Sample confidence  10  scales with trade count
+//
+// Factors needing stop-loss data (risk, execution) are unavailable for synced
+// exchange fills. Those are dropped and the remaining weights are rescaled to
+// 100, so scores stay comparable instead of silently penalising missing data.
+
+const SCORE_FACTORS = [
+  { key: 'edge',      label: 'Edge',            weight: 30, needsRisk: false },
+  { key: 'risk',      label: 'Risk discipline', weight: 25, needsRisk: true },
+  { key: 'drawdown',  label: 'Drawdown',        weight: 20, needsRisk: false },
+  { key: 'execution', label: 'Execution',       weight: 15, needsRisk: true },
+  { key: 'sample',    label: 'Sample',          weight: 10, needsRisk: false },
+];
+
+const clamp01 = (n) => Math.max(0, Math.min(1, Number.isFinite(n) ? n : 0));
+
+// Realized R-multiple: profit measured in units of the risk actually taken.
+// (exit - entry) / (entry - stop) is symbol-independent, so it needs no pip values.
+const realizedR = (t) => {
+  const entry = parseFloat(t.entry), exit = parseFloat(t.exit), stop = parseFloat(t.stopLoss);
+  if (!Number.isFinite(entry) || !Number.isFinite(exit) || !Number.isFinite(stop) || stop === entry) return null;
+  const risk = Math.abs(entry - stop);
+  const move = (t.side === 'Short' ? entry - exit : exit - entry);
+  return move / risk;
+};
+
+const plannedR = (t) => {
+  const entry = parseFloat(t.entry), target = parseFloat(t.takeProfit), stop = parseFloat(t.stopLoss);
+  if (!Number.isFinite(entry) || !Number.isFinite(target) || !Number.isFinite(stop) || stop === entry) return null;
+  return Math.abs(target - entry) / Math.abs(entry - stop);
+};
+
+function computeEllipseScore(trades) {
+  const closed = (trades || []).filter(t => typeof t.pnl === 'number');
+  const n = closed.length;
+  const empty = {
+    score: 0, factors: SCORE_FACTORS.map(f => ({ ...f, value: 0, pct: 0, available: false, detail: '—' })),
+    available: false, tradeCount: n,
+  };
+  if (n < 3) return empty;
+
+  const withR = closed.map(t => ({ t, r: realizedR(t) })).filter(x => x.r !== null);
+  const riskDataPct = n ? withR.length / n : 0;
+  const hasRiskData = withR.length >= 3 && riskDataPct >= 0.5;
+
+  // ---- Edge: average R per trade. Fall back to a $-normalised proxy without stops.
+  let edgeValue, edgeDetail;
+  if (hasRiskData) {
+    edgeValue = withR.reduce((s, x) => s + x.r, 0) / withR.length;
+    edgeDetail = `${edgeValue >= 0 ? '+' : ''}${edgeValue.toFixed(2)}R per trade`;
+  } else {
+    const wins = closed.filter(t => t.pnl > 0), losses = closed.filter(t => t.pnl < 0);
+    const avgWin = wins.length ? wins.reduce((s, t) => s + t.pnl, 0) / wins.length : 0;
+    const avgLoss = losses.length ? Math.abs(losses.reduce((s, t) => s + t.pnl, 0) / losses.length) : 0;
+    const w = closed.length ? wins.length / closed.length : 0;
+    edgeValue = avgLoss > 0 ? (w * avgWin - (1 - w) * avgLoss) / avgLoss : 0;
+    edgeDetail = `${edgeValue >= 0 ? '+' : ''}${edgeValue.toFixed(2)}R equivalent`;
+  }
+  // 0R = 0, 0.5R = full marks. Losing systems score 0 rather than negative.
+  const edgePct = clamp01(edgeValue / 0.5);
+
+  // ---- Risk discipline: are stops used, and is risk sized consistently?
+  let riskPct = 0, riskDetail = 'No stop-loss data';
+  if (hasRiskData) {
+    const risks = withR
+      .map(x => Math.abs(parseFloat(x.t.entry) - parseFloat(x.t.stopLoss)) * (parseFloat(x.t.lots) || 0))
+      .filter(v => v > 0);
+    let consistency = 0;
+    if (risks.length > 1) {
+      const mean = risks.reduce((a, b) => a + b, 0) / risks.length;
+      const sd = Math.sqrt(risks.reduce((s, v) => s + (v - mean) ** 2, 0) / risks.length);
+      const cv = mean > 0 ? sd / mean : 1;   // coefficient of variation
+      consistency = clamp01(1 - cv);          // cv 0 = perfect, cv >= 1 = none
+    }
+    riskPct = clamp01(riskDataPct * 0.5 + consistency * 0.5);
+    riskDetail = `${Math.round(riskDataPct * 100)}% with stops · ${Math.round(consistency * 100)}% size consistency`;
+  }
+
+  // ---- Drawdown control: peak-to-trough on the cumulative P&L curve.
+  const ordered = [...closed].sort((a, b) => new Date(a.date || a.ts || 0) - new Date(b.date || b.ts || 0));
+  let cum = 0, peak = 0, maxDD = 0;
+  for (const t of ordered) { cum += t.pnl; peak = Math.max(peak, cum); maxDD = Math.max(maxDD, peak - cum); }
+  const netProfit = cum;
+  const recovery = maxDD > 0 ? netProfit / maxDD : (netProfit > 0 ? 3 : 0);
+  const ddPct = clamp01(recovery / 3);        // recovery factor of 3 = full marks
+  const ddDetail = maxDD > 0 ? `${recovery.toFixed(2)}x recovery · max DD ${maxDD.toFixed(0)}` : 'No drawdown recorded';
+
+  // ---- Execution quality: did realized R track the plan, and were stops honoured?
+  let execPct = 0, execDetail = 'No target/stop data';
+  if (hasRiskData) {
+    const planned = withR.map(x => ({ ...x, p: plannedR(x.t) })).filter(x => x.p !== null && x.p > 0);
+    const breaches = withR.filter(x => x.r < -1.15).length;   // exited worse than the stop
+    const breachPct = clamp01(1 - breaches / withR.length);
+    let capture = 0.5;
+    if (planned.length) {
+      // Of the winners, how much of the planned target was actually captured?
+      const winners = planned.filter(x => x.r > 0);
+      capture = winners.length
+        ? clamp01(winners.reduce((s, x) => s + Math.min(x.r / x.p, 1), 0) / winners.length)
+        : 0;
+    }
+    execPct = clamp01(capture * 0.6 + breachPct * 0.4);
+    execDetail = `${Math.round(capture * 100)}% target capture · ${breaches} stop breach${breaches === 1 ? '' : 'es'}`;
+  }
+
+  // ---- Sample confidence: 50 closed trades = full marks, sub-linear below.
+  const samplePct = clamp01(Math.sqrt(n / 50));
+  const sampleDetail = `${n} closed trade${n === 1 ? '' : 's'}`;
+
+  const raw = {
+    edge: { pct: edgePct, detail: edgeDetail, available: true },
+    risk: { pct: riskPct, detail: riskDetail, available: hasRiskData },
+    drawdown: { pct: ddPct, detail: ddDetail, available: true },
+    execution: { pct: execPct, detail: execDetail, available: hasRiskData },
+    sample: { pct: samplePct, detail: sampleDetail, available: true },
+  };
+
+  // Rescale the available factors to 100 so missing stop data doesn't cap the score.
+  const availableWeight = SCORE_FACTORS.reduce((s, f) => s + (raw[f.key].available ? f.weight : 0), 0);
+  const scale = availableWeight > 0 ? 100 / availableWeight : 0;
+
+  const factors = SCORE_FACTORS.map(f => {
+    const r = raw[f.key];
+    const weight = r.available ? f.weight * scale : 0;
+    return { ...f, weight: Math.round(weight), pct: r.pct, value: r.pct * weight, available: r.available, detail: r.detail };
+  });
+
+  let score = factors.reduce((s, f) => s + f.value, 0);
+  const caps = [];
+
+  // Two gates. Without them the additive model rewards process alone: a losing
+  // system with tight stops scored 48, and 6 good trades scored 93.
+  if (edgeValue <= 0) { score = Math.min(score, 40); caps.push('No positive edge — capped at 40'); }
+  if (n < 20) { score = Math.min(score, 60); caps.push(`Provisional — ${n}/20 trades, capped at 60`); }
+
+  return {
+    score: Math.round(score),
+    factors,
+    available: true,
+    tradeCount: n,
+    hasRiskData,
+    provisional: n < 20,
+    caps,
+  };
+}
+
+// ---- Per-trade quality score ------------------------------------------------
+// Deliberately NOT a profit measure: a loss taken at the planned stop is a good
+// trade, and a win from moving a stop is a bad one. This scores the process so
+// the trade list teaches something the P&L column cannot.
+//   Risk defined  30  was a stop set before entry
+//   Outcome       40  realized R
+//   Plan adherence 20 realized vs planned R, stop honoured
+//   Documentation 10  notes / market structure / chart attached
+function computeTradeScore(t) {
+  if (!t || typeof t.pnl !== 'number') return null;
+  const r = realizedR(t);
+  const p = plannedR(t);
+  const hasStop = Number.isFinite(parseFloat(t.stopLoss)) && parseFloat(t.stopLoss) > 0;
+
+  const riskPts = hasStop ? 30 : 0;
+
+  // -1R = 0, 0R = 12, +3R and beyond = 40. Losses at the stop are not zeroed.
+  let outcomePts;
+  if (r === null) outcomePts = t.pnl > 0 ? 24 : 8;
+  else if (r >= 0) outcomePts = 12 + clamp01(r / 3) * 28;
+  else outcomePts = Math.max(0, 12 * (1 + r / 1.15));
+
+  let planPts = 0;
+  const planNotes = [];
+  if (r !== null) {
+    if (r < -1.15) { planNotes.push('exited beyond stop'); }
+    else planPts += 10;
+    if (p !== null && p > 0 && r > 0) { planPts += clamp01(r / p) * 10; if (r >= p * 0.9) planNotes.push('hit target'); }
+    else if (r > 0) planPts += 5;
+  }
+
+  const docFields = [t.notes, t.marketStructure, t.chartImage || t.chartLink].filter(v => v && String(v).trim());
+  const docPts = (docFields.length / 3) * 10;
+
+  const score = Math.round(riskPts + outcomePts + planPts + docPts);
+  return {
+    score,
+    r,
+    plannedR: p,
+    grade: score >= 80 ? 'A' : score >= 65 ? 'B' : score >= 50 ? 'C' : score >= 35 ? 'D' : 'F',
+    parts: [
+      { label: 'Risk defined', pts: riskPts, max: 30, note: hasStop ? 'stop set' : 'no stop-loss' },
+      { label: 'Outcome', pts: Math.round(outcomePts), max: 40, note: r !== null ? `${r >= 0 ? '+' : ''}${r.toFixed(2)}R` : 'no R data' },
+      { label: 'Plan adherence', pts: Math.round(planPts), max: 20, note: planNotes.join(', ') || (r === null ? 'no plan data' : 'partial') },
+      { label: 'Documentation', pts: Math.round(docPts), max: 10, note: `${docFields.length}/3 fields` },
+    ],
+  };
+}
+
+// ---- Shared Ellipse Score panel: 5-axis radar + factor breakdown -------------
+function EllipseScorePanel({ trades, size = 168, compact = false }) {
+  const theme = useTheme();
+  const result = computeEllipseScore(trades);
+  const { score, factors, available, provisional, caps } = result;
+
+  const band = score >= 75 ? { label: 'Strong', color: theme.pos }
+    : score >= 55 ? { label: 'Developing', color: theme.accent }
+    : score >= 35 ? { label: 'Needs work', color: theme.warn }
+    : { label: 'At risk', color: theme.neg };
+
+  // Pentagon geometry: 5 axes starting at 12 o'clock.
+  const cx = size / 2, cy = size / 2, maxR = size * 0.36;
+  const pt = (i, frac) => {
+    const a = (Math.PI * 2 * i) / factors.length - Math.PI / 2;
+    return [cx + Math.cos(a) * maxR * frac, cy + Math.sin(a) * maxR * frac];
+  };
+  const ring = (frac) => factors.map((_, i) => pt(i, frac).join(',')).join(' ');
+  const shape = factors.map((f, i) => pt(i, f.available ? Math.max(f.pct, 0.02) : 0).join(',')).join(' ');
+
+  return (
+    <div className="card" style={{ padding: 18 }}>
+      <div className="flex items-center justify-between gap-2">
+        <div className="stat-label">Ellipse Score</div>
+        {available && <span className="badge" style={{ background: `${band.color}1f`, color: band.color }}>{band.label}</span>}
+      </div>
+
+      {!available ? (
+        <div style={{ padding: '26px 0', textAlign: 'center', fontSize: 12.5, color: theme.textFaint }}>
+          Log at least 3 closed trades to generate a score.
+        </div>
+      ) : (
+        <>
+          <div className="flex items-center justify-center" style={{ marginTop: 6 }}>
+            <svg width={size} height={size} role="img" aria-label={`Ellipse score ${score} of 100`}>
+              {[1, 0.66, 0.33].map((f, i) => (
+                <polygon key={i} points={ring(f)} fill="none" stroke={theme.cardBorder} strokeWidth="1" opacity={1 - i * 0.25} />
+              ))}
+              {factors.map((_, i) => {
+                const [x, y] = pt(i, 1);
+                return <line key={i} x1={cx} y1={cy} x2={x} y2={y} stroke={theme.cardBorder} strokeWidth="1" opacity="0.5" />;
+              })}
+              <polygon points={shape} fill="rgba(139,92,246,0.28)" stroke={theme.primary} strokeWidth="2" strokeLinejoin="round" />
+              {factors.map((f, i) => {
+                const [x, y] = pt(i, f.available ? Math.max(f.pct, 0.02) : 0);
+                return <circle key={i} cx={x} cy={y} r="3" fill={f.available ? theme.primaryHi : theme.textFaint} />;
+              })}
+            </svg>
+          </div>
+
+          <div className="flex items-baseline justify-center gap-2" style={{ marginTop: 4, marginBottom: 12 }}>
+            <span style={{ fontSize: 34, fontWeight: 800, color: band.color, letterSpacing: '-1px' }}>{score}</span>
+            <span style={{ fontSize: 13, color: theme.textFaint }}>/ 100</span>
+          </div>
+
+          {!compact && factors.map(f => (
+            <div key={f.key} style={{ marginBottom: 9 }}>
+              <div className="flex items-center justify-between" style={{ marginBottom: 4 }}>
+                <span style={{ fontSize: 11.5, fontWeight: 600, color: f.available ? theme.text : theme.textFaint }}>
+                  {f.label}{!f.available && ' · n/a'}
+                </span>
+                <span style={{ fontSize: 11, color: theme.textFaint, fontFamily: "'JetBrains Mono', monospace" }}>
+                  {f.available ? `${Math.round(f.value)}/${f.weight}` : '—'}
+                </span>
+              </div>
+              <div style={{ height: 4, borderRadius: 999, background: theme.dark ? 'rgba(255,255,255,0.06)' : 'rgba(20,17,31,0.06)', overflow: 'hidden' }}>
+                <div className="progress-bar-animate" style={{ height: '100%', width: `${(f.available ? f.pct : 0) * 100}%`, borderRadius: 999, background: theme.primaryGrad }} />
+              </div>
+              <div style={{ fontSize: 10.5, color: theme.textFaint, marginTop: 3 }}>{f.detail}</div>
+            </div>
+          ))}
+
+          {caps?.length > 0 && (
+            <div style={{ marginTop: 10, padding: '8px 10px', borderRadius: 10, background: provisional ? 'rgba(245,158,11,0.1)' : 'rgba(244,85,122,0.1)', border: `1px solid ${provisional ? 'rgba(245,158,11,0.3)' : 'rgba(244,85,122,0.3)'}` }}>
+              {caps.map((c, i) => (
+                <div key={i} style={{ fontSize: 10.5, color: provisional ? theme.warn : theme.neg, fontWeight: 500 }}>{c}</div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+// Small grade chip used in trade lists.
+function TradeGradeBadge({ trade, theme, showScore = true }) {
+  const s = computeTradeScore(trade);
+  if (!s) return null;
+  const c = s.score >= 80 ? theme.pos : s.score >= 65 ? theme.accent : s.score >= 50 ? theme.warn : theme.neg;
+  return (
+    <span
+      className="badge"
+      title={s.parts.map(p => `${p.label}: ${p.pts}/${p.max}${p.note ? ` (${p.note})` : ''}`).join('\n')}
+      style={{ background: `${c}1f`, color: c, fontFamily: "'JetBrains Mono', monospace" }}
+    >
+      {s.grade}{showScore && ` ${s.score}`}
+    </span>
+  );
+}
+
 // Crypto P&L analytics from a list of trades (fills)
 const computeCryptoStats = (trades) => {
   const closed = trades.filter(t => typeof t.pnl === 'number');
@@ -3345,15 +3653,15 @@ function JournalView({ trades, accounts, filterAccount, setFilterAccount, onSele
         </div>
       ) : viewMode === 'list' ? (
         <div className="card-lg" style={{ overflow: 'hidden' }}>
-          <div className="table-header" style={{ display: 'grid', gridTemplateColumns: selectMode ? '36px 1.5fr 80px 100px 80px 100px' : '1.5fr 80px 100px 80px 100px 50px', gap: 12 }}>
+          <div className="table-header" style={{ display: 'grid', gridTemplateColumns: selectMode ? '36px 1.5fr 80px 100px 70px 100px 72px' : '1.5fr 80px 100px 70px 100px 72px 50px', gap: 12 }}>
             {selectMode && <div></div>}
-            <div>Trade</div><div>Side</div><div>Structure</div><div>Lots</div><div style={{ textAlign: 'right' }}>P&L</div>{!selectMode && <div></div>}
+            <div>Trade</div><div>Side</div><div>Structure</div><div>Lots</div><div style={{ textAlign: 'right' }}>P&L</div><div style={{ textAlign: 'center' }}>Quality</div>{!selectMode && <div></div>}
           </div>
           {filtered.map(trade => {
             const chartImg = getTradingViewImageUrl(trade.chartLink) || trade.chartImage;
             const isSelected = selectedIds.has(trade.id);
             return (
-              <div key={trade.id} onClick={() => selectMode ? toggleSelect(trade.id, { stopPropagation: () => {} }) : onSelectTrade(trade)} className="table-row" style={{ display: 'grid', gridTemplateColumns: selectMode ? '36px 1.5fr 80px 100px 80px 100px' : '1.5fr 80px 100px 80px 100px 50px', gap: 12, alignItems: 'center', background: isSelected ? (theme.dark ? 'rgba(139,92,246,0.15)' : 'rgba(139,92,246,0.08)') : undefined }}>
+              <div key={trade.id} onClick={() => selectMode ? toggleSelect(trade.id, { stopPropagation: () => {} }) : onSelectTrade(trade)} className="table-row" style={{ display: 'grid', gridTemplateColumns: selectMode ? '36px 1.5fr 80px 100px 70px 100px 72px' : '1.5fr 80px 100px 70px 100px 72px 50px', gap: 12, alignItems: 'center', background: isSelected ? (theme.dark ? 'rgba(139,92,246,0.15)' : 'rgba(139,92,246,0.08)') : undefined }}>
                 {selectMode && (
                   <div onClick={(e) => toggleSelect(trade.id, e)} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
                     <div style={{ width: 20, height: 20, borderRadius: 6, border: `2px solid ${isSelected ? '#8b5cf6' : theme.cardBorder}`, background: isSelected ? '#8b5cf6' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.15s' }}>
@@ -3378,6 +3686,7 @@ function JournalView({ trades, accounts, filterAccount, setFilterAccount, onSele
                 <span className="badge" style={{ background: MARKET_STRUCTURES[trade.marketStructure]?.color, color: 'white' }}>{trade.marketStructure?.replace('_', ' ').slice(0, 8)}</span>
                 <span style={{ fontSize: 14, color: theme.text }}>{trade.lots}</span>
                 <span style={{ fontSize: 14, fontWeight: 600, color: trade.pnl >= 0 ? theme.pos : theme.neg, textAlign: 'right' }}>{trade.pnl >= 0 ? '+' : ''}${trade.pnl?.toFixed(2)}</span>
+                <span style={{ textAlign: 'center' }}><TradeGradeBadge trade={trade} theme={theme} /></span>
                 {!selectMode && <Eye size={16} style={{ color: theme.textFaint }} />}
               </div>
             );
@@ -3448,11 +3757,7 @@ function DashboardView({ trades, accounts, challenges, selectedAccount, setSelec
   const expectancy = totalTrades > 0 ? (winRate / 100 * avgWin) - ((100 - winRate) / 100 * avgLoss) : 0;
   const avgWinLossRatio = avgLoss > 0 ? avgWin / avgLoss : avgWin > 0 ? 3 : 0;
 
-  // Ellipse Score
-  const winRateScore = Math.min(winRate / 60 * 33, 33);
-  const ratioScore = Math.min(avgWinLossRatio / 2 * 33, 33);
-  const pfScore = Math.min(profitFactor / 2 * 34, 34);
-  const ellipseScore = totalTrades >= 5 ? winRateScore + ratioScore + pfScore : 0;
+  // Ellipse Score is computed by <EllipseScorePanel /> from the trade list.
 
   // Monthly calendar
   const monthStart = new Date(dashboardMonth.getFullYear(), dashboardMonth.getMonth(), 1);
@@ -3513,34 +3818,6 @@ function DashboardView({ trades, accounts, challenges, selectedAccount, setSelec
     );
   };
 
-  const RadarChart = ({ winRate: wr, avgRatio, pf, size = 180 }) => {
-    const center = size / 2;
-    const maxRadius = size * 0.38;
-    const wrNorm = Math.min(wr / 70, 1);
-    const ratioNorm = Math.min(avgRatio / 3, 1);
-    const pfNorm = Math.min(pf / 3, 1);
-    const points = [
-      { x: center, y: center - maxRadius * wrNorm },
-      { x: center - maxRadius * 0.866 * ratioNorm, y: center + maxRadius * 0.5 * ratioNorm },
-      { x: center + maxRadius * 0.866 * pfNorm, y: center + maxRadius * 0.5 * pfNorm }
-    ];
-    const outerPoints = [
-      { x: center, y: center - maxRadius },
-      { x: center - maxRadius * 0.866, y: center + maxRadius * 0.5 },
-      { x: center + maxRadius * 0.866, y: center + maxRadius * 0.5 }
-    ];
-    return (
-      <svg width={size} height={size + 30}>
-        <polygon points={outerPoints.map(p => `${p.x},${p.y}`).join(' ')} fill="none" stroke={theme.cardBorder} strokeWidth="1" />
-        <polygon points={outerPoints.map(p => `${center + (p.x - center) * 0.66},${center + (p.y - center) * 0.66}`).join(' ')} fill="none" stroke={theme.cardBorder} strokeWidth="1" opacity="0.5" />
-        <polygon points={outerPoints.map(p => `${center + (p.x - center) * 0.33},${center + (p.y - center) * 0.33}`).join(' ')} fill="none" stroke={theme.cardBorder} strokeWidth="1" opacity="0.3" />
-        <polygon points={points.map(p => `${p.x},${p.y}`).join(' ')} fill="rgba(139,92,246,0.3)" stroke="#8b5cf6" strokeWidth="2" />
-        <rect x={center - 25} y={5} width={50} height={18} rx={9} fill={theme.hoverBg} /><text x={center} y={17} textAnchor="middle" fontSize="10" fill={theme.textMuted}>Win %</text>
-        <rect x={5} y={size - 15} width={55} height={18} rx={9} fill={theme.hoverBg} /><text x={32} y={size - 2} textAnchor="middle" fontSize="10" fill={theme.textMuted}>Avg win/loss</text>
-        <rect x={size - 60} y={size - 15} width={55} height={18} rx={9} fill={theme.hoverBg} /><text x={size - 32} y={size - 2} textAnchor="middle" fontSize="10" fill={theme.textMuted}>Profit factor</text>
-      </svg>
-    );
-  };
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -3626,16 +3903,7 @@ function DashboardView({ trades, accounts, challenges, selectedAccount, setSelec
 
       {/* Second Row */}
       <div style={{ display: 'grid', gridTemplateColumns: '280px 1fr 1fr', gap: 12 }}>
-        <div className="card" style={{ padding: 20 }}>
-          <div className="stat-label">Ellipse Score</div>
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginTop: 8 }}>
-            <RadarChart winRate={winRate} avgRatio={avgWinLossRatio} pf={profitFactor} size={160} />
-            <div style={{ marginTop: 8, textAlign: 'center' }}>
-              <span style={{ fontSize: 14, color: theme.textMuted }}>Your Score: </span>
-              <span style={{ fontSize: 24, fontWeight: 700, color: ellipseScore >= 70 ? theme.pos : ellipseScore >= 40 ? '#f59e0b' : theme.neg }}>{totalTrades < 5 ? '--' : ellipseScore.toFixed(0)}</span>
-            </div>
-          </div>
-        </div>
+        <EllipseScorePanel trades={filtered} size={168} />
         <div className="card" style={{ padding: 20 }}>
           <div className="stat-label">Daily Net Cumulative P&L</div>
           <div style={{ height: 180, marginTop: 12 }}>
@@ -4833,6 +5101,191 @@ function CryptoView({ subTab, setSubTab, trades, snapshots, challenges, live, sy
   );
 }
 
+// Restored: also deleted in a0b1913 while still referenced — "Add Account" crashed.
+function NewAccountModal({ onClose, onSave }) {
+  const theme = useTheme();
+  const [acc, setAcc] = useState({ name: '', platform: 'MT5', broker: '', server: '', balance: '', equity: '' });
+  return (
+    <Modal onClose={onClose}>
+      <div style={{ padding: 20, borderBottom: `1px solid ${theme.cardBorder}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <h3 style={{ fontSize: 16, fontWeight: 700, color: theme.text }}>Add Account</h3>
+        <button onClick={onClose} className="icon-btn" style={{ padding: 8 }} aria-label="Close"><X size={18} /></button>
+      </div>
+      <div style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <div><label className="label">Platform</label><div className="flex gap-2">{['MT5', 'cTrader'].map(p => (
+          <button key={p} onClick={() => setAcc({ ...acc, platform: p })} style={{ flex: 1, padding: 12, borderRadius: 12, fontSize: 14, fontWeight: 600, cursor: 'pointer', border: `1px solid ${acc.platform === p ? 'rgba(139,92,246,0.55)' : theme.cardBorder}`, background: acc.platform === p ? theme.primaryGrad : 'transparent', color: acc.platform === p ? 'white' : theme.textMuted }}>{p}</button>
+        ))}</div></div>
+        <div><label className="label">Account Name</label><input value={acc.name} onChange={(e) => setAcc({ ...acc, name: e.target.value })} placeholder="Main Account" className="input" /></div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <div><label className="label">Broker</label><input value={acc.broker} onChange={(e) => setAcc({ ...acc, broker: e.target.value })} placeholder="ICMarkets" className="input" /></div>
+          <div><label className="label">Server</label><input value={acc.server} onChange={(e) => setAcc({ ...acc, server: e.target.value })} placeholder="Live-01" className="input" /></div>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <div><label className="label">Balance</label><input type="number" value={acc.balance} onChange={(e) => setAcc({ ...acc, balance: e.target.value })} placeholder="10000" className="input" /></div>
+          <div><label className="label">Equity</label><input type="number" value={acc.equity} onChange={(e) => setAcc({ ...acc, equity: e.target.value })} placeholder="10000" className="input" /></div>
+        </div>
+      </div>
+      <div style={{ padding: 20, borderTop: `1px solid ${theme.cardBorder}`, display: 'flex', justifyContent: 'flex-end', gap: 12 }}>
+        <button onClick={onClose} className="btn-ghost">Cancel</button>
+        <button onClick={() => onSave({ ...acc, balance: parseFloat(acc.balance) || 0, equity: parseFloat(acc.equity) || 0, connected: true })} className="btn-primary" disabled={!acc.name} style={{ opacity: acc.name ? 1 : 0.5 }}>Add Account</button>
+      </div>
+    </Modal>
+  );
+}
+
+// Restored: also deleted in a0b1913 while still referenced — editing an account crashed.
+function EditAccountModal({ account, onClose, onSave }) {
+  const theme = useTheme();
+  const [data, setData] = useState({ ...account, balance: String(account.balance ?? ''), equity: String(account.equity ?? '') });
+  return (
+    <Modal onClose={onClose}>
+      <div style={{ padding: 20, borderBottom: `1px solid ${theme.cardBorder}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <h3 style={{ fontSize: 16, fontWeight: 700, color: theme.text }}>Edit Account</h3>
+        <button onClick={onClose} className="icon-btn" style={{ padding: 8 }} aria-label="Close"><X size={18} /></button>
+      </div>
+      <div style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <div><label className="label">Name</label><input value={data.name} onChange={(e) => setData({ ...data, name: e.target.value })} className="input" /></div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <div><label className="label">Balance</label><input type="number" value={data.balance} onChange={(e) => setData({ ...data, balance: e.target.value })} className="input" /></div>
+          <div><label className="label">Equity</label><input type="number" value={data.equity} onChange={(e) => setData({ ...data, equity: e.target.value })} className="input" /></div>
+        </div>
+      </div>
+      <div style={{ padding: 20, borderTop: `1px solid ${theme.cardBorder}`, display: 'flex', justifyContent: 'flex-end', gap: 12 }}>
+        <button onClick={onClose} className="btn-ghost">Cancel</button>
+        <button onClick={() => onSave({ ...data, balance: parseFloat(data.balance) || 0, equity: parseFloat(data.equity) || 0 })} className="btn-primary">Save</button>
+      </div>
+    </Modal>
+  );
+}
+
+// Restored: this component was referenced by TradingJournal but deleted in
+// commit a0b1913, so opening any trade threw a ReferenceError.
+function TradeDetailModal({ trade, onClose, onDelete, onEdit }) {
+  const theme = useTheme();
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const chartImg = getTradingViewImageUrl(trade.chartLink) || trade.chartImage;
+  const quality = computeTradeScore(trade);
+  const qColor = !quality ? theme.textFaint
+    : quality.score >= 80 ? theme.pos : quality.score >= 65 ? theme.accent
+    : quality.score >= 50 ? theme.warn : theme.neg;
+
+  return (
+    <Modal width={560} onClose={onClose}>
+      <div style={{ padding: 20, borderBottom: `1px solid ${theme.cardBorder}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div className="flex items-center gap-3">
+          <div style={{ width: 44, height: 44, borderRadius: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', background: trade.pnl >= 0 ? 'rgba(34,211,165,0.12)' : 'rgba(244,85,122,0.12)' }}>
+            <span style={{ fontSize: 14, fontWeight: 700, color: trade.pnl >= 0 ? theme.pos : theme.neg }}>{trade.symbol?.slice(0, 2)}</span>
+          </div>
+          <div>
+            <div style={{ fontSize: 16, fontWeight: 700, color: theme.text }}>{trade.symbol}</div>
+            <div style={{ fontSize: 12, color: theme.textFaint }}>{trade.date} · {trade.time}</div>
+          </div>
+        </div>
+        <button onClick={onClose} className="icon-btn" style={{ padding: 8 }} aria-label="Close"><X size={18} /></button>
+      </div>
+
+      <div style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <div className="flex justify-between items-center">
+          <span className="badge" style={{ background: trade.side === 'Long' ? 'rgba(34,211,165,0.12)' : 'rgba(244,85,122,0.12)', color: trade.side === 'Long' ? theme.pos : theme.neg, padding: '7px 14px', fontSize: 13 }}>{trade.side}</span>
+          <span style={{ fontSize: 25, fontWeight: 700, color: trade.pnl >= 0 ? theme.pos : theme.neg, letterSpacing: '-0.5px' }}>{trade.pnl >= 0 ? '+' : ''}${trade.pnl?.toFixed(2)}</span>
+        </div>
+
+        {/* Trade quality — scores process, not P&L */}
+        {quality && (
+          <div className="card" style={{ padding: 16 }}>
+            <div className="flex items-center justify-between" style={{ marginBottom: 12 }}>
+              <div>
+                <div className="stat-label">Trade Quality</div>
+                <div style={{ fontSize: 11, color: theme.textFaint, marginTop: 3 }}>Scores execution, not profit</div>
+              </div>
+              <div className="flex items-baseline gap-2">
+                <span style={{ fontSize: 28, fontWeight: 800, color: qColor, letterSpacing: '-0.6px' }}>{quality.score}</span>
+                <span className="badge" style={{ background: `${qColor}1f`, color: qColor }}>{quality.grade}</span>
+              </div>
+            </div>
+            {quality.parts.map(p => (
+              <div key={p.label} style={{ marginBottom: 8 }}>
+                <div className="flex items-center justify-between" style={{ marginBottom: 3 }}>
+                  <span style={{ fontSize: 11.5, color: theme.textMuted, fontWeight: 500 }}>{p.label}</span>
+                  <span style={{ fontSize: 11, color: theme.textFaint, fontFamily: "'JetBrains Mono', monospace" }}>{p.pts}/{p.max}{p.note ? ` · ${p.note}` : ''}</span>
+                </div>
+                <div style={{ height: 4, borderRadius: 999, background: theme.dark ? 'rgba(255,255,255,0.06)' : 'rgba(20,17,31,0.06)', overflow: 'hidden' }}>
+                  <div className="progress-bar-animate" style={{ height: '100%', width: `${(p.pts / p.max) * 100}%`, borderRadius: 999, background: theme.primaryGrad }} />
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10 }}>
+          {[{ l: 'Entry', v: trade.entry }, { l: 'Exit', v: trade.exit }, { l: 'Lots', v: trade.lots },
+            { l: 'R:R', v: quality?.r != null ? `${quality.r >= 0 ? '+' : ''}${quality.r.toFixed(2)}R` : (trade.riskReward || '—') }].map(x => (
+            <div key={x.l} style={{ padding: 13, borderRadius: 12, background: theme.hoverBg, textAlign: 'center' }}>
+              <div className="stat-label">{x.l}</div>
+              <div style={{ fontSize: 14, fontWeight: 600, color: theme.text, marginTop: 4 }}>{x.v ?? '—'}</div>
+            </div>
+          ))}
+        </div>
+
+        {(trade.stopLoss > 0 || trade.takeProfit > 0) && (
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+            <div style={{ padding: 13, borderRadius: 12, background: theme.hoverBg }}><div className="stat-label">Stop Loss</div><div style={{ fontSize: 14, fontWeight: 600, color: theme.text, marginTop: 4 }}>{trade.stopLoss || '—'}</div></div>
+            <div style={{ padding: 13, borderRadius: 12, background: theme.hoverBg }}><div className="stat-label">Take Profit</div><div style={{ fontSize: 14, fontWeight: 600, color: theme.text, marginTop: 4 }}>{trade.takeProfit || '—'}</div></div>
+          </div>
+        )}
+
+        {(trade.commission || trade.swap) && (
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+            <div style={{ padding: 13, borderRadius: 12, background: theme.hoverBg }}><div className="stat-label">Commission</div><div style={{ fontSize: 14, fontWeight: 600, color: theme.neg, marginTop: 4 }}>-${Math.abs(trade.commission || 0).toFixed(2)}</div></div>
+            <div style={{ padding: 13, borderRadius: 12, background: theme.hoverBg }}><div className="stat-label">Swap</div><div style={{ fontSize: 14, fontWeight: 600, color: (trade.swap || 0) >= 0 ? theme.pos : theme.neg, marginTop: 4 }}>{(trade.swap || 0) >= 0 ? '+' : ''}${(trade.swap || 0).toFixed(2)}</div></div>
+          </div>
+        )}
+
+        {trade.marketStructure && (
+          <div style={{ padding: 13, borderRadius: 12, background: theme.hoverBg, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontSize: 13, color: theme.textMuted }}>Structure</span>
+            <span className="badge" style={{ background: MARKET_STRUCTURES[trade.marketStructure]?.color, color: 'white' }}>{MARKET_STRUCTURES[trade.marketStructure]?.label}</span>
+          </div>
+        )}
+
+        {(chartImg || trade.chartLink) && (
+          <div style={{ borderRadius: 12, overflow: 'hidden', border: `1px solid ${theme.cardBorder}` }}>
+            {chartImg && <img src={chartImg} alt="Chart" style={{ width: '100%', height: 200, objectFit: 'cover', display: 'block' }} onError={(e) => { e.target.style.display = 'none'; }} />}
+            {trade.chartLink && <a href={sanitizeImageUrl(trade.chartLink) || '#'} target="_blank" rel="noopener noreferrer" style={{ display: 'flex', alignItems: 'center', gap: 8, padding: 13, fontSize: 13, color: theme.primaryHi, textDecoration: 'none', background: theme.hoverBg }}><ExternalLink size={14} />Open in TradingView</a>}
+          </div>
+        )}
+
+        {trade.notes && (
+          <div>
+            <div className="stat-label" style={{ marginBottom: 8 }}>Notes</div>
+            <p style={{ fontSize: 13.5, color: theme.text, padding: 13, borderRadius: 12, background: theme.hoverBg, lineHeight: 1.55 }}>{trade.notes}</p>
+          </div>
+        )}
+      </div>
+
+      <div style={{ padding: 20, borderTop: `1px solid ${theme.cardBorder}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        {!confirmDelete ? (
+          <>
+            <button onClick={() => setConfirmDelete(true)} style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'none', border: 'none', fontSize: 14, color: theme.neg, cursor: 'pointer' }}><Trash2 size={16} />Delete</button>
+            <div className="flex gap-2">
+              <button onClick={() => onEdit(trade)} className="btn-ghost" style={{ display: 'flex', alignItems: 'center', gap: 6 }}><Edit3 size={16} />Edit</button>
+              <button onClick={onClose} className="btn-primary">Close</button>
+            </div>
+          </>
+        ) : (
+          <>
+            <span style={{ fontSize: 14, color: theme.textMuted }}>Delete this trade?</span>
+            <div className="flex gap-2">
+              <button onClick={() => setConfirmDelete(false)} className="btn-ghost">Cancel</button>
+              <button onClick={() => onDelete(trade.id)} className="btn-primary" style={{ background: theme.neg, boxShadow: 'none' }}>Delete</button>
+            </div>
+          </>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
 function StatCard({ label, value, color, sub, theme }) {
   return (
     <div className="card" style={{ padding: 18 }}>
@@ -5314,13 +5767,6 @@ function CryptoChallengeDetail({ challenge, trades, snapshots, liveEq, onBack, o
   });
 
   const s = computeCryptoStats(inRange);
-  const ratio = s.avgLoss > 0 ? s.avgWin / s.avgLoss : (s.avgWin > 0 ? 2 : 0);
-  const pfNum = s.profitFactor === Infinity ? 2 : s.profitFactor;
-  const winRateScore = Math.min(s.winRate / 60 * 33, 33);
-  const ratioScore = Math.min(ratio / 2 * 33, 33);
-  const pfScore = Math.min(pfNum / 2 * 34, 34);
-  const ellipseScore = s.realizedCount >= 5 ? winRateScore + ratioScore + pfScore : 0;
-  const scoreColor = ellipseScore >= 70 ? theme.pos : ellipseScore >= 40 ? '#f59e0b' : theme.neg;
   const returnPct = c.startBalance > 0 ? (s.netPnl / c.startBalance) * 100 : 0;
   const pfLabel = s.profitFactor === Infinity ? '∞' : s.profitFactor.toFixed(2);
 
@@ -5363,24 +5809,7 @@ function CryptoChallengeDetail({ challenge, trades, snapshots, liveEq, onBack, o
       </div>
 
       {/* Ellipse Score */}
-      <div className="card-lg" style={{ padding: 20, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 16 }}>
-        <div>
-          <div className="stat-label">Ellipse Score</div>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginTop: 6 }}>
-            <span style={{ fontSize: 34, fontWeight: 700, color: scoreColor }}>{s.realizedCount < 5 ? '--' : ellipseScore.toFixed(0)}</span>
-            <span style={{ fontSize: 14, color: theme.textMuted }}>/ 100</span>
-          </div>
-          <div style={{ fontSize: 12, color: theme.textFaint, marginTop: 4 }}>{s.realizedCount < 5 ? 'Needs 5+ closed trades' : 'Win rate + win/loss ratio + profit factor'}</div>
-        </div>
-        <div style={{ flex: 1, minWidth: 200, maxWidth: 360 }}>
-          {[['Win rate', winRateScore, 33], ['Win/Loss ratio', ratioScore, 33], ['Profit factor', pfScore, 34]].map(([label, val, max]) => (
-            <div key={label} style={{ marginBottom: 8 }}>
-              <div className="flex justify-between" style={{ fontSize: 11, color: theme.textMuted, marginBottom: 3 }}><span>{label}</span><span>{val.toFixed(0)}/{max}</span></div>
-              <div style={{ height: 6, borderRadius: 3, background: theme.hoverBg, overflow: 'hidden' }}><div style={{ width: `${(val / max) * 100}%`, height: '100%', background: scoreColor }}></div></div>
-            </div>
-          ))}
-        </div>
-      </div>
+      <EllipseScorePanel trades={inRange} size={168} />
 
       {/* Daily net + cumulative P&L */}
       <div className="card-lg" style={{ padding: 20 }}>
