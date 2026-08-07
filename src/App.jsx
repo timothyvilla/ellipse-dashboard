@@ -512,128 +512,165 @@ const mapCryptoChallengeRow = (r) => ({
   milestones: Array.isArray(r.milestones) ? r.milestones : [], notes: r.notes || '',
 });
 
-// ==================== ELLIPSE SCORE (multi-factor) ====================
+// ==================== ELLIPSE SCORE (prop-fit) ====================
 //
-// Replaces the old win-rate / avg-W-L / profit-factor score, whose three inputs
-// were not independent: profit factor is algebraically implied by the other two
-// (PF = W/(1-W) * avgWin/avgLoss), so it measured one thing three times and
-// ignored risk management entirely.
+// Scores whether a trading pattern survives a prop firm's structure, not just
+// whether it makes money. Every factor maps to a rule that can actually fail an
+// evaluation, and everything is measured in percent of account so the numbers
+// mean the same thing on a 10k and a 200k.
 //
-// Five independent factors, 100 points total:
-//   Edge               30  expectancy per unit risked (R), not dollars
-//   Risk discipline    25  stop usage + consistency of risk taken per trade
-//   Drawdown control   20  max drawdown vs peak, and recovery factor
-//   Execution quality  15  realized R vs planned R, and stop breaches
-//   Sample confidence  10  scales with trade count
+//   Edge 25                    expectancy per trade, in average-loss units
+//   Daily loss control 25      worst day vs the daily drawdown limit
+//   Drawdown headroom 20       peak-to-trough vs the overall limit
+//   Consistency 15             best day's share of gross profit
+//   Risk-adjusted progress 15  target reached vs drawdown budget spent
 //
-// Factors needing stop-loss data (risk, execution) are unavailable for synced
-// exchange fills. Those are dropped and the remaining weights are rescaled to
-// 100, so scores stay comparable instead of silently penalising missing data.
+// "Sample" was removed: past a few dozen trades it awarded full marks
+// permanently and stopped discriminating between traders.
+
+const DEFAULT_PROP_RULES = {
+  label: 'Standard evaluation',
+  accountSize: 100000,
+  profitTarget: 8,       // % of account
+  maxDailyDrawdown: 5,   // % of account
+  maxTotalDrawdown: 10,  // % of account
+  consistencyRule: 40,   // max % of gross profit from a single day
+};
 
 const SCORE_FACTORS = [
-  { key: 'edge',        label: 'Edge',         weight: 30 },
-  { key: 'lossControl', label: 'Loss control', weight: 25 },
-  { key: 'drawdown',    label: 'Drawdown',     weight: 20 },
-  { key: 'consistency', label: 'Consistency',  weight: 15 },
-  { key: 'sample',      label: 'Sample',       weight: 10 },
+  { key: 'edge',        label: 'Edge',              weight: 25 },
+  { key: 'dailyLoss',   label: 'Daily loss control', weight: 25 },
+  { key: 'drawdown',    label: 'Drawdown headroom',  weight: 20 },
+  { key: 'consistency', label: 'Consistency',        weight: 15 },
+  { key: 'progress',    label: 'Risk-adj. progress', weight: 15 },
 ];
 
 const clamp01 = (n) => Math.max(0, Math.min(1, Number.isFinite(n) ? n : 0));
 const mean = (a) => (a.length ? a.reduce((s, v) => s + v, 0) / a.length : 0);
-const stdev = (a) => { if (a.length < 2) return 0; const m = mean(a); return Math.sqrt(mean(a.map(v => (v - m) ** 2))); };
-
 const netOf = (t) => (Number(t.pnl) || 0) - Math.abs(Number(t.fee) || 0);
 
-// Broker exports carry no stop levels or targets, so every factor here is
-// derived from entry/exit/size/P&L alone. Nothing reports "n/a".
-function computeEllipseScore(trades) {
+// Pull real thresholds off the active challenge; fall back to a standard eval.
+function resolvePropRules(challenges, accounts, accountName) {
+  const active = (challenges || []).filter(c => c.status === 'active' &&
+    (accountName === 'all' || !accountName || c.account === accountName));
+  const ch = active[0];
+  if (!ch) {
+    const acct = (accounts || []).find(a => a.name === accountName);
+    return { ...DEFAULT_PROP_RULES, accountSize: acct?.balance > 0 ? acct.balance : DEFAULT_PROP_RULES.accountSize };
+  }
+  const phase = ch.phases?.[ch.currentPhase] || ch.phases?.[0] || {};
+  return {
+    label: `${ch.name}${phase.name ? ' · ' + phase.name : ''}`,
+    accountSize: ch.accountSize > 0 ? ch.accountSize : DEFAULT_PROP_RULES.accountSize,
+    profitTarget: phase.profitTarget ?? DEFAULT_PROP_RULES.profitTarget,
+    maxDailyDrawdown: phase.maxDailyDrawdown ?? DEFAULT_PROP_RULES.maxDailyDrawdown,
+    maxTotalDrawdown: phase.maxTotalDrawdown ?? DEFAULT_PROP_RULES.maxTotalDrawdown,
+    consistencyRule: ch.consistencyRule ?? DEFAULT_PROP_RULES.consistencyRule,
+  };
+}
+
+function computeEllipseScore(trades, rules) {
+  const R = { ...DEFAULT_PROP_RULES, ...(rules || {}) };
   const closed = (trades || []).filter(t => typeof t.pnl === 'number');
   const n = closed.length;
   if (n < 3) {
-    return { score: 0, available: false, tradeCount: n, caps: [], provisional: true,
-      factors: SCORE_FACTORS.map(f => ({ ...f, pct: 0, value: 0, available: false, detail: '—' })) };
+    return { score: 0, available: false, tradeCount: n, caps: [], provisional: true, rules: R,
+      factors: SCORE_FACTORS.map(f => ({ ...f, pct: 0, value: 0, detail: '—' })) };
   }
 
+  const size = R.accountSize > 0 ? R.accountSize : DEFAULT_PROP_RULES.accountSize;
+  const pctOf = (v) => (v / size) * 100;
+
+  // ---- Edge: expectancy per trade in units of an average loss.
   const pnls = closed.map(netOf);
   const wins = pnls.filter(v => v > 0);
   const lossMags = pnls.filter(v => v < 0).map(Math.abs);
   const avgWin = mean(wins), avgLoss = mean(lossMags);
-  const winRate = closed.length ? wins.length / closed.length : 0;
-
-  // ---- Edge: expectancy expressed in units of an average loss.
-  const expectancy = winRate * avgWin - (1 - winRate) * avgLoss;
+  const wr = wins.length / closed.length;
+  const expectancy = wr * avgWin - (1 - wr) * avgLoss;
   const edgeValue = avgLoss > 0 ? expectancy / avgLoss : (expectancy > 0 ? 1 : 0);
-  const edgePct = clamp01(edgeValue / 0.5);           // +0.5 avg-losses per trade = full marks
+  const edgePct = clamp01(edgeValue / 0.5);
   const edgeDetail = `${edgeValue >= 0 ? '+' : ''}${edgeValue.toFixed(2)}x avg loss per trade`;
 
-  // ---- Loss control: are losses tightly clustered, or do outliers run away?
-  // This is the risk-management signal that survives without stop levels — a
-  // worst loss several times the average means losses aren't being cut.
-  let lossPct = 0, lossDetail = 'No losing trades yet';
-  if (lossMags.length >= 2) {
-    const cv = avgLoss > 0 ? stdev(lossMags) / avgLoss : 1;
-    const worst = Math.max(...lossMags);
-    const worstMult = avgLoss > 0 ? worst / avgLoss : 1;
-    const outliers = lossMags.filter(v => v > avgLoss * 2).length;
-    const tightness = clamp01(1 - cv);                        // cv 0 = identical losses
-    const outlierPct = clamp01(1 - (outliers / lossMags.length) * 3);
-    lossPct = clamp01(tightness * 0.55 + outlierPct * 0.45);
-    lossDetail = `worst ${worstMult.toFixed(1)}x avg · ${outliers} outlier${outliers === 1 ? '' : 's'}`;
-  } else if (lossMags.length === 1) {
-    lossPct = 0.5; lossDetail = 'Only one losing trade';
-  }
-
-  // ---- Drawdown control: peak-to-trough against net profit.
-  const ordered = [...closed].sort((a, b) => new Date(a.date || a.ts || 0) - new Date(b.date || b.ts || 0));
-  let cum = 0, peak = 0, maxDD = 0;
-  for (const t of ordered) { cum += netOf(t); peak = Math.max(peak, cum); maxDD = Math.max(maxDD, peak - cum); }
-  const recovery = maxDD > 0 ? cum / maxDD : (cum > 0 ? 3 : 0);
-  const ddPct = clamp01(recovery / 3);
-  const ddDetail = maxDD > 0 ? `${recovery.toFixed(2)}x recovery · max DD ${Math.round(maxDD)}` : 'No drawdown recorded';
-
-  // ---- Consistency: are profits spread out, or carried by one big day?
+  // ---- Per-day aggregation, the unit prop firms actually police.
   const byDay = {};
   for (const t of closed) {
     const d = t.date || (t.ts || '').slice(0, 10);
     if (d) byDay[d] = (byDay[d] || 0) + netOf(t);
   }
-  const profitDays = Object.values(byDay).filter(v => v > 0);
-  const grossDayProfit = profitDays.reduce((s, v) => s + v, 0);
-  let consPct = 0, consDetail = 'No profitable days yet';
-  if (grossDayProfit > 0 && profitDays.length) {
-    const share = Math.max(...profitDays) / grossDayProfit;   // best day's share
-    consPct = clamp01((1 - share) / 0.7);                     // <=30% share = full marks
-    consDetail = `best day ${Math.round(share * 100)}% of gross profit`;
+  const days = Object.keys(byDay).sort();
+  const dayVals = days.map(d => byDay[d]);
+
+  // ---- Daily loss control: worst day against the daily limit.
+  const lossDays = dayVals.filter(v => v < 0).map(Math.abs);
+  let dailyPct = 1, dailyDetail = 'No losing days yet';
+  if (lossDays.length) {
+    const worstPct = pctOf(Math.max(...lossDays));
+    const used = worstPct / R.maxDailyDrawdown;              // 1.0 = limit hit
+    const nearMisses = lossDays.filter(v => pctOf(v) > R.maxDailyDrawdown * 0.6).length;
+    const headroom = clamp01(1 - used / 0.8);                 // <=80% of limit scores
+    const frequency = clamp01(1 - (nearMisses / days.length) * 5);
+    dailyPct = clamp01(headroom * 0.7 + frequency * 0.3);
+    dailyDetail = `worst day ${worstPct.toFixed(2)}% of ${R.maxDailyDrawdown}% limit · ${nearMisses} near-miss${nearMisses === 1 ? '' : 'es'}`;
   }
 
-  // ---- Sample confidence.
-  const samplePct = clamp01(Math.sqrt(n / 50));
-  const sampleDetail = `${n} closed trade${n === 1 ? '' : 's'}`;
+  // ---- Drawdown headroom: peak-to-trough against the overall limit.
+  let cum = 0, peak = 0, maxDD = 0;
+  for (const d of days) { cum += byDay[d]; peak = Math.max(peak, cum); maxDD = Math.max(maxDD, peak - cum); }
+  const netProfit = cum;
+  const ddUsedPct = pctOf(maxDD);
+  const ddBudget = ddUsedPct / R.maxTotalDrawdown;
+  const ddPct = clamp01(1 - ddBudget / 0.8);
+  const ddDetail = `max DD ${ddUsedPct.toFixed(2)}% of ${R.maxTotalDrawdown}% limit (${Math.round(ddBudget * 100)}% used)`;
+
+  // ---- Consistency: best day's share of gross profit vs the firm's rule.
+  const profitDays = dayVals.filter(v => v > 0);
+  const grossProfit = profitDays.reduce((s, v) => s + v, 0);
+  let consPct = 0, consDetail = 'No profitable days yet';
+  if (grossProfit > 0) {
+    const share = (Math.max(...profitDays) / grossProfit) * 100;
+    consPct = clamp01((R.consistencyRule * 1.4 - share) / (R.consistencyRule * 1.4 - R.consistencyRule * 0.5));
+    consDetail = `best day ${share.toFixed(0)}% of profit · rule ${R.consistencyRule}%`;
+  }
+
+  // ---- Risk-adjusted progress: target reached vs drawdown budget spent.
+  const targetPct = R.profitTarget > 0 ? pctOf(netProfit) / R.profitTarget : (netProfit > 0 ? 1 : 0);
+  const spend = Math.max(ddBudget, 0.01);
+  const efficiency = targetPct / spend;
+  const progPct = clamp01(efficiency / 1.5);
+  const progDetail = netProfit <= 0
+    ? `no progress · ${Math.round(ddBudget * 100)}% of DD budget spent`
+    : `${Math.round(targetPct * 100)}% of target on ${Math.round(ddBudget * 100)}% of DD budget`;
 
   const raw = {
     edge: { pct: edgePct, detail: edgeDetail },
-    lossControl: { pct: lossPct, detail: lossDetail },
+    dailyLoss: { pct: dailyPct, detail: dailyDetail },
     drawdown: { pct: ddPct, detail: ddDetail },
     consistency: { pct: consPct, detail: consDetail },
-    sample: { pct: samplePct, detail: sampleDetail },
+    progress: { pct: progPct, detail: progDetail },
   };
   const factors = SCORE_FACTORS.map(f => ({
-    ...f, pct: raw[f.key].pct, value: raw[f.key].pct * f.weight, available: true, detail: raw[f.key].detail,
+    ...f, pct: raw[f.key].pct, value: raw[f.key].pct * f.weight, detail: raw[f.key].detail,
   }));
 
   let score = factors.reduce((s, f) => s + f.value, 0);
   const caps = [];
   if (edgeValue <= 0) { score = Math.min(score, 40); caps.push('No positive edge — capped at 40'); }
-  if (n < 20) { score = Math.min(score, 60); caps.push(`Provisional — ${n}/20 trades, capped at 60`); }
+  if (ddBudget >= 1) { score = Math.min(score, 25); caps.push(`Overall drawdown limit breached — capped at 25`); }
+  if (lossDays.length && pctOf(Math.max(...lossDays)) >= R.maxDailyDrawdown) {
+    score = Math.min(score, 25); caps.push('Daily loss limit breached — capped at 25');
+  }
 
-  return { score: Math.round(score), factors, available: true, tradeCount: n, provisional: n < 20, caps };
+  return {
+    score: Math.round(score), factors, available: true, tradeCount: n,
+    provisional: n < 20, caps, rules: R,
+    ruleLabel: R.label,
+  };
 }
 
 // ---- Per-trade grade: pure outcome ------------------------------------------
 // Stops and targets aren't present in exported statements, so process factors
-// (risk defined, plan adherence) can't be measured. This grades outcome only,
-// scaled against the trader's own average win and loss so it reflects size
-// relative to their norm rather than raw currency.
+// can't be measured. Outcome only, scaled against the trader's own averages.
 function computeTradeScore(t, ctx) {
   if (!t || typeof t.pnl !== 'number') return null;
   const net = netOf(t);
@@ -661,90 +698,114 @@ function computeTradeScore(t, ctx) {
 }
 
 // ---- Shared Ellipse Score panel: 5-axis radar + factor breakdown -------------
-function EllipseScorePanel({ trades, size = 168, compact = false }) {
+function EllipseScorePanel({ trades, rules, size = 168, compact = false, horizontal = false }) {
   const theme = useTheme();
-  const result = computeEllipseScore(trades);
-  const { score, factors, available, provisional, caps } = result;
+  const { score, factors, available, provisional, caps, ruleLabel } = computeEllipseScore(trades, rules);
 
   const band = score >= 75 ? { label: 'Strong', color: theme.pos }
     : score >= 55 ? { label: 'Developing', color: theme.accent }
     : score >= 35 ? { label: 'Needs work', color: theme.warn }
     : { label: 'At risk', color: theme.neg };
 
-  // Pentagon geometry: 5 axes starting at 12 o'clock.
-  const cx = size / 2, cy = size / 2, maxR = size * 0.36;
+  const r = horizontal ? 132 : size;
+  const cx = r / 2, cy = r / 2, maxR = r * 0.36;
   const pt = (i, frac) => {
     const a = (Math.PI * 2 * i) / factors.length - Math.PI / 2;
     return [cx + Math.cos(a) * maxR * frac, cy + Math.sin(a) * maxR * frac];
   };
-  const ring = (frac) => factors.map((_, i) => pt(i, frac).join(',')).join(' ');
-  const shape = factors.map((f, i) => pt(i, f.available ? Math.max(f.pct, 0.02) : 0).join(',')).join(' ');
+  const ring = (f) => factors.map((_, i) => pt(i, f).join(',')).join(' ');
+  const shape = factors.map((f, i) => pt(i, Math.max(f.pct, 0.02)).join(',')).join(' ');
+
+  const Radar = () => (
+    <svg width={r} height={r} role="img" aria-label={`Ellipse score ${score} of 100`}>
+      {[1, 0.66, 0.33].map((f, i) => (
+        <polygon key={i} points={ring(f)} fill="none" stroke={theme.cardBorder} strokeWidth="1" opacity={1 - i * 0.25} />
+      ))}
+      {factors.map((_, i) => { const [x, y] = pt(i, 1); return <line key={i} x1={cx} y1={cy} x2={x} y2={y} stroke={theme.cardBorder} strokeWidth="1" opacity="0.5" />; })}
+      <polygon points={shape} fill="rgba(139,92,246,0.28)" stroke={theme.primary} strokeWidth="2" strokeLinejoin="round" />
+      {factors.map((f, i) => { const [x, y] = pt(i, Math.max(f.pct, 0.02)); return <circle key={i} cx={x} cy={y} r="3" fill={theme.primaryHi} />; })}
+    </svg>
+  );
+
+  const FactorBar = ({ f }) => (
+    <div title={f.detail}>
+      <div className="flex items-baseline justify-between gap-2" style={{ marginBottom: 5 }}>
+        <span style={{ fontSize: 11.5, fontWeight: 600, color: theme.text }}>{f.label}</span>
+        <span style={{ fontSize: 10.5, color: theme.textFaint, fontFamily: "'JetBrains Mono', monospace", flexShrink: 0 }}>
+          {Math.round(f.value)}/{f.weight}
+        </span>
+      </div>
+      <div style={{ height: 6, borderRadius: 999, background: theme.dark ? 'rgba(255,255,255,0.08)' : 'rgba(20,17,31,0.08)', overflow: 'hidden' }}>
+        <div className="progress-bar-animate" style={{ height: '100%', width: `${f.pct * 100}%`, borderRadius: 999, background: theme.primaryGrad }} />
+      </div>
+      <div style={{ fontSize: 10, color: theme.textFaint, marginTop: 4, lineHeight: 1.35 }}>{f.detail}</div>
+    </div>
+  );
+
+  const Caps = () => caps?.length > 0 ? (
+    <div style={{ marginTop: 10, padding: '7px 10px', borderRadius: 10, background: provisional ? 'rgba(245,158,11,0.1)' : 'rgba(244,85,122,0.1)', border: `1px solid ${provisional ? 'rgba(245,158,11,0.3)' : 'rgba(244,85,122,0.3)'}` }}>
+      {caps.map((c, i) => <div key={i} style={{ fontSize: 10.5, color: provisional ? theme.warn : theme.neg, fontWeight: 500 }}>{c}</div>)}
+    </div>
+  ) : null;
+
+  if (!available) {
+    return (
+      <div className="card" style={{ padding: 18 }}>
+        <div className="stat-label">Ellipse Score</div>
+        <div style={{ padding: '26px 0', textAlign: 'center', fontSize: 12.5, color: theme.textFaint }}>
+          Log at least 3 closed trades to generate a score.
+        </div>
+      </div>
+    );
+  }
+
+  // Wide layout: radar + score on the left, factors across the remaining width.
+  // Uses horizontal space so the card stays short and its row neighbours don't
+  // stretch into dead space.
+  if (horizontal) {
+    return (
+      <div className="card" style={{ padding: 18 }}>
+        <div className="flex items-center justify-between gap-2" style={{ marginBottom: 14, flexWrap: 'wrap' }}>
+          <div className="flex items-baseline gap-2" style={{ flexWrap: 'wrap' }}>
+            <div className="stat-label">Ellipse Score</div>
+            {ruleLabel && <span style={{ fontSize: 10.5, color: theme.textFaint }}>scored against {ruleLabel}</span>}
+          </div>
+          <span className="badge" style={{ background: `${band.color}1f`, color: band.color }}>{band.label}</span>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 22, flexWrap: 'wrap' }}>
+          <div className="flex items-center gap-3" style={{ flexShrink: 0 }}>
+            <Radar />
+            <div>
+              <div style={{ fontSize: 40, fontWeight: 800, color: band.color, letterSpacing: '-1.4px', lineHeight: 1 }}>{score}</div>
+              <div style={{ fontSize: 12, color: theme.textFaint, marginTop: 2 }}>out of 100</div>
+            </div>
+          </div>
+          <div style={{ flex: 1, minWidth: 300, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 16 }}>
+            {factors.map(f => <FactorBar key={f.key} f={f} />)}
+          </div>
+        </div>
+        <Caps />
+      </div>
+    );
+  }
 
   return (
     <div className="card" style={{ padding: 18 }}>
       <div className="flex items-center justify-between gap-2">
         <div className="stat-label">Ellipse Score</div>
-        {available && <span className="badge" style={{ background: `${band.color}1f`, color: band.color }}>{band.label}</span>}
+        <span className="badge" style={{ background: `${band.color}1f`, color: band.color }}>{band.label}</span>
       </div>
-
-      {!available ? (
-        <div style={{ padding: '26px 0', textAlign: 'center', fontSize: 12.5, color: theme.textFaint }}>
-          Log at least 3 closed trades to generate a score.
+      <div className="flex items-center justify-center" style={{ marginTop: 6 }}><Radar /></div>
+      <div className="flex items-baseline justify-center gap-2" style={{ marginTop: 4, marginBottom: 12 }}>
+        <span style={{ fontSize: 34, fontWeight: 800, color: band.color, letterSpacing: '-1px' }}>{score}</span>
+        <span style={{ fontSize: 13, color: theme.textFaint }}>/ 100</span>
+      </div>
+      {!compact && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 11 }}>
+          {factors.map(f => <FactorBar key={f.key} f={f} />)}
         </div>
-      ) : (
-        <>
-          <div className="flex items-center justify-center" style={{ marginTop: 6 }}>
-            <svg width={size} height={size} role="img" aria-label={`Ellipse score ${score} of 100`}>
-              {[1, 0.66, 0.33].map((f, i) => (
-                <polygon key={i} points={ring(f)} fill="none" stroke={theme.cardBorder} strokeWidth="1" opacity={1 - i * 0.25} />
-              ))}
-              {factors.map((_, i) => {
-                const [x, y] = pt(i, 1);
-                return <line key={i} x1={cx} y1={cy} x2={x} y2={y} stroke={theme.cardBorder} strokeWidth="1" opacity="0.5" />;
-              })}
-              <polygon points={shape} fill="rgba(139,92,246,0.28)" stroke={theme.primary} strokeWidth="2" strokeLinejoin="round" />
-              {factors.map((f, i) => {
-                const [x, y] = pt(i, f.available ? Math.max(f.pct, 0.02) : 0);
-                return <circle key={i} cx={x} cy={y} r="3" fill={f.available ? theme.primaryHi : theme.textFaint} />;
-              })}
-            </svg>
-          </div>
-
-          <div className="flex items-baseline justify-center gap-2" style={{ marginTop: 4, marginBottom: 12 }}>
-            <span style={{ fontSize: 34, fontWeight: 800, color: band.color, letterSpacing: '-1px' }}>{score}</span>
-            <span style={{ fontSize: 13, color: theme.textFaint }}>/ 100</span>
-          </div>
-
-          {!compact && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 11 }}>
-              {factors.map(f => (
-                <div key={f.key} title={f.detail}>
-                  <div className="flex items-baseline justify-between gap-2" style={{ marginBottom: 5 }}>
-                    <span style={{ fontSize: 11.5, fontWeight: 600, color: f.available ? theme.text : theme.textFaint }}>
-                      {f.label}{!f.available && ' · n/a'}
-                    </span>
-                    <span style={{ fontSize: 10.5, color: theme.textFaint, fontFamily: "'JetBrains Mono', monospace", flexShrink: 0 }}>
-                      {f.available ? `${Math.round(f.value)}/${f.weight}` : '—'}
-                    </span>
-                  </div>
-                  <div style={{ height: 6, borderRadius: 999, background: theme.dark ? 'rgba(255,255,255,0.08)' : 'rgba(20,17,31,0.08)', overflow: 'hidden' }}>
-                    <div className="progress-bar-animate" style={{ height: '100%', width: `${(f.available ? f.pct : 0) * 100}%`, borderRadius: 999, background: theme.primaryGrad }} />
-                  </div>
-                  <div style={{ fontSize: 10, color: theme.textFaint, marginTop: 4, lineHeight: 1.35 }}>{f.detail}</div>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {caps?.length > 0 && (
-            <div style={{ marginTop: 10, padding: '8px 10px', borderRadius: 10, background: provisional ? 'rgba(245,158,11,0.1)' : 'rgba(244,85,122,0.1)', border: `1px solid ${provisional ? 'rgba(245,158,11,0.3)' : 'rgba(244,85,122,0.3)'}` }}>
-              {caps.map((c, i) => (
-                <div key={i} style={{ fontSize: 10.5, color: provisional ? theme.warn : theme.neg, fontWeight: 500 }}>{c}</div>
-              ))}
-            </div>
-          )}
-        </>
       )}
+      <Caps />
     </div>
   );
 }
@@ -1538,6 +1599,19 @@ export default function TradingJournal() {
             width: 3px; height: 18px; border-radius: 0 3px 3px 0; background: ${theme.primaryHi};
             box-shadow: 0 0 12px ${theme.primaryHi};
           }
+          .sidebar-pocket {
+            position: absolute; top: 50%; right: -13px; transform: translateY(-50%);
+            width: 26px; height: 26px; border-radius: 999px; z-index: 30;
+            display: flex; align-items: center; justify-content: center; cursor: pointer;
+            background: ${darkMode ? '#181528' : '#ffffff'};
+            border: 1px solid ${theme.cardBorder};
+            color: ${theme.textMuted};
+            box-shadow: ${darkMode ? '0 2px 10px rgba(0,0,0,0.55)' : '0 2px 8px rgba(80,64,140,0.14)'};
+            transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease, transform 0.15s ease;
+          }
+          .sidebar-pocket:hover { transform: translateY(-50%) scale(1.12); }
+          .sidebar-pocket:focus-visible { outline: none; border-color: ${theme.primary}; box-shadow: 0 0 0 3px ${theme.primarySoft}; }
+          .sidebar-pocket:hover { color: ${theme.primaryHi}; border-color: ${theme.primary}; background: ${darkMode ? '#221c3a' : '#f5f2ff'}; }
           .nav-item-collapsed { justify-content: center; padding-left: 0; padding-right: 0; }
           .nav-item-collapsed.active::before { left: -12px; }
           .nav-section {
@@ -1600,14 +1674,25 @@ export default function TradingJournal() {
           <aside style={{
             width: sidebarCollapsed ? 68 : 244,
             transition: 'width 0.22s cubic-bezier(0.4, 0, 0.2, 1)',
-            overflow: 'hidden',
             flexShrink: 0,
+            position: 'relative',
             background: darkMode
               ? 'linear-gradient(180deg, rgba(24,20,40,0.86) 0%, rgba(10,9,17,0.92) 100%)'
               : 'rgba(255,255,255,0.86)',
             backdropFilter: 'blur(14px)',
             borderRight: `1px solid ${theme.cardBorder}`,
           }} className="flex flex-col">
+            {/* Pocket toggle: sits astride the sidebar's right border, vertically
+                centred, so collapsing is discoverable without stealing header space. */}
+            <button
+              onClick={() => setSidebarCollapsed(v => !v)}
+              className="sidebar-pocket"
+              title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+              aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+              aria-expanded={!sidebarCollapsed}
+            >
+              {sidebarCollapsed ? <ChevronRight size={14} /> : <ChevronLeft size={14} />}
+            </button>
             {/* Height is pinned so this bottom border lines up exactly with the
                 main header's — they sit side by side and were 3px apart. */}
             <div style={{ height: 82, flexShrink: 0, padding: sidebarCollapsed ? '0 15px' : '0 18px', display: 'flex', alignItems: 'center', borderBottom: `1px solid ${theme.cardBorder}` }}>
@@ -1723,17 +1808,6 @@ export default function TradingJournal() {
               alignItems: 'center',
             }}>
               <div className="flex items-center justify-between gap-4" style={{ width: '100%' }}>
-                <div className="flex items-center gap-3">
-                  <button
-                    onClick={() => setSidebarCollapsed(v => !v)}
-                    className="icon-btn"
-                    title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-                    aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-                    aria-expanded={!sidebarCollapsed}
-                    style={{ padding: 9, flexShrink: 0 }}
-                  >
-                    {sidebarCollapsed ? <ChevronRight size={17} /> : <ChevronLeft size={17} />}
-                  </button>
                 <div>
                   <h1 style={{ fontSize: 21, fontWeight: 700, color: theme.text, letterSpacing: '-0.4px' }}>
                     {activeTab === 'dashboard' && 'Dashboard'}
@@ -1757,7 +1831,6 @@ export default function TradingJournal() {
                     {activeTab === 'calendar' && 'Visual trade history'}
                     {activeTab === 'crypto' && 'Live portfolio, growth challenge, trades & analytics'}
                   </p>
-                </div>
                 </div>
                 <div className="flex items-center gap-3">
                   <button onClick={() => setDarkMode(!darkMode)} className="icon-btn" title={darkMode ? 'Switch to light mode' : 'Switch to dark mode'}>
@@ -3836,6 +3909,8 @@ function JournalView({ trades, accounts, filterAccount, setFilterAccount, onSele
 function DashboardView({ trades, accounts, challenges, selectedAccount, setSelectedAccount }) {
   const theme = useTheme();
   const [dashboardMonth, setDashboardMonth] = useState(new Date());
+  // Score against the real prop rules for this account when a challenge is active.
+  const propRules = resolvePropRules(challenges, accounts, selectedAccount);
   const filtered = selectedAccount === 'all' ? trades : trades.filter(t => t.account === selectedAccount);
   
   const totalTrades = filtered.length;
@@ -4002,13 +4077,16 @@ function DashboardView({ trades, accounts, challenges, selectedAccount, setSelec
         </div>
       </div>
 
-      {/* Second Row */}
-      <div style={{ display: 'grid', gridTemplateColumns: '300px minmax(0, 1fr) minmax(0, 1fr)', gap: 12, alignItems: 'stretch' }}>
-        <EllipseScorePanel trades={filtered} size={158} />
-        <ChartCard title="Daily Net Cumulative P&L">
+      {/* Score — full width so the radar and five factors sit side by side
+          rather than stacking into a tall column that stretches its neighbours. */}
+      <EllipseScorePanel trades={filtered} rules={propRules} horizontal />
+
+      {/* P&L charts at a fixed, readable height */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: 12, alignItems: 'stretch' }}>
+        <ChartCard title="Daily Net Cumulative P&L" minHeight={230}>
           <CumulativePnlChart data={cumulativePnlData} theme={theme} id="dashCum" />
         </ChartCard>
-        <ChartCard title="Net Daily P&L">
+        <ChartCard title="Net Daily P&L" minHeight={230}>
           <DailyPnlChart data={dailyPnlData} theme={theme} />
         </ChartCard>
       </div>
@@ -5694,12 +5772,12 @@ function CryptoAnalyticsView({ trades, fmt, theme }) {
       </div>
 
       {/* Score + the two P&L charts, same layout as the Dashboard */}
-      <div style={{ display: 'grid', gridTemplateColumns: '300px minmax(0, 1fr) minmax(0, 1fr)', gap: 12, alignItems: 'stretch' }}>
-        <EllipseScorePanel trades={normalized} size={158} />
-        <ChartCard title="Daily Net Cumulative P&L">
+      <EllipseScorePanel trades={normalized} horizontal />
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: 12, alignItems: 'stretch' }}>
+        <ChartCard title="Daily Net Cumulative P&L" minHeight={230}>
           <CumulativePnlChart data={cumulative} theme={theme} id="cryptoCum" />
         </ChartCard>
-        <ChartCard title="Net Daily P&L">
+        <ChartCard title="Net Daily P&L" minHeight={230}>
           <DailyPnlChart data={daily} theme={theme} />
         </ChartCard>
       </div>
