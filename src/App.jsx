@@ -107,12 +107,6 @@ const parseMT5Statement = (html) => {
         const commission = Math.abs(parseFloat(getValue(['commission']).replace(/[^-\d.]/g, '')) || 0);
         const swap = parseFloat(getValue(['swap']).replace(/[^-\d.]/g, '')) || 0;
         const timeStr = getValue(['time', 'open time', 'close time']);
-        // MT5 statements carry S/L and T/P on the Positions table; earlier
-        // versions of this parser ignored them and hardcoded 0, which left every
-        // imported trade with no risk data and no computable R-multiple.
-        // Header renders as "S / L" or "S/L" depending on build, so match loosely.
-        const stopLoss = parseFloat(getValue(['s/l', 's / l', 'stop loss', 'stoploss']).replace(/[^-\d.]/g, '')) || 0;
-        const takeProfit = parseFloat(getValue(['t/p', 't / p', 'take profit', 'takeprofit']).replace(/[^-\d.]/g, '')) || 0;
         
         if (!type.includes('buy') && !type.includes('sell')) continue;
         if (!symbol || volume === 0) continue;
@@ -130,7 +124,7 @@ const parseMT5Statement = (html) => {
           date, time, symbol, side: type.includes('buy') ? 'Long' : 'Short',
           entry: openPrice || closePrice, exit: closePrice || openPrice,
           lots: volume, pnl: profit, commission, swap,
-          stopLoss, takeProfit, marketStructure: '', candleType: '',
+          marketStructure: '', candleType: '',
           liquidityTaken: [], liquidityTarget: [],
           notes: 'Imported from MT5', chartLink: '', chartImage: ''
         });
@@ -250,9 +244,6 @@ const parseCTraderStatement = (html) => {
             if (h.includes('commission')) columnMap.commission = i;
             if (h.includes('net')) columnMap.net = i;
             if (h.includes('balance')) columnMap.balance = i;
-            // Risk levels — present on most cTrader closed-position reports.
-            if (h.includes('stop loss') || h === 's/l' || h === 'sl') columnMap.stopLoss = i;
-            if (h.includes('take profit') || h === 't/p' || h === 'tp') columnMap.takeProfit = i;
           });
           continue;
         }
@@ -272,8 +263,6 @@ const parseCTraderStatement = (html) => {
       const swap = parseNum(getText(columnMap.swap));
       const commission = Math.abs(parseNum(getText(columnMap.commission)));
       const netPnl = parseNum(getText(columnMap.net));
-      const stopLoss = parseNum(getText(columnMap.stopLoss));
-      const takeProfit = parseNum(getText(columnMap.takeProfit));
       const lotsMatch = quantityText.match(/([\d.]+)\s*Lots?/i);
       const lots = lotsMatch ? parseFloat(lotsMatch[1]) : parseNum(quantityText);
       
@@ -295,7 +284,7 @@ const parseCTraderStatement = (html) => {
         date, time, symbol: symbol.replace('/', '').toUpperCase(),
         side: directionText.includes('buy') ? 'Long' : 'Short',
         entry: entryPrice, exit: closePrice, lots, pnl: netPnl, commission, swap,
-        stopLoss, takeProfit, marketStructure: '', candleType: '',
+        marketStructure: '', candleType: '',
         liquidityTaken: [], liquidityTarget: [],
         notes: 'Imported from cTrader', chartLink: '', chartImage: '',
         _phase: phase
@@ -337,9 +326,6 @@ const parseCSV = (csv, platform) => {
     const profit = parseFloat((row.profit || row.pnl || row['p&l'] || '0').replace(/[^-\d.]/g, '')) || 0;
     const commission = Math.abs(parseFloat((row.commission || '0').replace(/[^-\d.]/g, ''))) || 0;
     const swap = parseFloat((row.swap || '0').replace(/[^-\d.]/g, '')) || 0;
-    // Risk levels, so imported trades get a computable R-multiple.
-    const stopLoss = parseFloat(row['s/l'] || row.sl || row['stop loss'] || row.stoploss || '0') || 0;
-    const takeProfit = parseFloat(row['t/p'] || row.tp || row['take profit'] || row.takeprofit || '0') || 0;
 
     let date = row.date || row['close time'] || row['open time'] || '';
     const dateMatch = date.match(/(\d{4}[.\-/]\d{2}[.\-/]\d{2})/);
@@ -354,7 +340,7 @@ const parseCSV = (csv, platform) => {
       date, time, symbol: symbol.replace('/', '').toUpperCase(),
       side: type.includes('buy') || type.includes('long') ? 'Long' : 'Short',
       entry, exit: exit || entry, lots: volume, pnl: profit, commission, swap,
-      stopLoss, takeProfit, marketStructure: '', candleType: '',
+      marketStructure: '', candleType: '',
       liquidityTaken: [], liquidityTarget: [],
       notes: `Imported from ${platform}`, chartLink: '', chartImage: ''
     });
@@ -545,197 +531,132 @@ const mapCryptoChallengeRow = (r) => ({
 // 100, so scores stay comparable instead of silently penalising missing data.
 
 const SCORE_FACTORS = [
-  { key: 'edge',      label: 'Edge',            weight: 30, needsRisk: false },
-  { key: 'risk',      label: 'Risk discipline', weight: 25, needsRisk: true },
-  { key: 'drawdown',  label: 'Drawdown',        weight: 20, needsRisk: false },
-  { key: 'execution', label: 'Execution',       weight: 15, needsRisk: true },
-  { key: 'sample',    label: 'Sample',          weight: 10, needsRisk: false },
+  { key: 'edge',        label: 'Edge',         weight: 30 },
+  { key: 'lossControl', label: 'Loss control', weight: 25 },
+  { key: 'drawdown',    label: 'Drawdown',     weight: 20 },
+  { key: 'consistency', label: 'Consistency',  weight: 15 },
+  { key: 'sample',      label: 'Sample',       weight: 10 },
 ];
 
 const clamp01 = (n) => Math.max(0, Math.min(1, Number.isFinite(n) ? n : 0));
+const mean = (a) => (a.length ? a.reduce((s, v) => s + v, 0) / a.length : 0);
+const stdev = (a) => { if (a.length < 2) return 0; const m = mean(a); return Math.sqrt(mean(a.map(v => (v - m) ** 2))); };
 
-// Realized R-multiple: profit measured in units of the risk actually taken.
-// (exit - entry) / (entry - stop) is symbol-independent, so it needs no pip values.
-// stopLoss === 0 means "no stop recorded", NOT "stop at price zero". Treating it
-// as a real level makes risk = the full entry price, so every R collapses to
-// ~0.00 while still reporting 100% stop coverage. Require a positive level.
-const realizedR = (t) => {
-  const entry = parseFloat(t.entry), exit = parseFloat(t.exit), stop = parseFloat(t.stopLoss);
-  if (!Number.isFinite(entry) || !Number.isFinite(exit) || !Number.isFinite(stop)) return null;
-  if (!(entry > 0) || !(stop > 0) || stop === entry) return null;
-  const risk = Math.abs(entry - stop);
-  const move = (t.side === 'Short' ? entry - exit : exit - entry);
-  return move / risk;
-};
+const netOf = (t) => (Number(t.pnl) || 0) - Math.abs(Number(t.fee) || 0);
 
-const plannedR = (t) => {
-  const entry = parseFloat(t.entry), target = parseFloat(t.takeProfit), stop = parseFloat(t.stopLoss);
-  if (!Number.isFinite(entry) || !Number.isFinite(target) || !Number.isFinite(stop)) return null;
-  if (!(entry > 0) || !(stop > 0) || !(target > 0) || stop === entry) return null;
-  return Math.abs(target - entry) / Math.abs(entry - stop);
-};
-
+// Broker exports carry no stop levels or targets, so every factor here is
+// derived from entry/exit/size/P&L alone. Nothing reports "n/a".
 function computeEllipseScore(trades) {
   const closed = (trades || []).filter(t => typeof t.pnl === 'number');
   const n = closed.length;
-  const empty = {
-    score: 0, factors: SCORE_FACTORS.map(f => ({ ...f, value: 0, pct: 0, available: false, detail: '—' })),
-    available: false, tradeCount: n,
-  };
-  if (n < 3) return empty;
-
-  const withR = closed.map(t => ({ t, r: realizedR(t) })).filter(x => x.r !== null);
-  const riskDataPct = n ? withR.length / n : 0;
-  const hasRiskData = withR.length >= 3 && riskDataPct >= 0.5;
-
-  // ---- Edge: average R per trade. Fall back to a $-normalised proxy without stops.
-  let edgeValue, edgeDetail;
-  if (hasRiskData) {
-    edgeValue = withR.reduce((s, x) => s + x.r, 0) / withR.length;
-    edgeDetail = `${edgeValue >= 0 ? '+' : ''}${edgeValue.toFixed(2)}R per trade`;
-  } else {
-    const wins = closed.filter(t => t.pnl > 0), losses = closed.filter(t => t.pnl < 0);
-    const avgWin = wins.length ? wins.reduce((s, t) => s + t.pnl, 0) / wins.length : 0;
-    const avgLoss = losses.length ? Math.abs(losses.reduce((s, t) => s + t.pnl, 0) / losses.length) : 0;
-    const w = closed.length ? wins.length / closed.length : 0;
-    edgeValue = avgLoss > 0 ? (w * avgWin - (1 - w) * avgLoss) / avgLoss : 0;
-    edgeDetail = `${edgeValue >= 0 ? '+' : ''}${edgeValue.toFixed(2)}R equivalent`;
-  }
-  // 0R = 0, 0.5R = full marks. Losing systems score 0 rather than negative.
-  const edgePct = clamp01(edgeValue / 0.5);
-
-  // ---- Risk discipline: are stops used, and is risk sized consistently?
-  let riskPct = 0, riskDetail = 'No stop-loss data';
-  if (hasRiskData) {
-    const risks = withR
-      .map(x => Math.abs(parseFloat(x.t.entry) - parseFloat(x.t.stopLoss)) * (parseFloat(x.t.lots) || 0))
-      .filter(v => v > 0);
-    let consistency = 0;
-    if (risks.length > 1) {
-      const mean = risks.reduce((a, b) => a + b, 0) / risks.length;
-      const sd = Math.sqrt(risks.reduce((s, v) => s + (v - mean) ** 2, 0) / risks.length);
-      const cv = mean > 0 ? sd / mean : 1;   // coefficient of variation
-      consistency = clamp01(1 - cv);          // cv 0 = perfect, cv >= 1 = none
-    }
-    riskPct = clamp01(riskDataPct * 0.5 + consistency * 0.5);
-    riskDetail = `${Math.round(riskDataPct * 100)}% with stops · ${Math.round(consistency * 100)}% size consistency`;
+  if (n < 3) {
+    return { score: 0, available: false, tradeCount: n, caps: [], provisional: true,
+      factors: SCORE_FACTORS.map(f => ({ ...f, pct: 0, value: 0, available: false, detail: '—' })) };
   }
 
-  // ---- Drawdown control: peak-to-trough on the cumulative P&L curve.
+  const pnls = closed.map(netOf);
+  const wins = pnls.filter(v => v > 0);
+  const lossMags = pnls.filter(v => v < 0).map(Math.abs);
+  const avgWin = mean(wins), avgLoss = mean(lossMags);
+  const winRate = closed.length ? wins.length / closed.length : 0;
+
+  // ---- Edge: expectancy expressed in units of an average loss.
+  const expectancy = winRate * avgWin - (1 - winRate) * avgLoss;
+  const edgeValue = avgLoss > 0 ? expectancy / avgLoss : (expectancy > 0 ? 1 : 0);
+  const edgePct = clamp01(edgeValue / 0.5);           // +0.5 avg-losses per trade = full marks
+  const edgeDetail = `${edgeValue >= 0 ? '+' : ''}${edgeValue.toFixed(2)}x avg loss per trade`;
+
+  // ---- Loss control: are losses tightly clustered, or do outliers run away?
+  // This is the risk-management signal that survives without stop levels — a
+  // worst loss several times the average means losses aren't being cut.
+  let lossPct = 0, lossDetail = 'No losing trades yet';
+  if (lossMags.length >= 2) {
+    const cv = avgLoss > 0 ? stdev(lossMags) / avgLoss : 1;
+    const worst = Math.max(...lossMags);
+    const worstMult = avgLoss > 0 ? worst / avgLoss : 1;
+    const outliers = lossMags.filter(v => v > avgLoss * 2).length;
+    const tightness = clamp01(1 - cv);                        // cv 0 = identical losses
+    const outlierPct = clamp01(1 - (outliers / lossMags.length) * 3);
+    lossPct = clamp01(tightness * 0.55 + outlierPct * 0.45);
+    lossDetail = `worst ${worstMult.toFixed(1)}x avg · ${outliers} outlier${outliers === 1 ? '' : 's'}`;
+  } else if (lossMags.length === 1) {
+    lossPct = 0.5; lossDetail = 'Only one losing trade';
+  }
+
+  // ---- Drawdown control: peak-to-trough against net profit.
   const ordered = [...closed].sort((a, b) => new Date(a.date || a.ts || 0) - new Date(b.date || b.ts || 0));
   let cum = 0, peak = 0, maxDD = 0;
-  for (const t of ordered) { cum += t.pnl; peak = Math.max(peak, cum); maxDD = Math.max(maxDD, peak - cum); }
-  const netProfit = cum;
-  const recovery = maxDD > 0 ? netProfit / maxDD : (netProfit > 0 ? 3 : 0);
-  const ddPct = clamp01(recovery / 3);        // recovery factor of 3 = full marks
-  const ddDetail = maxDD > 0 ? `${recovery.toFixed(2)}x recovery · max DD ${maxDD.toFixed(0)}` : 'No drawdown recorded';
+  for (const t of ordered) { cum += netOf(t); peak = Math.max(peak, cum); maxDD = Math.max(maxDD, peak - cum); }
+  const recovery = maxDD > 0 ? cum / maxDD : (cum > 0 ? 3 : 0);
+  const ddPct = clamp01(recovery / 3);
+  const ddDetail = maxDD > 0 ? `${recovery.toFixed(2)}x recovery · max DD ${Math.round(maxDD)}` : 'No drawdown recorded';
 
-  // ---- Execution quality: did realized R track the plan, and were stops honoured?
-  let execPct = 0, execDetail = 'No target/stop data';
-  if (hasRiskData) {
-    const planned = withR.map(x => ({ ...x, p: plannedR(x.t) })).filter(x => x.p !== null && x.p > 0);
-    const breaches = withR.filter(x => x.r < -1.15).length;   // exited worse than the stop
-    const breachPct = clamp01(1 - breaches / withR.length);
-    let capture = 0.5;
-    if (planned.length) {
-      // Of the winners, how much of the planned target was actually captured?
-      const winners = planned.filter(x => x.r > 0);
-      capture = winners.length
-        ? clamp01(winners.reduce((s, x) => s + Math.min(x.r / x.p, 1), 0) / winners.length)
-        : 0;
-    }
-    execPct = clamp01(capture * 0.6 + breachPct * 0.4);
-    execDetail = `${Math.round(capture * 100)}% target capture · ${breaches} stop breach${breaches === 1 ? '' : 'es'}`;
+  // ---- Consistency: are profits spread out, or carried by one big day?
+  const byDay = {};
+  for (const t of closed) {
+    const d = t.date || (t.ts || '').slice(0, 10);
+    if (d) byDay[d] = (byDay[d] || 0) + netOf(t);
+  }
+  const profitDays = Object.values(byDay).filter(v => v > 0);
+  const grossDayProfit = profitDays.reduce((s, v) => s + v, 0);
+  let consPct = 0, consDetail = 'No profitable days yet';
+  if (grossDayProfit > 0 && profitDays.length) {
+    const share = Math.max(...profitDays) / grossDayProfit;   // best day's share
+    consPct = clamp01((1 - share) / 0.7);                     // <=30% share = full marks
+    consDetail = `best day ${Math.round(share * 100)}% of gross profit`;
   }
 
-  // ---- Sample confidence: 50 closed trades = full marks, sub-linear below.
+  // ---- Sample confidence.
   const samplePct = clamp01(Math.sqrt(n / 50));
   const sampleDetail = `${n} closed trade${n === 1 ? '' : 's'}`;
 
   const raw = {
-    edge: { pct: edgePct, detail: edgeDetail, available: true },
-    risk: { pct: riskPct, detail: riskDetail, available: hasRiskData },
-    drawdown: { pct: ddPct, detail: ddDetail, available: true },
-    execution: { pct: execPct, detail: execDetail, available: hasRiskData },
-    sample: { pct: samplePct, detail: sampleDetail, available: true },
+    edge: { pct: edgePct, detail: edgeDetail },
+    lossControl: { pct: lossPct, detail: lossDetail },
+    drawdown: { pct: ddPct, detail: ddDetail },
+    consistency: { pct: consPct, detail: consDetail },
+    sample: { pct: samplePct, detail: sampleDetail },
   };
-
-  // Rescale the available factors to 100 so missing stop data doesn't cap the score.
-  const availableWeight = SCORE_FACTORS.reduce((s, f) => s + (raw[f.key].available ? f.weight : 0), 0);
-  const scale = availableWeight > 0 ? 100 / availableWeight : 0;
-
-  const factors = SCORE_FACTORS.map(f => {
-    const r = raw[f.key];
-    const weight = r.available ? f.weight * scale : 0;
-    return { ...f, weight: Math.round(weight), pct: r.pct, value: r.pct * weight, available: r.available, detail: r.detail };
-  });
+  const factors = SCORE_FACTORS.map(f => ({
+    ...f, pct: raw[f.key].pct, value: raw[f.key].pct * f.weight, available: true, detail: raw[f.key].detail,
+  }));
 
   let score = factors.reduce((s, f) => s + f.value, 0);
   const caps = [];
-
-  // Two gates. Without them the additive model rewards process alone: a losing
-  // system with tight stops scored 48, and 6 good trades scored 93.
   if (edgeValue <= 0) { score = Math.min(score, 40); caps.push('No positive edge — capped at 40'); }
   if (n < 20) { score = Math.min(score, 60); caps.push(`Provisional — ${n}/20 trades, capped at 60`); }
 
-  return {
-    score: Math.round(score),
-    factors,
-    available: true,
-    tradeCount: n,
-    hasRiskData,
-    provisional: n < 20,
-    caps,
-  };
+  return { score: Math.round(score), factors, available: true, tradeCount: n, provisional: n < 20, caps };
 }
 
-// ---- Per-trade quality score ------------------------------------------------
-// Deliberately NOT a profit measure: a loss taken at the planned stop is a good
-// trade, and a win from moving a stop is a bad one.
-//
-// Two factors only. Documentation and plan-adherence were dropped because
-// exported broker statements carry neither notes nor the original plan, so they
-// scored every imported trade identically and added no signal.
-//   Risk defined  40  was a stop set, and was it honoured
-//   Outcome       60  realized R
-//
-// When no stop data exists at all, Risk defined is unavailable and Outcome is
-// rescaled to 100 rather than capping every imported trade at 60.
-function computeTradeScore(t) {
+// ---- Per-trade grade: pure outcome ------------------------------------------
+// Stops and targets aren't present in exported statements, so process factors
+// (risk defined, plan adherence) can't be measured. This grades outcome only,
+// scaled against the trader's own average win and loss so it reflects size
+// relative to their norm rather than raw currency.
+function computeTradeScore(t, ctx) {
   if (!t || typeof t.pnl !== 'number') return null;
-  const r = realizedR(t);
-  const hasStop = Number.isFinite(parseFloat(t.stopLoss)) && parseFloat(t.stopLoss) > 0;
+  const net = netOf(t);
+  const avgWin = ctx?.avgWin > 0 ? ctx.avgWin : null;
+  const avgLoss = ctx?.avgLoss > 0 ? ctx.avgLoss : null;
 
-  // Risk: full marks for a stop that was respected, partial if blown through.
-  let riskPct = 0, riskNote = 'no stop-loss';
-  if (hasStop) {
-    if (r !== null && r < -1.15) { riskPct = 0.4; riskNote = 'exited beyond stop'; }
-    else { riskPct = 1; riskNote = 'stop set and held'; }
+  let pct, note;
+  if (net >= 0 && avgWin) {
+    pct = 0.3 + clamp01(net / (avgWin * 2)) * 0.7;
+    note = `${(net / avgWin).toFixed(2)}x avg win`;
+  } else if (net < 0 && avgLoss) {
+    pct = Math.max(0, 0.3 * (1 - Math.abs(net) / (avgLoss * 2)));
+    note = `${(Math.abs(net) / avgLoss).toFixed(2)}x avg loss`;
+  } else {
+    pct = net >= 0 ? 0.6 : 0.2;
+    note = net >= 0 ? 'profit' : 'loss';
   }
 
-  // Outcome in R: -1R = 0, 0R = 30%, +3R and beyond = full.
-  let outcomePct;
-  if (r === null) outcomePct = t.pnl > 0 ? 0.6 : 0.2;
-  else if (r >= 0) outcomePct = 0.3 + clamp01(r / 3) * 0.7;
-  else outcomePct = Math.max(0, 0.3 * (1 + r / 1.15));
-
-  const parts = hasStop
-    ? [
-        { label: 'Risk defined', pct: riskPct, max: 40, note: riskNote },
-        { label: 'Outcome', pct: outcomePct, max: 60, note: r !== null ? `${r >= 0 ? '+' : ''}${r.toFixed(2)}R` : 'no R data' },
-      ]
-    : [
-        { label: 'Risk defined', pct: 0, max: 0, note: 'no stop-loss recorded' },
-        { label: 'Outcome', pct: outcomePct, max: 100, note: r !== null ? `${r >= 0 ? '+' : ''}${r.toFixed(2)}R` : (t.pnl >= 0 ? 'profit, no R data' : 'loss, no R data') },
-      ];
-
-  const score = Math.round(parts.reduce((s, p) => s + p.pct * p.max, 0));
+  const score = Math.round(pct * 100);
   return {
-    score,
-    r,
-    hasStop,
+    score, net,
     grade: score >= 80 ? 'A' : score >= 65 ? 'B' : score >= 50 ? 'C' : score >= 35 ? 'D' : 'F',
-    parts: parts.map(p => ({ ...p, pts: Math.round(p.pct * p.max) })),
+    parts: [{ label: 'Outcome', pct, max: 100, pts: score, note }],
   };
 }
 
@@ -828,9 +749,111 @@ function EllipseScorePanel({ trades, size = 168, compact = false }) {
   );
 }
 
+// ---- Shared chart cards -----------------------------------------------------
+// The chart body flex-fills so cards in a grid row never leave dead space when a
+// taller sibling (the score panel) sets the row height.
+function ChartCard({ title, right, children, minHeight = 210 }) {
+  return (
+    <div className="card" style={{ padding: 20, display: 'flex', flexDirection: 'column', minHeight: minHeight + 60 }}>
+      <div className="flex items-center justify-between gap-2">
+        <div className="stat-label">{title}</div>
+        {right}
+      </div>
+      <div style={{ flex: 1, minHeight, marginTop: 12 }}>{children}</div>
+    </div>
+  );
+}
+
+const EmptyChart = ({ theme, label = 'No data yet' }) => (
+  <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.textFaint, fontSize: 12 }}>{label}</div>
+);
+
+// Cumulative P&L with the fill/stroke split at y=0 — green above, red below.
+function CumulativePnlChart({ data, theme, id = 'cum' }) {
+  if (!data?.length) return <EmptyChart theme={theme} />;
+  const vals = data.map(d => d.pnl);
+  const max = Math.max(...vals), min = Math.min(...vals);
+  const off = max <= 0 ? 0 : min >= 0 ? 1 : max / (max - min);
+  return (
+    <ResponsiveContainer width="100%" height="100%">
+      <AreaChart data={data}>
+        <defs>
+          <linearGradient id={`${id}Fill`} x1="0" y1="0" x2="0" y2="1">
+            <stop offset={off} stopColor={theme.pos} stopOpacity={0.32} />
+            <stop offset={off} stopColor={theme.neg} stopOpacity={0.32} />
+          </linearGradient>
+          <linearGradient id={`${id}Stroke`} x1="0" y1="0" x2="0" y2="1">
+            <stop offset={off} stopColor={theme.pos} />
+            <stop offset={off} stopColor={theme.neg} />
+          </linearGradient>
+        </defs>
+        <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: theme.textFaint }} />
+        <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: theme.textFaint }} tickFormatter={v => `$${v}`} width={60} />
+        <Tooltip contentStyle={{ background: theme.card, border: `1px solid ${theme.cardBorder}`, borderRadius: 12, fontSize: 12, color: theme.text }} labelStyle={{ color: theme.textMuted }} formatter={(v) => [`$${v.toFixed(2)}`, 'Cumulative']} />
+        <ReferenceLine y={0} stroke={theme.borderStrong} strokeDasharray="3 3" />
+        <Area type="monotone" dataKey="pnl" stroke={`url(#${id}Stroke)`} fill={`url(#${id}Fill)`} strokeWidth={2} />
+      </AreaChart>
+    </ResponsiveContainer>
+  );
+}
+
+function DailyPnlChart({ data, theme }) {
+  if (!data?.length) return <EmptyChart theme={theme} />;
+  return (
+    <ResponsiveContainer width="100%" height="100%">
+      <BarChart data={data}>
+        <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: theme.textFaint }} />
+        <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: theme.textFaint }} tickFormatter={v => `$${v}`} width={60} />
+        <Tooltip contentStyle={{ background: theme.card, border: `1px solid ${theme.cardBorder}`, borderRadius: 12, fontSize: 12, color: theme.text }} labelStyle={{ color: theme.textMuted }} formatter={(v) => [`$${v.toFixed(2)}`, 'Daily P&L']} cursor={{ fill: theme.hoverBg }} />
+        <ReferenceLine y={0} stroke={theme.borderStrong} />
+        <Bar dataKey="pnl" radius={[4, 4, 0, 0]}>{data.map((e, i) => <Cell key={i} fill={e.pnl >= 0 ? theme.pos : theme.neg} />)}</Bar>
+      </BarChart>
+    </ResponsiveContainer>
+  );
+}
+
+// Group a normalized trade list into per-day net and running cumulative series.
+function buildPnlSeries(trades, { limit = 14 } = {}) {
+  const byDay = {};
+  for (const t of trades) {
+    const d = t.date || (t.ts || '').slice(0, 10);
+    if (!d) continue;
+    byDay[d] = (byDay[d] || 0) + (Number(t.pnl) || 0) - Math.abs(Number(t.fee) || 0);
+  }
+  const days = Object.keys(byDay).sort().slice(-limit);
+  let cum = 0;
+  const cumulative = [], daily = [];
+  for (const d of days) {
+    cum += byDay[d];
+    cumulative.push({ date: d.slice(5), pnl: +cum.toFixed(2) });
+    daily.push({ date: d.slice(5), pnl: +byDay[d].toFixed(2) });
+  }
+  return { cumulative, daily };
+}
+
+// Crypto fills -> the shape every shared component expects.
+const cryptoToNormalized = (t) => ({
+  id: t.id,
+  date: (t.ts || '').slice(0, 10),
+  time: (t.ts || '').slice(11, 16),
+  symbol: coinFromInst(t.instId),
+  side: t.posSide === 'short' ? 'Short' : 'Long',
+  entry: t.fillPx, exit: t.fillPx, lots: t.fillSz,
+  pnl: (Number(t.pnl) || 0) - Math.abs(Number(t.fee) || 0),
+  marketStructure: '', notes: t.notes || '',
+});
+
+// Average win/loss for the current trade set, so a trade can be graded against
+// the trader's own norm rather than raw currency.
+function outcomeContext(trades) {
+  const pnls = (trades || []).filter(t => typeof t.pnl === 'number').map(netOf);
+  const wins = pnls.filter(v => v > 0), losses = pnls.filter(v => v < 0).map(Math.abs);
+  return { avgWin: mean(wins), avgLoss: mean(losses) };
+}
+
 // Small grade chip used in trade lists.
-function TradeGradeBadge({ trade, theme, showScore = true }) {
-  const s = computeTradeScore(trade);
+function TradeGradeBadge({ trade, theme, ctx, showScore = true }) {
+  const s = computeTradeScore(trade, ctx);
   if (!s) return null;
   const c = s.score >= 80 ? theme.pos : s.score >= 65 ? theme.accent : s.score >= 50 ? theme.warn : theme.neg;
   return (
@@ -874,6 +897,9 @@ const coinFromInst = (instId) => (instId || '').split('-')[0] || instId;
 // ==================== MAIN APP ====================
 export default function TradingJournal() {
   const [darkMode, setDarkMode] = useState(loadDarkMode);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    try { return localStorage.getItem('ellipse_sidebar_collapsed') === '1'; } catch { return false; }
+  });
   const [activeTab, setActiveTab] = useState('dashboard');
   const [trades, setTrades] = useState([]);
   const [accounts, setAccounts] = useState([]);
@@ -915,6 +941,7 @@ export default function TradingJournal() {
   const lastSyncRef = useRef(null);
 
   useEffect(() => { localStorage.setItem('ellipse_darkMode', darkMode); }, [darkMode]);
+  useEffect(() => { try { localStorage.setItem('ellipse_sidebar_collapsed', sidebarCollapsed ? '1' : '0'); } catch {} }, [sidebarCollapsed]);
 
   // Fetch exchange rates on mount
   useEffect(() => { fetchExchangeRates(); }, []);
@@ -933,9 +960,8 @@ export default function TradingJournal() {
           setTrades(tradesRes.data.map(t => ({
             id: t.id, date: t.date, time: t.time, symbol: t.symbol, side: t.side,
             entry: t.entry, exit: t.exit_price, lots: t.lots,
-            stopLoss: t.stop_loss, takeProfit: t.take_profit,
             pnl: parseFloat(t.pnl) || 0, commission: t.commission, swap: t.swap,
-            riskReward: t.risk_reward, marketStructure: t.market_structure,
+            marketStructure: t.market_structure,
             candleType: t.candle_type, liquidityTaken: t.liquidity_taken || [],
             liquidityTarget: t.liquidity_target || [], notes: t.notes,
             account: t.account, chartLink: t.chart_link, chartImage: t.chart_image
@@ -1268,9 +1294,8 @@ export default function TradingJournal() {
     const dbTrade = {
       date: trade.date, time: trade.time, symbol: trade.symbol, side: trade.side,
       entry: trade.entry, exit_price: trade.exit, lots: trade.lots,
-      stop_loss: trade.stopLoss, take_profit: trade.takeProfit,
       pnl: trade.pnl, commission: trade.commission, swap: trade.swap,
-      risk_reward: trade.riskReward, market_structure: trade.marketStructure,
+      market_structure: trade.marketStructure,
       candle_type: trade.candleType, liquidity_taken: trade.liquidityTaken,
       liquidity_target: trade.liquidityTarget, notes: trade.notes,
       account: trade.account, chart_link: trade.chartLink, chart_image: trade.chartImage
@@ -1284,8 +1309,8 @@ export default function TradingJournal() {
     const dbTrades = newTrades.map(trade => ({
       date: trade.date, time: trade.time, symbol: trade.symbol, side: trade.side,
       entry: trade.entry, exit_price: trade.exit, lots: trade.lots,
-      stop_loss: trade.stopLoss, take_profit: trade.takeProfit, pnl: trade.pnl,
-      commission: trade.commission, swap: trade.swap, risk_reward: '-',
+      pnl: trade.pnl,
+      commission: trade.commission, swap: trade.swap,
       market_structure: trade.marketStructure, candle_type: trade.candleType,
       liquidity_taken: trade.liquidityTaken, liquidity_target: trade.liquidityTarget,
       notes: trade.notes, account: accountName,
@@ -1308,8 +1333,8 @@ export default function TradingJournal() {
     const dbTrade = {
       date: trade.date, time: trade.time, symbol: trade.symbol, side: trade.side,
       entry: trade.entry, exit_price: trade.exit, lots: trade.lots,
-      stop_loss: trade.stopLoss, take_profit: trade.takeProfit, pnl: trade.pnl,
-      commission: trade.commission, swap: trade.swap, risk_reward: trade.riskReward,
+      pnl: trade.pnl,
+      commission: trade.commission, swap: trade.swap,
       market_structure: trade.marketStructure, candle_type: trade.candleType,
       liquidity_taken: trade.liquidityTaken, liquidity_target: trade.liquidityTarget,
       notes: trade.notes, account: trade.account,
@@ -1513,10 +1538,13 @@ export default function TradingJournal() {
             width: 3px; height: 18px; border-radius: 0 3px 3px 0; background: ${theme.primaryHi};
             box-shadow: 0 0 12px ${theme.primaryHi};
           }
+          .nav-item-collapsed { justify-content: center; padding-left: 0; padding-right: 0; }
+          .nav-item-collapsed.active::before { left: -12px; }
           .nav-section {
             display: flex; align-items: center; gap: 8px; padding: 16px 14px 8px;
             font-size: 10px; font-weight: 700; letter-spacing: 0.9px; text-transform: uppercase;
             color: ${theme.textFaint};
+            min-height: 14px;
           }
 
           /* ---- Type ---- */
@@ -1570,7 +1598,10 @@ export default function TradingJournal() {
         <div className="flex h-screen">
           {/* Sidebar */}
           <aside style={{
-            width: 244,
+            width: sidebarCollapsed ? 68 : 244,
+            transition: 'width 0.22s cubic-bezier(0.4, 0, 0.2, 1)',
+            overflow: 'hidden',
+            flexShrink: 0,
             background: darkMode
               ? 'linear-gradient(180deg, rgba(24,20,40,0.86) 0%, rgba(10,9,17,0.92) 100%)'
               : 'rgba(255,255,255,0.86)',
@@ -1579,16 +1610,18 @@ export default function TradingJournal() {
           }} className="flex flex-col">
             {/* Height is pinned so this bottom border lines up exactly with the
                 main header's — they sit side by side and were 3px apart. */}
-            <div style={{ height: 82, flexShrink: 0, padding: '0 18px', display: 'flex', alignItems: 'center', borderBottom: `1px solid ${theme.cardBorder}` }}>
+            <div style={{ height: 82, flexShrink: 0, padding: sidebarCollapsed ? '0 15px' : '0 18px', display: 'flex', alignItems: 'center', borderBottom: `1px solid ${theme.cardBorder}` }}>
               <div className="flex items-center gap-3">
                 <div style={{ width: 38, height: 38, borderRadius: 12, background: theme.primaryGrad, position: 'relative', overflow: 'hidden', boxShadow: '0 4px 16px rgba(124,58,237,0.45), inset 0 1px 0 rgba(255,255,255,0.22)' }}>
                   <div style={{ position: 'absolute', width: 22, height: 22, border: '2px solid rgba(255,255,255,0.92)', borderRadius: '50%', top: '50%', left: '50%', transform: 'translate(-50%, -50%)' }}></div>
                   <div style={{ position: 'absolute', width: 10, height: 10, background: 'rgba(255,255,255,0.95)', borderRadius: '50%', top: 6, right: 6 }}></div>
                 </div>
-                <div>
-                  <div style={{ fontSize: 16.5, fontWeight: 700, color: theme.text, letterSpacing: '-0.2px' }}>Ellipse</div>
-                  <div style={{ fontSize: 10.5, color: theme.textFaint, letterSpacing: '0.6px', textTransform: 'uppercase', fontWeight: 600 }}>Trading Journal</div>
-                </div>
+                {!sidebarCollapsed && (
+                  <div style={{ whiteSpace: 'nowrap' }}>
+                    <div style={{ fontSize: 16.5, fontWeight: 700, color: theme.text, letterSpacing: '-0.2px' }}>Ellipse</div>
+                    <div style={{ fontSize: 10.5, color: theme.textFaint, letterSpacing: '0.6px', textTransform: 'uppercase', fontWeight: 600 }}>Trading Journal</div>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -1603,9 +1636,9 @@ export default function TradingJournal() {
                 { id: 'accounts', label: 'Accounts', icon: Wallet },
                 { id: 'calendar', label: 'Calendar', icon: Calendar },
               ].map(item => (
-                <div key={item.id} onClick={() => setActiveTab(item.id)} className={`nav-item ${activeTab === item.id ? 'active' : ''}`}>
-                  <item.icon size={17} />{item.label}
-                  {item.id === 'challenges' && challenges.filter(c => c.status === 'active').length > 0 && (
+                <div key={item.id} onClick={() => setActiveTab(item.id)} title={sidebarCollapsed ? item.label : undefined} className={`nav-item ${activeTab === item.id ? 'active' : ''} ${sidebarCollapsed ? 'nav-item-collapsed' : ''}`}>
+                  <item.icon size={17} style={{ flexShrink: 0 }} />{!sidebarCollapsed && item.label}
+                  {!sidebarCollapsed && item.id === 'challenges' && challenges.filter(c => c.status === 'active').length > 0 && (
                     <span style={{ marginLeft: 'auto', fontSize: 10, padding: '2px 8px', borderRadius: 999, background: theme.primarySoft, border: `1px solid ${darkMode ? 'rgba(139,92,246,0.35)' : 'rgba(139,92,246,0.25)'}`, color: darkMode ? '#c4b5fd' : '#6d28d9', fontWeight: 700 }}>
                       {challenges.filter(c => c.status === 'active').length}
                     </span>
@@ -1615,11 +1648,13 @@ export default function TradingJournal() {
 
               {/* Crypto section */}
               <div className="nav-section">
-                Crypto<span style={{ flex: 1, height: 1, background: theme.cardBorder }}></span>
+                {sidebarCollapsed
+                  ? <span style={{ flex: 1, height: 1, background: theme.cardBorder }}></span>
+                  : <>Crypto<span style={{ flex: 1, height: 1, background: theme.cardBorder }}></span></>}
               </div>
-              <div onClick={() => setActiveTab('crypto')} className={`nav-item ${activeTab === 'crypto' ? 'active' : ''}`}>
-                <Coins size={17} />OKX Trading
-                {cryptoChallenges.filter(c => c.status === 'active').length > 0 && (
+              <div onClick={() => setActiveTab('crypto')} title={sidebarCollapsed ? 'OKX Trading' : undefined} className={`nav-item ${activeTab === 'crypto' ? 'active' : ''} ${sidebarCollapsed ? 'nav-item-collapsed' : ''}`}>
+                <Coins size={17} style={{ flexShrink: 0 }} />{!sidebarCollapsed && 'OKX Trading'}
+                {!sidebarCollapsed && cryptoChallenges.filter(c => c.status === 'active').length > 0 && (
                   <span style={{ marginLeft: 'auto', fontSize: 10, padding: '2px 8px', borderRadius: 999, background: 'rgba(245,158,11,0.16)', border: '1px solid rgba(245,158,11,0.32)', color: '#fbbf24', fontWeight: 700 }}>
                     {cryptoChallenges.filter(c => c.status === 'active').length}
                   </span>
@@ -1628,6 +1663,20 @@ export default function TradingJournal() {
             </nav>
 
             <div style={{ padding: 12, borderTop: `1px solid ${theme.cardBorder}` }}>
+              {sidebarCollapsed ? (
+                <div
+                  title={`${loading ? 'Syncing' : synced ? 'Synced to cloud' : 'Offline'} · Today ${todayPnl >= 0 ? '+' : ''}${todayPnl.toFixed(2)}`}
+                  style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}
+                >
+                  {loading
+                    ? <Loader2 size={14} style={{ animation: 'spin 1s linear infinite', color: theme.textMuted }} />
+                    : <span className={synced ? 'pulse-dot' : undefined} style={{ width: 8, height: 8, borderRadius: 999, background: synced ? theme.accent : theme.neg, display: 'inline-block' }}></span>}
+                  <span style={{ fontSize: 11, fontWeight: 700, color: todayPnl >= 0 ? theme.pos : theme.neg, fontFamily: "'JetBrains Mono', monospace" }}>
+                    {todayPnl >= 0 ? '+' : ''}{Math.abs(todayPnl) >= 1000 ? (todayPnl / 1000).toFixed(1) + 'k' : todayPnl.toFixed(0)}
+                  </span>
+                </div>
+              ) : (
+              <>
               <div
                 className={synced && !loading ? 'chip chip-live' : 'chip'}
                 style={{ width: '100%', justifyContent: 'center', marginBottom: 10, padding: '7px 12px', color: loading ? theme.textMuted : synced ? theme.accent : theme.neg }}
@@ -1656,6 +1705,8 @@ export default function TradingJournal() {
                   </div>
                 </div>
               </div>
+              </>
+              )}
             </div>
           </aside>
 
@@ -1672,6 +1723,17 @@ export default function TradingJournal() {
               alignItems: 'center',
             }}>
               <div className="flex items-center justify-between gap-4" style={{ width: '100%' }}>
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={() => setSidebarCollapsed(v => !v)}
+                    className="icon-btn"
+                    title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+                    aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+                    aria-expanded={!sidebarCollapsed}
+                    style={{ padding: 9, flexShrink: 0 }}
+                  >
+                    {sidebarCollapsed ? <ChevronRight size={17} /> : <ChevronLeft size={17} />}
+                  </button>
                 <div>
                   <h1 style={{ fontSize: 21, fontWeight: 700, color: theme.text, letterSpacing: '-0.4px' }}>
                     {activeTab === 'dashboard' && 'Dashboard'}
@@ -1695,6 +1757,7 @@ export default function TradingJournal() {
                     {activeTab === 'calendar' && 'Visual trade history'}
                     {activeTab === 'crypto' && 'Live portfolio, growth challenge, trades & analytics'}
                   </p>
+                </div>
                 </div>
                 <div className="flex items-center gap-3">
                   <button onClick={() => setDarkMode(!darkMode)} className="icon-btn" title={darkMode ? 'Switch to light mode' : 'Switch to dark mode'}>
@@ -1758,7 +1821,7 @@ export default function TradingJournal() {
         {showImport && <ImportModal onClose={() => setShowImport(false)} onImport={importTrades} accounts={accounts} />}
         {showNewChallenge && <NewChallengeModal onClose={() => setShowNewChallenge(false)} onSave={(ch) => { addChallenge(ch); setShowNewChallenge(false); }} accounts={accounts} />}
         {showNewCryptoChallenge && <NewCryptoChallengeModal onClose={() => setShowNewCryptoChallenge(false)} onSave={(ch) => { addCryptoChallenge(ch); setShowNewCryptoChallenge(false); }} liveBalance={cryptoLive.balance?.totalEq} />}
-        {selectedTrade && <TradeDetailModal trade={selectedTrade} onClose={() => setSelectedTrade(null)} onDelete={(id) => { deleteTrade(id); setSelectedTrade(null); }} onEdit={(trade) => { setSelectedTrade(null); setEditingTrade(trade); }} />}
+        {selectedTrade && <TradeDetailModal ctx={outcomeContext(trades)} trade={selectedTrade} onClose={() => setSelectedTrade(null)} onDelete={(id) => { deleteTrade(id); setSelectedTrade(null); }} onEdit={(trade) => { setSelectedTrade(null); setEditingTrade(trade); }} />}
         {editingTrade && <EditTradeModal trade={editingTrade} onClose={() => setEditingTrade(null)} onSave={(trade) => { updateTrade(trade); setEditingTrade(null); }} accounts={accounts} />}
       </div>
     </ThemeContext.Provider>
@@ -3615,6 +3678,7 @@ function JournalView({ trades, accounts, filterAccount, setFilterAccount, onSele
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [selectMode, setSelectMode] = useState(false);
   const filtered = filterAccount === 'all' ? trades : trades.filter(t => t.account === filterAccount);
+  const gradeCtx = outcomeContext(filtered);
 
   const toggleSelect = (id, e) => {
     e.stopPropagation();
@@ -3716,7 +3780,7 @@ function JournalView({ trades, accounts, filterAccount, setFilterAccount, onSele
                 <span className="badge" style={{ background: MARKET_STRUCTURES[trade.marketStructure]?.color, color: 'white' }}>{trade.marketStructure?.replace('_', ' ').slice(0, 8)}</span>
                 <span style={{ fontSize: 14, color: theme.text }}>{trade.lots}</span>
                 <span style={{ fontSize: 14, fontWeight: 600, color: trade.pnl >= 0 ? theme.pos : theme.neg, textAlign: 'right' }}>{trade.pnl >= 0 ? '+' : ''}${trade.pnl?.toFixed(2)}</span>
-                <span style={{ textAlign: 'center' }}><TradeGradeBadge trade={trade} theme={theme} /></span>
+                <span style={{ textAlign: 'center' }}><TradeGradeBadge trade={trade} theme={theme} ctx={gradeCtx} /></span>
                 {!selectMode && <Eye size={16} style={{ color: theme.textFaint }} />}
               </div>
             );
@@ -3939,53 +4003,14 @@ function DashboardView({ trades, accounts, challenges, selectedAccount, setSelec
       </div>
 
       {/* Second Row */}
-      <div style={{ display: 'grid', gridTemplateColumns: '280px 1fr 1fr', gap: 12 }}>
-        <EllipseScorePanel trades={filtered} size={168} />
-        <div className="card" style={{ padding: 20 }}>
-          <div className="stat-label">Daily Net Cumulative P&L</div>
-          <div style={{ height: 180, marginTop: 12 }}>
-            {cumulativePnlData.length > 0 ? (
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={cumulativePnlData}>
-                  {/* Split the gradient at y=0 so the curve is green above the
-                      line and red below it. Previously both stroke and fill were
-                      keyed off overall totalPnl, so a chart sitting entirely in
-                      the red still rendered green. */}
-                  <defs>
-                    <linearGradient id="cumFill" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset={cumZeroOffset} stopColor={theme.pos} stopOpacity={0.32} />
-                      <stop offset={cumZeroOffset} stopColor={theme.neg} stopOpacity={0.32} />
-                    </linearGradient>
-                    <linearGradient id="cumStroke" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset={cumZeroOffset} stopColor={theme.pos} />
-                      <stop offset={cumZeroOffset} stopColor={theme.neg} />
-                    </linearGradient>
-                  </defs>
-                  <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: theme.textFaint }} />
-                  <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: theme.textFaint }} tickFormatter={v => `$${v}`} width={60} />
-                  <Tooltip contentStyle={{ background: theme.card, border: `1px solid ${theme.cardBorder}`, borderRadius: 12, fontSize: 12, color: theme.text }} labelStyle={{ color: theme.textMuted }} formatter={(v) => [`$${v.toFixed(2)}`, 'Cumulative']} />
-                  <ReferenceLine y={0} stroke={theme.borderStrong} strokeDasharray="3 3" />
-                  <Area type="monotone" dataKey="pnl" stroke="url(#cumStroke)" fill="url(#cumFill)" strokeWidth={2} />
-                </AreaChart>
-              </ResponsiveContainer>
-            ) : <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.textFaint, fontSize: 12 }}>No data yet</div>}
-          </div>
-        </div>
-        <div className="card" style={{ padding: 20 }}>
-          <div className="stat-label">Net Daily P&L</div>
-          <div style={{ height: 180, marginTop: 12 }}>
-            {dailyPnlData.length > 0 ? (
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={dailyPnlData}>
-                  <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: theme.textFaint }} />
-                  <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: theme.textFaint }} tickFormatter={v => `$${v}`} width={60} />
-                  <Tooltip contentStyle={{ background: theme.card, border: `1px solid ${theme.cardBorder}`, borderRadius: 8, fontSize: 12, color: theme.text }} labelStyle={{ color: theme.textMuted }} formatter={(v) => [`$${v.toFixed(2)}`, 'Daily P&L']} cursor={{ fill: theme.hoverBg }} />
-                  <Bar dataKey="pnl" radius={[4, 4, 0, 0]}>{dailyPnlData.map((entry, index) => <Cell key={index} fill={entry.pnl >= 0 ? theme.pos : theme.neg} />)}</Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            ) : <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.textFaint, fontSize: 12 }}>No data yet</div>}
-          </div>
-        </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '300px minmax(0, 1fr) minmax(0, 1fr)', gap: 12, alignItems: 'stretch' }}>
+        <EllipseScorePanel trades={filtered} size={158} />
+        <ChartCard title="Daily Net Cumulative P&L">
+          <CumulativePnlChart data={cumulativePnlData} theme={theme} id="dashCum" />
+        </ChartCard>
+        <ChartCard title="Net Daily P&L">
+          <DailyPnlChart data={dailyPnlData} theme={theme} />
+        </ChartCard>
       </div>
 
       {/* Third Row */}
@@ -4787,7 +4812,7 @@ function NewTradeModal({ onClose, onSave, accounts }) {
   const [step, setStep] = useState(1);
   const [trade, setTrade] = useState({
     date: new Date().toISOString().split('T')[0], time: new Date().toTimeString().slice(0, 5),
-    symbol: '', side: 'Long', entry: '', exit: '', lots: '', stopLoss: '', takeProfit: '',
+    symbol: '', side: 'Long', entry: '', exit: '', lots: '',
     commission: '', swap: '', pnl: 0, marketStructure: '', candleType: '',
     liquidityTaken: [], liquidityTarget: [], notes: '', account: accounts[0]?.name || '',
     chartLink: '', chartImage: ''
@@ -4805,9 +4830,7 @@ function NewTradeModal({ onClose, onSave, accounts }) {
   }, [trade.entry, trade.exit, trade.lots, trade.symbol, trade.side, trade.commission, trade.swap]);
 
   const handleSave = () => {
-    const rr = trade.stopLoss && trade.takeProfit && trade.entry
-      ? `1:${Math.abs((parseFloat(trade.takeProfit) - parseFloat(trade.entry)) / (parseFloat(trade.entry) - parseFloat(trade.stopLoss))).toFixed(1)}` : '-';
-    onSave({ ...trade, entry: parseFloat(trade.entry), exit: parseFloat(trade.exit), lots: parseFloat(trade.lots), stopLoss: parseFloat(trade.stopLoss) || 0, takeProfit: parseFloat(trade.takeProfit) || 0, commission: parseFloat(trade.commission) || 0, swap: parseFloat(trade.swap) || 0, riskReward: rr });
+    onSave({ ...trade, entry: parseFloat(trade.entry), exit: parseFloat(trade.exit), lots: parseFloat(trade.lots), commission: parseFloat(trade.commission) || 0, swap: parseFloat(trade.swap) || 0 });
   };
 
   const toggleLiq = (key, type) => {
@@ -4844,8 +4867,6 @@ function NewTradeModal({ onClose, onSave, accounts }) {
               <div><label className="label">Lots</label><input type="number" step="0.01" value={trade.lots} onChange={(e) => setTrade({...trade, lots: e.target.value})} className="input" /></div>
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-              <div><label className="label">Stop Loss</label><input type="number" step="any" value={trade.stopLoss} onChange={(e) => setTrade({...trade, stopLoss: e.target.value})} className="input" /></div>
-              <div><label className="label">Take Profit</label><input type="number" step="any" value={trade.takeProfit} onChange={(e) => setTrade({...trade, takeProfit: e.target.value})} className="input" /></div>
             </div>
             <div style={{ padding: 16, borderRadius: 10, background: theme.hoverBg }}>
               <div className="flex items-center gap-2" style={{ marginBottom: 12 }}><Settings size={14} style={{ color: theme.textMuted }} /><span style={{ fontSize: 12, fontWeight: 500, color: theme.textMuted }}>Fees & Adjustments</span></div>
@@ -4922,8 +4943,7 @@ function EditTradeModal({ trade: initialTrade, onClose, onSave, accounts }) {
     /Imported from (MT5|cTrader|MT4)/i.test(initialTrade.notes);
   const [trade, setTrade] = useState({
     ...initialTrade, entry: initialTrade.entry?.toString() || '', exit: initialTrade.exit?.toString() || '',
-    lots: initialTrade.lots?.toString() || '', stopLoss: initialTrade.stopLoss?.toString() || '',
-    takeProfit: initialTrade.takeProfit?.toString() || '', commission: initialTrade.commission?.toString() || '',
+    lots: initialTrade.lots?.toString() || '', commission: initialTrade.commission?.toString() || '',
     swap: initialTrade.swap?.toString() || '', liquidityTaken: initialTrade.liquidityTaken || [],
     liquidityTarget: initialTrade.liquidityTarget || [], chartLink: initialTrade.chartLink || '', chartImage: initialTrade.chartImage || ''
   });
@@ -4943,19 +4963,14 @@ function EditTradeModal({ trade: initialTrade, onClose, onSave, accounts }) {
   }, [trade.entry, trade.exit, trade.lots, trade.symbol, trade.side, trade.commission, trade.swap, recomputePnl]);
 
   const handleSave = () => {
-    const rr = trade.stopLoss && trade.takeProfit && trade.entry
-      ? `1:${Math.abs((parseFloat(trade.takeProfit) - parseFloat(trade.entry)) / (parseFloat(trade.entry) - parseFloat(trade.stopLoss))).toFixed(1)}` : trade.riskReward || '-';
     onSave({
       ...trade,
       entry: parseFloat(trade.entry),
       exit: parseFloat(trade.exit),
       lots: parseFloat(trade.lots),
-      stopLoss: parseFloat(trade.stopLoss) || 0,
-      takeProfit: parseFloat(trade.takeProfit) || 0,
       commission: parseFloat(trade.commission) || 0,
       swap: parseFloat(trade.swap) || 0,
       pnl: parseFloat(trade.pnl) || 0,   // FIX #4: always coerce, preserve broker value when not recomputed
-      riskReward: rr
     });
   };
 
@@ -4991,8 +5006,6 @@ function EditTradeModal({ trade: initialTrade, onClose, onSave, accounts }) {
             <div><label className="label">Lots</label><input type="number" step="0.01" value={trade.lots} onChange={(e) => setTrade({...trade, lots: e.target.value})} className="input" /></div>
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-            <div><label className="label">Stop Loss</label><input type="number" step="any" value={trade.stopLoss} onChange={(e) => setTrade({...trade, stopLoss: e.target.value})} className="input" /></div>
-            <div><label className="label">Take Profit</label><input type="number" step="any" value={trade.takeProfit} onChange={(e) => setTrade({...trade, takeProfit: e.target.value})} className="input" /></div>
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             <div><label className="label">Commission ($)</label><input type="number" step="0.01" value={trade.commission} onChange={(e) => setTrade({...trade, commission: e.target.value})} className="input" /></div>
@@ -5208,11 +5221,11 @@ function EditAccountModal({ account, onClose, onSave }) {
 
 // Restored: this component was referenced by TradingJournal but deleted in
 // commit a0b1913, so opening any trade threw a ReferenceError.
-function TradeDetailModal({ trade, onClose, onDelete, onEdit }) {
+function TradeDetailModal({ trade, onClose, onDelete, onEdit, ctx }) {
   const theme = useTheme();
   const [confirmDelete, setConfirmDelete] = useState(false);
   const chartImg = getTradingViewImageUrl(trade.chartLink) || trade.chartImage;
-  const quality = computeTradeScore(trade);
+  const quality = computeTradeScore(trade, ctx);
   const qColor = !quality ? theme.textFaint
     : quality.score >= 80 ? theme.pos : quality.score >= 65 ? theme.accent
     : quality.score >= 50 ? theme.warn : theme.neg;
@@ -5267,20 +5280,13 @@ function TradeDetailModal({ trade, onClose, onDelete, onEdit }) {
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10 }}>
           {[{ l: 'Entry', v: trade.entry }, { l: 'Exit', v: trade.exit }, { l: 'Lots', v: trade.lots },
-            { l: 'R:R', v: quality?.r != null ? `${quality.r >= 0 ? '+' : ''}${quality.r.toFixed(2)}R` : (trade.riskReward || '—') }].map(x => (
+            { l: 'Net', v: quality ? `${quality.net >= 0 ? '+' : ''}$${quality.net.toFixed(2)}` : '—' }].map(x => (
             <div key={x.l} style={{ padding: 13, borderRadius: 12, background: theme.hoverBg, textAlign: 'center' }}>
               <div className="stat-label">{x.l}</div>
               <div style={{ fontSize: 14, fontWeight: 600, color: theme.text, marginTop: 4 }}>{x.v ?? '—'}</div>
             </div>
           ))}
         </div>
-
-        {(trade.stopLoss > 0 || trade.takeProfit > 0) && (
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-            <div style={{ padding: 13, borderRadius: 12, background: theme.hoverBg }}><div className="stat-label">Stop Loss</div><div style={{ fontSize: 14, fontWeight: 600, color: theme.text, marginTop: 4 }}>{trade.stopLoss || '—'}</div></div>
-            <div style={{ padding: 13, borderRadius: 12, background: theme.hoverBg }}><div className="stat-label">Take Profit</div><div style={{ fontSize: 14, fontWeight: 600, color: theme.text, marginTop: 4 }}>{trade.takeProfit || '—'}</div></div>
-          </div>
-        )}
 
         {(trade.commission || trade.swap) && (
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
@@ -5661,53 +5667,78 @@ function CryptoAnalyticsView({ trades, fmt, theme }) {
     return <div className="card" style={{ padding: 48, textAlign: 'center', color: theme.textMuted, fontSize: 14 }}>No trades to analyze yet. Sync OKX or add trades to see analytics.</div>;
   }
   const s = computeCryptoStats(trades);
-  const asc = [...trades].sort((a, b) => new Date(a.ts) - new Date(b.ts));
-  let cum = 0;
-  const cumData = asc.map(t => { cum += (t.pnl || 0) - Math.abs(t.fee || 0); return { label: new Date(t.ts).toLocaleDateString(), cum: +cum.toFixed(2) }; });
-  const byCoinMap = {};
-  trades.forEach(t => { const c = coinFromInst(t.instId); byCoinMap[c] = (byCoinMap[c] || 0) + (t.pnl || 0); });
-  const byCoin = Object.entries(byCoinMap).map(([name, pnl], i) => ({ name, pnl: +pnl.toFixed(2), color: pnl >= 0 ? theme.pos : theme.neg })).sort((a, b) => b.pnl - a.pnl);
   const pf = s.profitFactor === Infinity ? '∞' : s.profitFactor.toFixed(2);
 
+  // Same shape the Dashboard components expect, so both sections share code.
+  const normalized = trades.map(cryptoToNormalized);
+  const { cumulative, daily } = buildPnlSeries(normalized, { limit: 30 });
+  const gradeCtx = outcomeContext(normalized);
+  const expectancy = s.realizedCount ? (s.netPnl / s.realizedCount) : 0;
+  const ratio = s.avgLoss > 0 ? s.avgWin / s.avgLoss : (s.avgWin > 0 ? s.avgWin : 0);
+
+  const byCoinMap = {};
+  trades.forEach(t => { const c = coinFromInst(t.instId); byCoinMap[c] = (byCoinMap[c] || 0) + (t.pnl || 0); });
+  const byCoin = Object.entries(byCoinMap).map(([name, pnl]) => ({ name, pnl: +pnl.toFixed(2), color: pnl >= 0 ? theme.pos : theme.neg })).sort((a, b) => b.pnl - a.pnl);
+
+  const recent = [...normalized].sort((a, b) => new Date(b.date + ' ' + b.time) - new Date(a.date + ' ' + a.time)).slice(0, 8);
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 14 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      {/* Top stats — mirrors the Dashboard row */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 12 }}>
         <StatCard label="Net P&L" value={`${s.netPnl >= 0 ? '+' : ''}${fmt(s.netPnl)}`} color={s.netPnl >= 0 ? theme.pos : theme.neg} sub={`${fmt(s.totalFees)} fees`} theme={theme} />
-        <StatCard label="Win Rate" value={`${s.winRate.toFixed(1)}%`} sub={`${s.winCount}W / ${s.lossCount}L`} theme={theme} />
+        <StatCard label="Trade Expectancy" value={fmt(expectancy)} color={expectancy >= 0 ? theme.pos : theme.neg} sub="per closed trade" theme={theme} />
         <StatCard label="Profit Factor" value={pf} theme={theme} />
-        <StatCard label="Trades" value={s.tradeCount} sub={`${s.realizedCount} with P&L`} theme={theme} />
-        <StatCard label="Avg Win" value={fmt(s.avgWin)} color={theme.pos} theme={theme} />
-        <StatCard label="Avg Loss" value={fmt(s.avgLoss)} color={theme.neg} theme={theme} />
-        <StatCard label="Largest Win" value={fmt(s.largestWin)} color={theme.pos} theme={theme} />
-        <StatCard label="Largest Loss" value={fmt(s.largestLoss)} color={theme.neg} theme={theme} />
+        <StatCard label="Win %" value={`${s.winRate.toFixed(2)}%`} sub={`${s.winCount}W / ${s.lossCount}L`} theme={theme} />
+        <StatCard label="Avg Win/Loss Trade" value={ratio ? ratio.toFixed(1) : '—'} sub={`${fmt(s.avgWin)} / ${fmt(s.avgLoss)}`} theme={theme} />
       </div>
 
-      <div className="card-lg" style={{ padding: 20 }}>
-        <div style={{ fontSize: 14, fontWeight: 600, color: theme.text, marginBottom: 14 }}>Cumulative P&L (net of fees)</div>
-        <ResponsiveContainer width="100%" height={240}>
-          <AreaChart data={cumData}>
-            <defs><linearGradient id="cumGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#8b5cf6" stopOpacity={0.35} /><stop offset="100%" stopColor="#8b5cf6" stopOpacity={0} /></linearGradient></defs>
-            <XAxis dataKey="label" tick={{ fontSize: 10, fill: theme.textFaint }} />
-            <YAxis tick={{ fontSize: 11, fill: theme.textFaint }} width={70} />
-            <Tooltip contentStyle={{ background: theme.card, border: `1px solid ${theme.cardBorder}`, borderRadius: 8, fontSize: 12 }} formatter={(v) => fmt(v)} />
-            <ReferenceLine y={0} stroke={theme.textFaint} />
-            <Area type="monotone" dataKey="cum" stroke="#8b5cf6" strokeWidth={2} fill="url(#cumGrad)" />
-          </AreaChart>
-        </ResponsiveContainer>
+      {/* Score + the two P&L charts, same layout as the Dashboard */}
+      <div style={{ display: 'grid', gridTemplateColumns: '300px minmax(0, 1fr) minmax(0, 1fr)', gap: 12, alignItems: 'stretch' }}>
+        <EllipseScorePanel trades={normalized} size={158} />
+        <ChartCard title="Daily Net Cumulative P&L">
+          <CumulativePnlChart data={cumulative} theme={theme} id="cryptoCum" />
+        </ChartCard>
+        <ChartCard title="Net Daily P&L">
+          <DailyPnlChart data={daily} theme={theme} />
+        </ChartCard>
       </div>
 
-      <div className="card-lg" style={{ padding: 20 }}>
-        <div style={{ fontSize: 14, fontWeight: 600, color: theme.text, marginBottom: 14 }}>P&L by Coin</div>
-        <ResponsiveContainer width="100%" height={Math.max(160, byCoin.length * 38)}>
-          <BarChart data={byCoin} layout="vertical">
-            <XAxis type="number" tick={{ fontSize: 11, fill: theme.textFaint }} />
-            <YAxis type="category" dataKey="name" tick={{ fontSize: 12, fill: theme.textMuted }} width={70} />
-            <Tooltip contentStyle={{ background: theme.card, border: `1px solid ${theme.cardBorder}`, borderRadius: 8, fontSize: 12 }} formatter={(v) => fmt(v)} cursor={{ fill: theme.hoverBg }} />
-            <ReferenceLine x={0} stroke={theme.textFaint} />
-            <Bar dataKey="pnl" radius={[0, 4, 4, 0]}>{byCoin.map((d, i) => <Cell key={i} fill={d.color} />)}</Bar>
-          </BarChart>
-        </ResponsiveContainer>
+      {/* Recent trades + P&L by coin */}
+      <div style={{ display: 'grid', gridTemplateColumns: '300px minmax(0, 1fr)', gap: 12, alignItems: 'stretch' }}>
+        <div className="card" style={{ padding: 18 }}>
+          <div className="stat-label" style={{ marginBottom: 12 }}>Recent Trades</div>
+          {recent.map((t, i) => (
+            <div key={t.id || i} className="flex items-center justify-between gap-2" style={{ padding: '9px 0', borderBottom: i === recent.length - 1 ? 'none' : `1px solid ${theme.cardBorder}` }}>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 12.5, fontWeight: 600, color: theme.text }}>{t.symbol}</div>
+                <div style={{ fontSize: 10.5, color: theme.textFaint }}>{t.date}</div>
+              </div>
+              <div className="flex items-center gap-2" style={{ flexShrink: 0 }}>
+                <TradeGradeBadge trade={t} theme={theme} ctx={gradeCtx} showScore={false} />
+                <span style={{ fontSize: 12.5, fontWeight: 700, color: t.pnl >= 0 ? theme.pos : theme.neg, fontFamily: "'JetBrains Mono', monospace" }}>
+                  {t.pnl >= 0 ? '+' : ''}{fmt(t.pnl)}
+                </span>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <ChartCard title="P&L by Coin" minHeight={Math.max(180, byCoin.length * 34)}>
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={byCoin} layout="vertical">
+              <XAxis type="number" tick={{ fontSize: 11, fill: theme.textFaint }} />
+              <YAxis type="category" dataKey="name" tick={{ fontSize: 12, fill: theme.textMuted }} width={70} />
+              <Tooltip contentStyle={{ background: theme.card, border: `1px solid ${theme.cardBorder}`, borderRadius: 12, fontSize: 12, color: theme.text }} formatter={(v) => fmt(v)} cursor={{ fill: theme.hoverBg }} />
+              <ReferenceLine x={0} stroke={theme.borderStrong} />
+              <Bar dataKey="pnl" radius={[0, 4, 4, 0]}>{byCoin.map((d, i) => <Cell key={i} fill={d.color} />)}</Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </ChartCard>
       </div>
+
+      {/* Monthly calendar — was previously only reachable inside a challenge */}
+      <CryptoTradingCalendar trades={trades} fmt={fmt} theme={theme} />
     </div>
   );
 }
