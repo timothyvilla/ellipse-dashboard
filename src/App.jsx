@@ -565,9 +565,22 @@ export default function TradingJournal() {
   const [cryptoLive, setCryptoLive] = useState({ balance: null, positions: [] });
   const [syncingOKX, setSyncingOKX] = useState(false);
   const [okxError, setOkxError] = useState(null);
-  const [lastSync, setLastSync] = useState(null);
+  const [lastSync, setLastSync] = useState(() => {
+    try { const v = localStorage.getItem('ellipse_okx_last_sync'); return v ? new Date(parseInt(v, 10)) : null; } catch { return null; }
+  });
   const [cryptoSubTab, setCryptoSubTab] = useState('portfolio');
   const [showNewCryptoChallenge, setShowNewCryptoChallenge] = useState(false);
+  const [subAccounts, setSubAccounts] = useState([]);
+  const [selectedOkxAccount, setSelectedOkxAccount] = useState('main');
+  // Crypto state starts empty, so the localStorage writers below must NOT run
+  // until the initial load has resolved — otherwise they persist [] over the
+  // cached data before loadData() gets a chance to read it back.
+  const cryptoHydrated = useRef(false);
+  // syncOKX is called from effects as well as the button; these refs keep it
+  // correct without making it a dependency that re-triggers those effects.
+  const cryptoTradesRef = useRef([]);
+  const syncingRef = useRef(false);
+  const lastSyncRef = useRef(null);
 
   useEffect(() => { localStorage.setItem('ellipse_darkMode', darkMode); }, [darkMode]);
 
@@ -674,16 +687,25 @@ export default function TradingJournal() {
             supabase.from('crypto_challenges').select('*').order('created_at', { ascending: false }),
           ]);
         } catch (e) { console.warn('Crypto load failed:', e?.message); }
-        setCryptoTrades((ctRes.data && !ctRes.error) ? ctRes.data.map(mapCryptoTradeRow) : loadLocalCrypto('ellipse_crypto_trades'));
-        setCryptoSnapshots((csRes.data && !csRes.error) ? csRes.data.map(mapSnapshotRow) : loadLocalCrypto('ellipse_crypto_snapshots'));
-        setCryptoChallenges((cchRes.data && !cchRes.error) ? cchRes.data.map(mapCryptoChallengeRow) : loadLocalCrypto('ellipse_crypto_challenges'));
+        // Read the cache BEFORE opening the write gate, so the values below are
+        // the stored ones rather than anything the writers could have clobbered.
+        const localTrades = loadLocalCrypto('ellipse_crypto_trades');
+        const localSnaps = loadLocalCrypto('ellipse_crypto_snapshots');
+        const localChals = loadLocalCrypto('ellipse_crypto_challenges');
+        setCryptoTrades((ctRes.data && !ctRes.error) ? ctRes.data.map(mapCryptoTradeRow) : localTrades);
+        setCryptoSnapshots((csRes.data && !csRes.error) ? csRes.data.map(mapSnapshotRow) : localSnaps);
+        setCryptoChallenges((cchRes.data && !cchRes.error) ? cchRes.data.map(mapCryptoChallengeRow) : localChals);
         if (cchRes.error) console.warn('crypto_challenges not in DB (using localStorage). Run supabase/crypto_migration.sql to persist across devices/deploys.');
+        // Cache is now loaded into state — safe to let the writers persist changes.
+        cryptoHydrated.current = true;
 
         setSynced(true);
       } catch (err) {
         console.error('Error loading trades/accounts:', err);
         setSynced(false);
       }
+      // Open the write gate even if loading threw, so later edits still persist.
+      cryptoHydrated.current = true;
       setLoading(false);
     };
     loadData();
@@ -703,13 +725,23 @@ export default function TradingJournal() {
     }
   }, [journalEntries]);
 
-  // Crypto localStorage fallbacks
-  useEffect(() => { try { localStorage.setItem('ellipse_crypto_trades', JSON.stringify(cryptoTrades.slice(0, 1000))); } catch {} }, [cryptoTrades]);
-  useEffect(() => { try { localStorage.setItem('ellipse_crypto_snapshots', JSON.stringify(cryptoSnapshots.slice(-1000))); } catch {} }, [cryptoSnapshots]);
-  useEffect(() => { try { localStorage.setItem('ellipse_crypto_challenges', JSON.stringify(cryptoChallenges)); } catch {} }, [cryptoChallenges]);
+  // Crypto localStorage fallbacks.
+  // Gated on cryptoHydrated: these effects fire on mount with empty state, and
+  // loadData() only reads localStorage after its awaits resolve — so without the
+  // guard they wipe the cache before it is ever read.
+  useEffect(() => { if (!cryptoHydrated.current) return; try { localStorage.setItem('ellipse_crypto_trades', JSON.stringify(cryptoTrades.slice(0, 1000))); } catch {} }, [cryptoTrades]);
+  useEffect(() => { if (!cryptoHydrated.current) return; try { localStorage.setItem('ellipse_crypto_snapshots', JSON.stringify(cryptoSnapshots.slice(-1000))); } catch {} }, [cryptoSnapshots]);
+  useEffect(() => { if (!cryptoHydrated.current) return; try { localStorage.setItem('ellipse_crypto_challenges', JSON.stringify(cryptoChallenges)); } catch {} }, [cryptoChallenges]);
+
+  // Mirror trades into a ref so syncOKX can dedupe against current data even
+  // when invoked from an effect that captured an older render.
+  useEffect(() => { cryptoTradesRef.current = cryptoTrades; }, [cryptoTrades]);
+  useEffect(() => { lastSyncRef.current = lastSync; }, [lastSync]);
 
   // ---- OKX sync: pull balance, positions, fills via serverless proxy ----
   const syncOKX = async () => {
+    if (syncingRef.current) return; // never let two syncs overlap
+    syncingRef.current = true;
     setSyncingOKX(true);
     setOkxError(null);
     try {
@@ -727,6 +759,12 @@ export default function TradingJournal() {
         getJson('/api/okx/positions'),
         getJson('/api/okx/fills?limit=100'),
       ]);
+
+      // Sub-account balances are best-effort: the master key may not have
+      // sub-accounts, or may lack permission. Never fail the whole sync on it.
+      getJson('/api/okx/subaccounts')
+        .then(r => setSubAccounts(r?.error ? [] : (r.accounts || [])))
+        .catch(() => setSubAccounts([]));
       if (balRes?.error || posRes?.error || fillsRes?.error) {
         throw new Error(balRes?.msg || posRes?.msg || fillsRes?.msg || balRes?.error || 'OKX sync failed. Check API keys / Vercel env vars.');
       }
@@ -734,7 +772,7 @@ export default function TradingJournal() {
       setCryptoLive({ balance: balRes, positions: posRes.positions || [] });
 
       // Dedupe fills against what we already have
-      const existingIds = new Set(cryptoTrades.map(t => t.tradeId).filter(Boolean));
+      const existingIds = new Set(cryptoTradesRef.current.map(t => t.tradeId).filter(Boolean));
       const newFills = (fillsRes.fills || []).filter(f => f.tradeId && !existingIds.has(f.tradeId));
       if (newFills.length) {
         const rows = newFills.map(f => ({
@@ -778,12 +816,34 @@ export default function TradingJournal() {
         return updated;
       }));
 
-      setLastSync(new Date());
+      const syncedAt = new Date();
+      setLastSync(syncedAt);
+      try { localStorage.setItem('ellipse_okx_last_sync', String(syncedAt.getTime())); } catch {}
     } catch (e) {
       setOkxError(e.message || 'OKX sync failed');
     }
+    syncingRef.current = false;
     setSyncingOKX(false);
   };
+
+  // ---- Auto-sync: on opening the Crypto tab when stale, then on an interval ----
+  const OKX_STALE_MS = 5 * 60 * 1000;
+  useEffect(() => {
+    if (activeTab !== 'crypto' || loading) return;
+
+    const syncIfStale = () => {
+      if (document.visibilityState !== 'visible') return;
+      const last = lastSyncRef.current;
+      if (!last || Date.now() - last.getTime() > OKX_STALE_MS) syncOKX();
+    };
+
+    syncIfStale();
+    const timer = setInterval(syncIfStale, OKX_STALE_MS);
+    document.addEventListener('visibilitychange', syncIfStale);
+    return () => { clearInterval(timer); document.removeEventListener('visibilitychange', syncIfStale); };
+    // syncOKX and lastSync are read through refs so this only re-arms on tab change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, loading]);
 
   // Crypto challenge CRUD
   const addCryptoChallenge = async (ch) => {
@@ -1345,6 +1405,7 @@ export default function TradingJournal() {
                     subTab={cryptoSubTab} setSubTab={setCryptoSubTab}
                     trades={cryptoTrades} snapshots={cryptoSnapshots} challenges={cryptoChallenges}
                     live={cryptoLive} syncing={syncingOKX} okxError={okxError} lastSync={lastSync}
+                    subAccounts={subAccounts} selectedAccount={selectedOkxAccount} setSelectedAccount={setSelectedOkxAccount}
                     onSync={syncOKX} onAddTrade={addCryptoTrade} onDeleteTrade={deleteCryptoTrade}
                     onUpdateChallenge={updateCryptoChallenge} onDeleteChallenge={deleteCryptoChallenge}
                   />}
@@ -4674,7 +4735,7 @@ function EditTradeModal({ trade: initialTrade, onClose, onSave, accounts }) {
 }
 
 // ==================== CRYPTO VIEW (OKX) ====================
-function CryptoView({ subTab, setSubTab, trades, snapshots, challenges, live, syncing, okxError, lastSync, onSync, onAddTrade, onDeleteTrade, onUpdateChallenge, onDeleteChallenge }) {
+function CryptoView({ subTab, setSubTab, trades, snapshots, challenges, live, syncing, okxError, lastSync, onSync, onAddTrade, onDeleteTrade, onUpdateChallenge, onDeleteChallenge, subAccounts = [], selectedAccount = 'main', setSelectedAccount }) {
   const theme = useTheme();
   const tabs = [
     { id: 'portfolio', label: 'Portfolio', icon: Wallet },
@@ -4708,7 +4769,13 @@ function CryptoView({ subTab, setSubTab, trades, snapshots, challenges, live, sy
         </div>
       )}
 
-      {subTab === 'portfolio' && <CryptoPortfolio balance={balance} positions={live?.positions || []} snapshots={snapshots} syncing={syncing} onSync={onSync} fmt={fmt} theme={theme} />}
+      {subTab === 'portfolio' && (
+        <CryptoPortfolio
+          balance={balance} positions={live?.positions || []} snapshots={snapshots}
+          syncing={syncing} onSync={onSync} fmt={fmt} theme={theme}
+          subAccounts={subAccounts} selectedAccount={selectedAccount} setSelectedAccount={setSelectedAccount}
+        />
+      )}
       {subTab === 'challenge' && (detailChallenge ? (
         <CryptoChallengeDetail challenge={detailChallenge} trades={trades} snapshots={snapshots} liveEq={balance?.totalEq} onBack={() => setDetailId(null)} onUpdate={onUpdateChallenge} onDelete={(id) => { onDeleteChallenge(id); setDetailId(null); }} fmt={fmt} theme={theme} />
       ) : (
@@ -4730,7 +4797,91 @@ function StatCard({ label, value, color, sub, theme }) {
   );
 }
 
-function CryptoPortfolio({ balance, positions, snapshots, syncing, onSync, fmt, theme }) {
+function CryptoPortfolio({ balance, positions, snapshots, syncing, onSync, fmt, theme, subAccounts = [], selectedAccount = 'main', setSelectedAccount }) {
+  const isSub = selectedAccount !== 'main';
+  const sub = isSub ? subAccounts.find(a => a.subAcct === selectedAccount) : null;
+
+  const AccountSwitcher = () => {
+    if (!subAccounts.length) return null;
+    const combined = (balance?.totalEq || 0) + subAccounts.reduce((s, a) => s + (a.totalEq || 0), 0);
+    const opts = [{ key: 'main', label: 'Main account', eq: balance?.totalEq || 0 },
+      ...subAccounts.map(a => ({ key: a.subAcct, label: a.label || a.subAcct, eq: a.totalEq || 0, error: a.error }))];
+    return (
+      <div className="card" style={{ padding: 14 }}>
+        <div className="flex items-center justify-between gap-3" style={{ marginBottom: 12, flexWrap: 'wrap' }}>
+          <span className="stat-label">OKX Accounts</span>
+          <span style={{ fontSize: 12, color: theme.textMuted }}>
+            Combined equity <span style={{ color: theme.text, fontWeight: 700 }}>{fmt(combined)}</span>
+          </span>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {opts.map(o => {
+            const active = selectedAccount === o.key;
+            return (
+              <button
+                key={o.key}
+                onClick={() => setSelectedAccount?.(o.key)}
+                style={{
+                  display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 2,
+                  padding: '8px 14px', borderRadius: 12, cursor: 'pointer', textAlign: 'left',
+                  border: `1px solid ${active ? 'rgba(139,92,246,0.55)' : theme.cardBorder}`,
+                  background: active ? theme.primarySoft : 'transparent',
+                  transition: 'all 0.15s',
+                }}
+              >
+                <span style={{ fontSize: 12.5, fontWeight: 600, color: active ? (theme.dark ? '#c4b5fd' : '#6d28d9') : theme.text }}>{o.label}</span>
+                <span style={{ fontSize: 11, color: o.error ? theme.neg : theme.textMuted, fontFamily: "'JetBrains Mono', monospace" }}>
+                  {o.error ? 'unavailable' : fmt(o.eq)}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+        {isSub && (
+          <p style={{ fontSize: 11.5, color: theme.textFaint, marginTop: 12, lineHeight: 1.5 }}>
+            OKX only exposes balances for sub-accounts to a master key. Open positions, the equity curve and
+            trades below stay on the main account until you add a read-only key for this sub-account.
+          </p>
+        )}
+      </div>
+    );
+  };
+
+  // Sub-account view: OKX gives balances only, so render just those.
+  if (isSub) {
+    const subDetails = (sub?.details || []).filter(d => (d.eqUsd || 0) > 0.01);
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+        <AccountSwitcher />
+        {sub?.error ? (
+          <div className="card" style={{ padding: 32, textAlign: 'center' }}>
+            <AlertTriangle size={26} style={{ color: theme.neg, margin: '0 auto 10px' }} />
+            <div style={{ fontSize: 13, color: theme.textMuted }}>Could not read this sub-account: {sub.error}</div>
+          </div>
+        ) : (
+          <>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 14 }}>
+              <StatCard label="Total Equity" value={fmt(sub?.totalEq || 0)} theme={theme} />
+              <StatCard label="Unrealized P&L" value={`${(sub?.upl || 0) >= 0 ? '+' : ''}${fmt(sub?.upl || 0)}`} color={(sub?.upl || 0) >= 0 ? theme.pos : theme.neg} theme={theme} />
+              <StatCard label="Assets" value={subDetails.length} sub={subDetails.slice(0, 4).map(d => d.ccy).join(', ')} theme={theme} />
+            </div>
+            <div className="card-lg" style={{ padding: 20 }}>
+              <div style={{ fontSize: 14, fontWeight: 600, color: theme.text, marginBottom: 14 }}>Balances</div>
+              {subDetails.length ? subDetails.map(d => (
+                <div key={d.ccy} className="flex items-center justify-between" style={{ padding: '10px 0', borderBottom: `1px solid ${theme.cardBorder}` }}>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: theme.text }}>{d.ccy}</span>
+                  <span style={{ fontSize: 13, color: theme.textMuted, fontFamily: "'JetBrains Mono', monospace" }}>
+                    {d.eq.toLocaleString(undefined, { maximumFractionDigits: 6 })} · {fmt(d.eqUsd)}
+                  </span>
+                </div>
+              )) : <div style={{ fontSize: 13, color: theme.textFaint }}>No balances in this sub-account.</div>}
+            </div>
+          </>
+        )}
+      </div>
+    );
+  }
+
   if (!balance && (!snapshots || snapshots.length === 0)) {
     return (
       <div className="card" style={{ padding: 48, textAlign: 'center' }}>
@@ -4755,6 +4906,7 @@ function CryptoPortfolio({ balance, positions, snapshots, syncing, onSync, fmt, 
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+      <AccountSwitcher />
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 14 }}>
         <StatCard label="Total Equity" value={fmt(totalEq)} theme={theme} />
         <StatCard label="Unrealized P&L" value={`${upl >= 0 ? '+' : ''}${fmt(upl)}`} color={upl >= 0 ? theme.pos : theme.neg} theme={theme} />
