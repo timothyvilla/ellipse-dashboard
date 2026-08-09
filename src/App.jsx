@@ -5529,7 +5529,7 @@ function EditTradeModal({ trade: initialTrade, onClose, onSave, accounts }) {
 }
 
 // ==================== CRYPTO VIEW (OKX) ====================
-function CryptoView({ subTab, setSubTab, trades, snapshots, challenges, live, syncing, okxError, lastSync, onSync, onAddTrade, onDeleteTrade, onUpdateChallenge, onDeleteChallenge, subAccounts = [], selectedAccount = 'main', setSelectedAccount }) {
+function CryptoView({ subTab, setSubTab, trades, snapshots, challenges, live, algos = { live: [], history: [] }, syncing, okxError, lastSync, onSync, onAddTrade, onDeleteTrade, onUpdateChallenge, onDeleteChallenge, subAccounts = [], selectedAccount = 'main', setSelectedAccount }) {
   const theme = useTheme();
   const tabs = [
     { id: 'portfolio', label: 'Portfolio', icon: Wallet },
@@ -5611,7 +5611,7 @@ function CryptoView({ subTab, setSubTab, trades, snapshots, challenges, live, sy
 
       {subTab === 'portfolio' && (
         <CryptoPortfolio
-          balance={balance} positions={live?.positions || []} snapshots={snapshots}
+          balance={balance} positions={live?.positions || []} snapshots={snapshots} algos={algos}
           syncing={syncing} onSync={onSync} fmt={fmt} theme={theme}
           subAccounts={subAccounts} selectedAccount={selectedAccount} setSelectedAccount={setSelectedAccount}
         />
@@ -5621,8 +5621,8 @@ function CryptoView({ subTab, setSubTab, trades, snapshots, challenges, live, sy
       ) : (
         <CryptoChallengeView challenges={challenges} snapshots={snapshots} liveEq={balance?.totalEq} onOpen={setDetailId} onUpdate={onUpdateChallenge} onDelete={onDeleteChallenge} fmt={fmt} theme={theme} />
       ))}
-      {subTab === 'trades' && <CryptoTradesView trades={trades} onAddTrade={onAddTrade} onDeleteTrade={onDeleteTrade} fmt={fmt} theme={theme} />}
-      {subTab === 'analytics' && <CryptoAnalyticsView trades={trades} fmt={fmt} theme={theme} />}
+      {subTab === 'trades' && <CryptoTradesView trades={trades} algos={algos} onAddTrade={onAddTrade} onDeleteTrade={onDeleteTrade} fmt={fmt} theme={theme} />}
+      {subTab === 'analytics' && <CryptoAnalyticsView trades={trades} positions={live?.positions || []} algos={algos} snapshots={snapshots} fmt={fmt} theme={theme} />}
     </div>
   );
 }
@@ -5815,7 +5815,7 @@ function StatCard({ label, value, color, sub, theme }) {
   );
 }
 
-function CryptoPortfolio({ balance, positions, snapshots, syncing, onSync, fmt, theme, subAccounts = [], selectedAccount = 'main', setSelectedAccount }) {
+function CryptoPortfolio({ balance, positions, snapshots, algos = { live: [], history: [] }, syncing, onSync, fmt, theme, subAccounts = [], selectedAccount = 'main', setSelectedAccount }) {
   // Only a real, resolved sub-account counts — 'all' and 'main' must fall through
   // to the aggregate / main views below.
   const sub = subAccounts.find(a => a.subAcct === selectedAccount) || null;
@@ -5909,20 +5909,30 @@ function CryptoPortfolio({ balance, positions, snapshots, syncing, onSync, fmt, 
 
   const lastSnap = snapshots && snapshots.length ? snapshots[snapshots.length - 1] : null;
   const totalEq = balance?.totalEq ?? lastSnap?.totalEq ?? 0;
-  const upl = balance?.upl ?? lastSnap?.upl ?? 0;
+  // Unrealized P&L is strictly live from OKX — no snapshot fallback, so it is
+  // blank until a sync lands rather than showing a stale stored value.
+  const upl = balance?.upl ?? null;
   const details = balance?.details || lastSnap?.balances || [];
   const displayPositions = (positions && positions.length) ? positions : (lastSnap?.positions || []);
   const positionsAreLive = !!(positions && positions.length);
   const curve = (snapshots || []).map(s => ({ t: new Date(s.ts).getTime(), eq: s.totalEq, label: new Date(s.ts).toLocaleDateString() }));
   const allocation = details.filter(d => (d.eqUsd || 0) > 0.01).map((d, i) => ({ name: d.ccy, value: d.eqUsd, color: COIN_COLORS[i % COIN_COLORS.length] }));
 
+  // Risk/reward on open positions from live SL/TP (algo orders).
+  const liveAlgos = algos?.live || [];
+  const posRR = displayPositions.map(p => ({ p, rr: positionRR(p, liveAlgos) }));
+  const totalRisk = posRR.reduce((s, { p, rr }) => s + ((rr.riskPerUnit != null) ? rr.riskPerUnit * Math.abs(Number(p.pos) || 0) : 0), 0);
+  const stopsSet = posRR.filter(({ rr }) => rr.hasStop).length;
+  const plannedRRs = posRR.map(({ rr }) => rr.plannedRR).filter(v => Number.isFinite(v));
+  const avgPlannedRR = plannedRRs.length ? plannedRRs.reduce((s, v) => s + v, 0) / plannedRRs.length : null;
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 14 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: 14 }}>
         <StatCard label="Total Equity" value={fmt(totalEq)} theme={theme} />
-        <StatCard label="Unrealized P&L" value={`${upl >= 0 ? '+' : ''}${fmt(upl)}`} color={upl >= 0 ? theme.pos : theme.neg} theme={theme} />
-        <StatCard label="Open Positions" value={positions.length} theme={theme} />
-        <StatCard label="Assets" value={details.length} sub={details.slice(0, 4).map(d => d.ccy).join(', ')} theme={theme} />
+        <StatCard label="Unrealized P&L" value={upl == null ? '—' : `${upl >= 0 ? '+' : ''}${fmt(upl)}`} color={upl == null ? theme.textMuted : upl >= 0 ? theme.pos : theme.neg} sub={upl == null ? 'awaiting live sync' : 'live from OKX'} theme={theme} />
+        <StatCard label="Open Positions" value={displayPositions.length} sub={`${stopsSet}/${displayPositions.length} with a stop`} theme={theme} />
+        <StatCard label="Risk at Stop" value={totalRisk > 0 ? fmt(totalRisk) : '—'} color={theme.neg} sub={avgPlannedRR != null ? `avg planned ${avgPlannedRR.toFixed(2)}R` : 'set stops to see risk'} theme={theme} />
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 2fr) minmax(0, 1fr)', gap: 16 }}>
@@ -5970,16 +5980,19 @@ function CryptoPortfolio({ balance, positions, snapshots, syncing, onSync, fmt, 
           <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead><tr>
-                {['Instrument', 'Side', 'Size', 'Avg Entry', 'Mark', 'uPnL', 'Lev', 'Liq. Price'].map(h => <th key={h} className="table-header" style={{ textAlign: h === 'Instrument' || h === 'Side' ? 'left' : 'right' }}>{h}</th>)}
+                {['Instrument', 'Side', 'Size', 'Avg Entry', 'Mark', 'Stop', 'Target', 'R:R', 'uPnL', 'Lev', 'Liq. Price'].map(h => <th key={h} className="table-header" style={{ textAlign: h === 'Instrument' || h === 'Side' ? 'left' : 'right' }}>{h}</th>)}
               </tr></thead>
               <tbody>
-                {displayPositions.map((p, i) => (
+                {posRR.map(({ p, rr }, i) => (
                   <tr key={i} className="table-row" style={{ cursor: 'default' }}>
                     <td style={{ padding: '12px 16px', fontSize: 13, fontWeight: 600, color: theme.text }}>{p.instId}</td>
                     <td style={{ padding: '12px 16px' }}><span className="badge" style={{ background: p.posSide === 'long' ? 'rgba(34,211,165,0.15)' : 'rgba(244,85,122,0.15)', color: p.posSide === 'long' ? theme.pos : theme.neg }}>{(p.posSide || '').toUpperCase()}</span></td>
                     <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, color: theme.text, fontFamily: 'JetBrains Mono, monospace' }}>{p.pos}</td>
                     <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, color: theme.textMuted, fontFamily: 'JetBrains Mono, monospace' }}>{p.avgPx}</td>
                     <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, color: theme.textMuted, fontFamily: 'JetBrains Mono, monospace' }}>{p.markPx}</td>
+                    <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, color: rr.hasStop ? theme.neg : theme.textFaint, fontFamily: 'JetBrains Mono, monospace' }}>{rr.hasStop ? rr.sl : '—'}</td>
+                    <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, color: rr.hasTarget ? theme.pos : theme.textFaint, fontFamily: 'JetBrains Mono, monospace' }}>{rr.hasTarget ? rr.tp : '—'}</td>
+                    <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, fontWeight: 600, color: rr.plannedRR == null ? theme.textFaint : rr.plannedRR >= 1.5 ? theme.pos : theme.warn, fontFamily: 'JetBrains Mono, monospace' }}>{rr.plannedRR == null ? '—' : `${rr.plannedRR.toFixed(2)}`}{rr.currentR != null ? <span style={{ color: theme.textFaint, fontWeight: 400 }}> · {rr.currentR >= 0 ? '+' : ''}{rr.currentR.toFixed(2)}R</span> : null}</td>
                     <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, fontWeight: 600, color: p.upl >= 0 ? theme.pos : theme.neg, fontFamily: 'JetBrains Mono, monospace' }}>{p.upl >= 0 ? '+' : ''}{fmt(p.upl)}</td>
                     <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, color: theme.textMuted }}>{p.lever}x</td>
                     <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, color: '#f59e0b', fontFamily: 'JetBrains Mono, monospace' }}>{p.liqPx || '—'}</td>
@@ -6077,22 +6090,60 @@ function CryptoChallengeView({ challenges, snapshots, liveEq, onOpen, onUpdate, 
   );
 }
 
-function CryptoTradesView({ trades, onAddTrade, onDeleteTrade, fmt, theme }) {
+function CryptoTradesView({ trades, algos = { live: [], history: [] }, onAddTrade, onDeleteTrade, fmt, theme }) {
   const [coin, setCoin] = useState('all');
   const [showAdd, setShowAdd] = useState(false);
+  const [view, setView] = useState('trips'); // 'trips' = round trips w/ R · 'fills' = raw fills
   const coins = ['all', ...Array.from(new Set(trades.map(t => coinFromInst(t.instId)))).filter(Boolean)];
   const filtered = coin === 'all' ? trades : trades.filter(t => coinFromInst(t.instId) === coin);
+  const trips = buildRoundTrips(filtered).map(t => attachRealizedR(t, algos?.history || []));
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <div className="flex items-center gap-2" style={{ flexWrap: 'wrap' }}>
+        <div className="flex items-center gap-1" style={{ background: theme.hoverBg, borderRadius: 10, padding: 3 }}>
+          {[{ id: 'trips', label: 'Round trips' }, { id: 'fills', label: 'Fills' }].map(v => (
+            <button key={v.id} onClick={() => setView(v.id)} style={{ padding: '6px 12px', borderRadius: 8, fontSize: 12.5, fontWeight: 600, cursor: 'pointer', border: 'none', background: view === v.id ? theme.primaryGrad : 'transparent', color: view === v.id ? 'white' : theme.textMuted }}>{v.label}</button>
+          ))}
+        </div>
         <select value={coin} onChange={(e) => setCoin(e.target.value)} className="input" style={{ width: 'auto', minWidth: 140 }}>
           {coins.map(c => <option key={c} value={c}>{c === 'all' ? 'All coins' : c}</option>)}
         </select>
-        <span style={{ fontSize: 13, color: theme.textMuted }}>{filtered.length} trade{filtered.length === 1 ? '' : 's'}</span>
+        <span style={{ fontSize: 13, color: theme.textMuted }}>{view === 'trips' ? `${trips.length} round trip${trips.length === 1 ? '' : 's'}` : `${filtered.length} fill${filtered.length === 1 ? '' : 's'}`}</span>
         <button onClick={() => setShowAdd(true)} className="btn-primary flex items-center gap-2" style={{ marginLeft: 'auto' }}><Plus size={15} />Add manual trade</button>
       </div>
 
+      {view === 'trips' && (
+        <div className="card-lg" style={{ overflow: 'hidden' }}>
+          {trips.length ? (
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead><tr>
+                  {['Closed', 'Instrument', 'Side', 'Entry', 'Exit', 'Size', 'P&L', 'R'].map((h, i) => <th key={i} className="table-header" style={{ textAlign: i >= 3 ? 'right' : 'left' }}>{h}</th>)}
+                </tr></thead>
+                <tbody>
+                  {trips.map((t, i) => (
+                    <tr key={i} className="table-row" style={{ cursor: 'default' }}>
+                      <td style={{ padding: '12px 16px', fontSize: 12, color: theme.textMuted }}>{new Date(t.closeTs).toLocaleString()}</td>
+                      <td style={{ padding: '12px 16px', fontSize: 13, fontWeight: 600, color: theme.text }}>{t.instId}</td>
+                      <td style={{ padding: '12px 16px' }}><span className="badge" style={{ background: t.side === 'long' ? 'rgba(34,211,165,0.15)' : 'rgba(244,85,122,0.15)', color: t.side === 'long' ? theme.pos : theme.neg }}>{(t.side || '').toUpperCase()}</span></td>
+                      <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, color: theme.textMuted, fontFamily: 'JetBrains Mono, monospace' }}>{t.entryPx.toLocaleString(undefined, { maximumFractionDigits: 6 })}</td>
+                      <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, color: theme.textMuted, fontFamily: 'JetBrains Mono, monospace' }}>{t.exitPx.toLocaleString(undefined, { maximumFractionDigits: 6 })}</td>
+                      <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, color: theme.text, fontFamily: 'JetBrains Mono, monospace' }}>{t.qty}</td>
+                      <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, fontWeight: 600, color: t.pnl >= 0 ? theme.pos : theme.neg, fontFamily: 'JetBrains Mono, monospace' }}>{t.pnl >= 0 ? '+' : ''}{fmt(t.pnl)}</td>
+                      <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, fontWeight: 600, color: t.rMultiple == null ? theme.textFaint : t.rMultiple >= 0 ? theme.pos : theme.neg, fontFamily: 'JetBrains Mono, monospace' }}>{t.rMultiple == null ? '—' : `${t.rMultiple >= 0 ? '+' : ''}${t.rMultiple.toFixed(2)}R`}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div style={{ padding: 40, textAlign: 'center', color: theme.textFaint, fontSize: 13 }}>No closed round trips yet. Open and close a position to see entry→exit and R.</div>
+          )}
+        </div>
+      )}
+
+      {view === 'fills' && (
       <div className="card-lg" style={{ overflow: 'hidden' }}>
         {filtered.length ? (
           <div style={{ overflowX: 'auto' }}>
@@ -6121,13 +6172,88 @@ function CryptoTradesView({ trades, onAddTrade, onDeleteTrade, fmt, theme }) {
           <div style={{ padding: 40, textAlign: 'center', color: theme.textFaint, fontSize: 13 }}>No trades yet. Sync OKX or add one manually.</div>
         )}
       </div>
+      )}
 
       {showAdd && <AddCryptoTradeModal onClose={() => setShowAdd(false)} onSave={(t) => { onAddTrade(t); setShowAdd(false); }} theme={theme} />}
     </div>
   );
 }
 
-function CryptoAnalyticsView({ trades, fmt, theme }) {
+// Crypto Ellipse Score — 5-axis RR radar, differentiated from the prop version.
+function CryptoEllipseScorePanel({ trades, positions, algos, snapshots }) {
+  const theme = useTheme();
+  const { score, factors, available, provisional, caps, tradeCount } = computeCryptoEllipseScore({ trades, positions, algos, snapshots });
+
+  const band = score >= 75 ? { label: 'Sharp', color: theme.pos }
+    : score >= 55 ? { label: 'Developing', color: theme.accent }
+    : score >= 35 ? { label: 'Leaky', color: theme.warn }
+    : { label: 'Undisciplined', color: theme.neg };
+
+  const r = 150, cx = r / 2, cy = r / 2, maxR = r * 0.36;
+  const pt = (i, frac) => {
+    const a = (Math.PI * 2 * i) / factors.length - Math.PI / 2;
+    return [cx + Math.cos(a) * maxR * frac, cy + Math.sin(a) * maxR * frac];
+  };
+  const ring = (f) => factors.map((_, i) => pt(i, f).join(',')).join(' ');
+  const shape = factors.map((f, i) => pt(i, Math.max(f.pct, 0.02)).join(',')).join(' ');
+
+  if (!available) {
+    return (
+      <div className="card" style={{ padding: 18 }}>
+        <div className="stat-label">Crypto Ellipse Score</div>
+        <div style={{ padding: '26px 0', textAlign: 'center', fontSize: 12.5, color: theme.textFaint }}>
+          Close at least 3 round-trip trades to generate a risk/reward score.
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="card" style={{ padding: 18, display: 'flex', flexDirection: 'column' }}>
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-baseline gap-2" style={{ flexWrap: 'wrap' }}>
+          <div className="stat-label">Crypto Ellipse Score</div>
+          <span style={{ fontSize: 10.5, color: theme.textFaint }}>risk/reward, not prop rules</span>
+        </div>
+        <span className="badge" style={{ background: `${band.color}1f`, color: band.color }}>{band.label}</span>
+      </div>
+      <div className="flex items-center gap-3" style={{ margin: '14px 0 6px' }}>
+        <svg width={r} height={r} role="img" aria-label={`Crypto Ellipse score ${score} of 100`}>
+          {[1, 0.66, 0.33].map((f, i) => <polygon key={i} points={ring(f)} fill="none" stroke={theme.cardBorder} strokeWidth="1" opacity={1 - i * 0.25} />)}
+          {factors.map((_, i) => { const [x, y] = pt(i, 1); return <line key={i} x1={cx} y1={cy} x2={x} y2={y} stroke={theme.cardBorder} strokeWidth="1" opacity="0.5" />; })}
+          <polygon points={shape} fill="rgba(139,92,246,0.28)" stroke={theme.primary} strokeWidth="2" strokeLinejoin="round" />
+          {factors.map((f, i) => { const [x, y] = pt(i, Math.max(f.pct, 0.02)); return <circle key={i} cx={x} cy={y} r="3" fill={theme.primaryHi} />; })}
+        </svg>
+        <div>
+          <div style={{ fontSize: 40, fontWeight: 800, color: band.color, letterSpacing: '-1.4px', lineHeight: 1 }}>{score}</div>
+          <div style={{ fontSize: 12, color: theme.textFaint, marginTop: 2 }}>out of 100</div>
+          {provisional && <div style={{ fontSize: 10.5, color: theme.warn, marginTop: 4 }}>provisional · {tradeCount} trades</div>}
+        </div>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 11, marginTop: 6 }}>
+        {factors.map(f => (
+          <div key={f.key} title={f.detail}>
+            <div className="flex items-baseline justify-between gap-2" style={{ marginBottom: 5 }}>
+              <span style={{ fontSize: 11.5, fontWeight: 600, color: theme.text }}>{f.label}</span>
+              <span style={{ fontSize: 10.5, color: theme.textFaint, fontFamily: "'JetBrains Mono', monospace", flexShrink: 0 }}>{Math.round(f.value)}/{f.weight}</span>
+            </div>
+            <div style={{ height: 6, borderRadius: 999, background: theme.dark ? 'rgba(255,255,255,0.08)' : 'rgba(20,17,31,0.08)', overflow: 'hidden' }}>
+              <div className="progress-bar-animate" style={{ height: '100%', width: `${f.pct * 100}%`, borderRadius: 999, background: theme.primaryGrad }} />
+            </div>
+            <div style={{ fontSize: 10, color: theme.textFaint, marginTop: 4, lineHeight: 1.35 }}>{f.detail}</div>
+          </div>
+        ))}
+      </div>
+      {caps?.length > 0 && (
+        <div style={{ marginTop: 10, padding: '7px 10px', borderRadius: 10, background: 'rgba(244,85,122,0.1)', border: '1px solid rgba(244,85,122,0.3)' }}>
+          {caps.map((c, i) => <div key={i} style={{ fontSize: 10.5, color: theme.neg, fontWeight: 500 }}>{c}</div>)}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CryptoAnalyticsView({ trades, positions = [], algos = { live: [], history: [] }, snapshots = [], fmt, theme }) {
   if (!trades.length) {
     return <div className="card" style={{ padding: 48, textAlign: 'center', color: theme.textMuted, fontSize: 14 }}>No trades to analyze yet. Sync OKX or add trades to see analytics.</div>;
   }
@@ -6140,6 +6266,12 @@ function CryptoAnalyticsView({ trades, fmt, theme }) {
   const gradeCtx = outcomeContext(normalized);
   const expectancy = s.realizedCount ? (s.netPnl / s.realizedCount) : 0;
   const ratio = s.avgLoss > 0 ? s.avgWin / s.avgLoss : (s.avgWin > 0 ? s.avgWin : 0);
+
+  // Risk/reward stats from real stops (round trips + algo history).
+  const trips = buildRoundTrips(trades).map(t => attachRealizedR(t, algos?.history || []));
+  const rMults = trips.map(t => t.rMultiple).filter(v => Number.isFinite(v));
+  const avgR = rMults.length ? rMults.reduce((a, b) => a + b, 0) / rMults.length : null;
+  const stopCoverage = trips.length ? Math.round((trips.filter(t => t.slUsed != null).length / trips.length) * 100) : 0;
 
   const byCoinMap = {};
   trades.forEach(t => { const c = coinFromInst(t.instId); byCoinMap[c] = (byCoinMap[c] || 0) + (t.pnl || 0); });
@@ -6156,11 +6288,12 @@ function CryptoAnalyticsView({ trades, fmt, theme }) {
         <StatCard label="Profit Factor" value={pf} theme={theme} />
         <StatCard label="Win %" value={`${s.winRate.toFixed(2)}%`} sub={`${s.winCount}W / ${s.lossCount}L`} theme={theme} />
         <StatCard label="Avg Win/Loss Trade" value={ratio ? ratio.toFixed(1) : '—'} sub={`${fmt(s.avgWin)} / ${fmt(s.avgLoss)}`} theme={theme} />
+        <StatCard label="Expectancy (R)" value={avgR == null ? '—' : `${avgR >= 0 ? '+' : ''}${avgR.toFixed(2)}R`} color={avgR == null ? theme.textMuted : avgR >= 0 ? theme.pos : theme.neg} sub={`${stopCoverage}% of trades stopped`} theme={theme} />
       </div>
 
       {/* Score + the two P&L charts, same layout as the Dashboard */}
       <div style={{ display: 'grid', gridTemplateColumns: '340px minmax(0, 1fr)', gap: 12, alignItems: 'stretch' }}>
-        <EllipseScorePanel trades={normalized} size={150} />
+        <CryptoEllipseScorePanel trades={trades} positions={positions} algos={algos} snapshots={snapshots} />
         <div style={{ display: 'grid', gridTemplateRows: '1fr 1fr', gap: 12, minHeight: 0 }}>
           <ChartCard title="Daily Net Cumulative P&L" minHeight={140}>
             <CumulativePnlChart data={cumulative} theme={theme} id="cryptoCum" />
