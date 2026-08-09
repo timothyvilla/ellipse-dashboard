@@ -1,5 +1,26 @@
 {
-  "crons": [
-    { "path": "/api/cron/okx-sync", "schedule": "0 0 * * *" }
+  "//": "Cron scheduling is handled by GitHub Actions (.github/workflows/okx-sync.yml), which runs hourly for free on any plan. Vercel Hobby only permits once-per-day crons, so no `crons` block is defined here — avoiding both the deploy-time frequency limit and a duplicate trigger.",
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        { "key": "X-Content-Type-Options", "value": "nosniff" },
+        { "key": "X-Frame-Options", "value": "DENY" },
+        { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" },
+        { "key": "Permissions-Policy", "value": "geolocation=(), microphone=(), camera=(), payment=(), usb=()" },
+        { "key": "Cross-Origin-Opener-Policy", "value": "same-origin" },
+        { "key": "Strict-Transport-Security", "value": "max-age=63072000; includeSubDomains; preload" },
+        {
+          "key": "Content-Security-Policy",
+          "value": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https://s3.tradingview.com https://i.imgur.com https://i.ibb.co https://ibb.co https://prnt.sc https://prntscr.com; connect-src 'self' https://*.supabase.co https://open.er-api.com https://cdn-nfs.faireconomy.media https://nfs.faireconomy.media; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'"
+        }
+      ]
+    },
+    {
+      "source": "/api/(.*)",
+      "headers": [
+        { "key": "Cache-Control", "value": "no-store, max-age=0" }
+      ]
+    }
   ]
 }
