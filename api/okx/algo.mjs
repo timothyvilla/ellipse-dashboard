@@ -21,7 +21,7 @@
 // it, this returns the master account's algo orders only.
 // ──────────────────────────────────────────────────────────────────
 import { okxGet, send } from './_okx.mjs';
-import { requireSession } from '../_auth.mjs';
+import { requireSession } from './_guard.mjs';
 
 // OKX splits attached/standalone stops across these algo order types.
 // conditional = single SL or TP; oco = one-cancels-other (SL + TP together);
