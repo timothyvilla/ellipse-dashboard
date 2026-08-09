@@ -24,9 +24,11 @@ import { okxGet, send } from './_okx.mjs';
 import { requireSession } from '../_auth.mjs';
 
 // OKX splits attached/standalone stops across these algo order types.
-// conditional = single SL or TP; oco = one-cancels-other (SL + TP together).
-const LIVE_ORD_TYPES = ['conditional', 'oco'];
-const HIST_ORD_TYPES = ['conditional', 'oco'];
+// conditional = single SL or TP; oco = one-cancels-other (SL + TP together);
+// trigger = trigger order; move_order_stop = trailing stop. Query all so any
+// stop/target the account has set is caught regardless of how it was placed.
+const LIVE_ORD_TYPES = ['conditional', 'oco', 'trigger', 'move_order_stop'];
+const HIST_ORD_TYPES = ['conditional', 'oco', 'trigger'];
 
 const num = (v) => {
   const n = parseFloat(v);
@@ -85,14 +87,41 @@ export default async function handler(req, res) {
     HIST_ORD_TYPES.map((t) => fetchAlgo('/api/v5/trade/orders-algo-history', t, account, 'state=effective&limit=100'))
   );
 
+  // Working (pending, not-yet-filled) regular orders — these are the "entry
+  // orders" resting on the book, along with any SL/TP attached to them.
+  let pending = [];
+  let pendingErr = null;
+  try {
+    const { body } = await okxGet('/api/v5/trade/orders-pending?instType=SWAP', account);
+    if (body?.code && body.code !== '0') {
+      pendingErr = body.msg || `code ${body.code}`;
+    } else {
+      pending = (body?.data || []).map((o) => ({
+        ordId: o.ordId,
+        instId: o.instId,
+        ordType: o.ordType,        // limit | post_only | fok | ioc | market
+        side: o.side,              // buy | sell
+        posSide: o.posSide,
+        px: num(o.px),             // limit / entry price
+        sz: num(o.sz),
+        state: o.state,            // live | partially_filled
+        slTriggerPx: num(o.slTriggerPx),
+        tpTriggerPx: num(o.tpTriggerPx),
+        cTime: o.cTime ? Number(o.cTime) : null,
+      }));
+    }
+  } catch (e) { pendingErr = e?.message || 'orders-pending failed'; }
+
   const live = liveResults.flatMap((r) => r.rows);
   const history = histResults.flatMap((r) => r.rows);
   const errors = [...liveResults, ...histResults].map((r) => r.err).filter(Boolean);
+  if (pendingErr) errors.push(pendingErr);
 
   return send(res, 200, {
     account,
-    live,
-    history,
+    live,        // standalone/attached SL/TP algo orders on open positions
+    history,     // effective (triggered) stops/targets for closed trades
+    pending,     // working regular entry orders (with any attached SL/TP)
     // Surface (don't throw) permission/param errors so the UI can hint at
     // "create a read-only key with order-read permission" without breaking.
     warnings: errors.length ? errors : undefined,
