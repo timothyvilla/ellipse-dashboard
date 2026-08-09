@@ -512,6 +512,29 @@ const mapCryptoChallengeRow = (r) => ({
   milestones: Array.isArray(r.milestones) ? r.milestones : [], notes: r.notes || '',
 });
 
+// Union two snapshot lists (Supabase + localStorage), dedupe by timestamp, and
+// sort ascending. Snapshots are append-only, so a union can never lose history.
+// This is what keeps the equity curve intact across reloads, devices and the
+// RLS/localStorage fallback boundary: an empty DB read must never discard the
+// local cache (and vice versa). When the same snapshot appears in both sources,
+// prefer the one with a real DB id over a local_* placeholder.
+const mergeSnapshots = (...lists) => {
+  const byTs = new Map();
+  for (const list of lists) {
+    for (const s of list || []) {
+      if (!s || !s.ts) continue;
+      let key;
+      try { key = new Date(s.ts).toISOString(); } catch { continue; }
+      const existing = byTs.get(key);
+      const isLocal = String(s.id ?? '').startsWith('local_');
+      if (!existing || (String(existing.id ?? '').startsWith('local_') && !isLocal)) {
+        byTs.set(key, s);
+      }
+    }
+  }
+  return [...byTs.values()].sort((a, b) => new Date(a.ts) - new Date(b.ts));
+};
+
 // ==================== CHALLENGE PHASE ENGINE ====================
 //
 // Phases used to record only a start date, stamped with the day you pressed
@@ -1225,7 +1248,26 @@ export default function TradingJournal() {
         const localSnaps = loadLocalCrypto('ellipse_crypto_snapshots');
         const localChals = loadLocalCrypto('ellipse_crypto_challenges');
         setCryptoTrades((ctRes.data && !ctRes.error) ? ctRes.data.map(mapCryptoTradeRow) : localTrades);
-        setCryptoSnapshots((csRes.data && !csRes.error) ? csRes.data.map(mapSnapshotRow) : localSnaps);
+        // Snapshots are append-only: union every source rather than letting an
+        // empty read wipe history — that empty-array-truthy branch was resetting
+        // the equity curve on every reload.
+        //
+        // Primary source of truth is the SERVER route /api/okx/snapshots, which
+        // reads with the service-role key and so returns the hourly cron history
+        // even when RLS blocks the anon client. The direct anon read (csRes) only
+        // returns rows when RLS is off; localStorage is the offline fallback.
+        // mergeSnapshots dedupes by timestamp and prefers real DB ids over
+        // local_* placeholders, so unioning all three can never lose points.
+        const dbSnaps = (csRes.data && !csRes.error) ? csRes.data.map(mapSnapshotRow) : [];
+        let serverSnaps = [];
+        try {
+          const sr = await fetch('/api/okx/snapshots?limit=5000');
+          if (sr.ok && (sr.headers.get('content-type') || '').includes('application/json')) {
+            const body = await sr.json();
+            if (Array.isArray(body?.snapshots)) serverSnaps = body.snapshots.map(mapSnapshotRow);
+          }
+        } catch (e) { console.warn('Server snapshot read failed, using DB/local cache:', e?.message); }
+        setCryptoSnapshots(mergeSnapshots(serverSnaps, dbSnaps, localSnaps));
         setCryptoChallenges((cchRes.data && !cchRes.error) ? cchRes.data.map(mapCryptoChallengeRow) : localChals);
         if (cchRes.error) console.warn('crypto_challenges not in DB (using localStorage). Run supabase/crypto_migration.sql to persist across devices/deploys.');
         // Cache is now loaded into state — safe to let the writers persist changes.
@@ -1335,9 +1377,14 @@ export default function TradingJournal() {
       };
       let snapInserted = null;
       try {
-        const { data } = await supabase.from('crypto_snapshots').insert(snapRow).select().single();
+        const { data, error } = await supabase.from('crypto_snapshots').insert(snapRow).select().single();
+        // supabase-js does NOT throw on RLS/missing-table errors — it returns
+        // { data:null, error }. Log it so a silently-blocked write (the usual
+        // cause of a non-persisting equity curve) is visible; state + localStorage
+        // still get the snapshot via the local_* fallback below.
+        if (error) console.warn('crypto_snapshots insert failed, keeping local copy:', error.message);
         snapInserted = data;
-      } catch {}
+      } catch (e) { console.warn('crypto_snapshots insert threw, keeping local copy:', e?.message); }
       setCryptoSnapshots(prev => [...prev, snapInserted ? mapSnapshotRow(snapInserted) : { ...mapSnapshotRow(snapRow), id: 'local_' + Date.now() }]);
 
       // Update active challenge balances with live equity
