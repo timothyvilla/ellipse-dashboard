@@ -12,7 +12,8 @@
 // require a read-only key created inside each sub-account. This route
 // therefore returns balances only.
 // ──────────────────────────────────────────────────────────────────
-import { okxGet, send } from './_okx.mjs';
+import { okxGet, send, configuredSubAccounts } from './_okx.mjs';
+import { requireSession } from './_guard.mjs';
 
 // OKX rate-limits sub-account balance reads, so fan out in small batches.
 const BATCH_SIZE = 3;
@@ -40,6 +41,8 @@ function normalizeBalance(body) {
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') return send(res, 405, { error: 'method_not_allowed' });
+  // Private data: live equity, positions, fills. Requires a valid session cookie.
+  if (!requireSession(req, res)) return;
 
   // 1) Which sub-accounts exist?
   const list = await okxGet('/api/v5/users/subaccount/list');
@@ -54,10 +57,14 @@ export default async function handler(req, res) {
     });
   }
 
+  // Accounts with their own read-only key can also serve positions + fills.
+  const withKeys = new Set(configuredSubAccounts());
+
   const subs = (list.body?.data || []).map((s) => ({
     subAcct: s.subAcct,
     label: s.label || s.subAcct,
     enable: s.enable === true || s.enable === 'true',
+    hasKeys: withKeys.has(s.subAcct),
   }));
 
   if (!subs.length) return send(res, 200, { accounts: [], ts: Date.now() });
