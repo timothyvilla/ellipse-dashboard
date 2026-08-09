@@ -826,6 +826,151 @@ function computeTradeScore(t, ctx) {
   };
 }
 
+// ==================== CRYPTO RR + ELLIPSE SCORE ====================
+//
+// Crypto is scored differently from prop accounts. On OKX we can read the
+// actual stop-loss and take-profit (algo orders), so we grade genuine
+// risk/reward instead of prop-rule survival.
+//
+//   Stop discipline 20        share of trades/positions with a stop actually set
+//   Realized expectancy 30    average outcome per trade in R-multiples
+//   Reward:Risk quality 20    average win size ÷ average loss size
+//   Win-rate vs breakeven 15  win rate above the breakeven your RR implies
+//   Drawdown control 15       peak-to-trough on the equity curve
+
+const CRYPTO_SCORE_FACTORS = [
+  { key: 'stopDiscipline', label: 'Stop discipline',       weight: 20 },
+  { key: 'expectancyR',    label: 'Realized expectancy',   weight: 30 },
+  { key: 'rrQuality',      label: 'Reward:Risk quality',   weight: 20 },
+  { key: 'winVsBE',        label: 'Win-rate vs breakeven', weight: 15 },
+  { key: 'drawdown',       label: 'Drawdown control',      weight: 15 },
+];
+
+// Direction of a position: short = -1, long = +1 (net mode falls back to sign).
+const posDir = (p) => {
+  const side = (p?.posSide || '').toLowerCase();
+  if (side === 'short') return -1;
+  if (side === 'long') return 1;
+  return (Number(p?.pos) || 0) >= 0 ? 1 : -1;
+};
+
+// Live SL/TP + risk/reward for an open position, matched by instId.
+function positionRR(pos, liveAlgos) {
+  const entry = Number(pos?.avgPx) || 0;
+  const mark = Number(pos?.markPx) || 0;
+  const dir = posDir(pos);
+  const a = (liveAlgos || []).find(x => x.instId === pos?.instId && (x.slTriggerPx != null || x.tpTriggerPx != null));
+  const sl = a?.slTriggerPx ?? null;
+  const tp = a?.tpTriggerPx ?? null;
+  const riskPerUnit = (sl != null && entry) ? Math.abs(entry - sl) : null;
+  const rewardPerUnit = (tp != null && entry) ? Math.abs(tp - entry) : null;
+  const plannedRR = (riskPerUnit && rewardPerUnit != null) ? rewardPerUnit / riskPerUnit : null;
+  const currentR = (riskPerUnit && entry) ? ((mark - entry) * dir) / riskPerUnit : null;
+  return { entry, mark, sl, tp, dir, riskPerUnit, rewardPerUnit, plannedRR, currentR,
+    hasStop: sl != null, hasTarget: tp != null };
+}
+
+// Pair OKX fills into round-trip trades per instId using net-position
+// accounting: a trip opens when position leaves flat and closes when it
+// returns to flat. Realized PnL is summed from OKX's per-fill fillPnl.
+function buildRoundTrips(fills) {
+  const bySym = {};
+  for (const f of (fills || [])) { if (f?.instId) (bySym[f.instId] = bySym[f.instId] || []).push(f); }
+  const trips = [];
+  for (const [instId, list] of Object.entries(bySym)) {
+    const sorted = list.slice().sort((a, b) => new Date(a.ts) - new Date(b.ts));
+    let pos = 0, entryNotional = 0, entryQty = 0, openTs = null, realized = 0, fees = 0, entrySide = null;
+    for (const f of sorted) {
+      const sz = Math.abs(Number(f.fillSz) || 0);
+      const px = Number(f.fillPx) || 0;
+      const signed = (f.side === 'buy') ? sz : -sz;
+      fees += Math.abs(Number(f.fee) || 0);
+      realized += Number(f.pnl) || 0;
+      const before = pos;
+      if (before === 0) { openTs = f.ts; entrySide = signed > 0 ? 'long' : 'short'; entryNotional = px * sz; entryQty = sz; }
+      else if (Math.sign(signed) === Math.sign(before)) { entryNotional += px * sz; entryQty += sz; }
+      pos = before + signed;
+      if (before !== 0 && pos === 0) {
+        trips.push({ instId, side: entrySide, entryPx: entryQty ? entryNotional / entryQty : px,
+          exitPx: px, qty: entryQty, pnl: realized, fee: fees, openTs, closeTs: f.ts });
+        entryNotional = 0; entryQty = 0; realized = 0; fees = 0; openTs = null; entrySide = null;
+      }
+    }
+  }
+  return trips.sort((a, b) => new Date(b.closeTs) - new Date(a.closeTs));
+}
+
+// Attach a realized R-multiple to a trip using the nearest effective stop from
+// algo history (matched by instId, closest in time to the close). Null if none.
+function attachRealizedR(trip, histAlgos) {
+  const cand = (histAlgos || []).filter(a => a.instId === trip.instId && a.slTriggerPx != null);
+  if (!cand.length) return { ...trip, rMultiple: null, slUsed: null };
+  const closeMs = new Date(trip.closeTs).getTime();
+  cand.sort((a, b) => Math.abs((a.triggerTime || a.cTime || 0) - closeMs) - Math.abs((b.triggerTime || b.cTime || 0) - closeMs));
+  const sl = cand[0].slTriggerPx;
+  const dir = trip.side === 'short' ? -1 : 1;
+  const risk = Math.abs(trip.entryPx - sl);
+  const rMultiple = risk > 0 ? ((trip.exitPx - trip.entryPx) * dir) / risk : null;
+  return { ...trip, rMultiple, slUsed: sl };
+}
+
+// Five-factor crypto Ellipse Score. Returns the same shape the radar expects.
+function computeCryptoEllipseScore({ trades, positions, algos, snapshots }) {
+  const live = algos?.live || [];
+  const hist = algos?.history || [];
+  const trips = buildRoundTrips(trades).map(t => attachRealizedR(t, hist));
+  const n = trips.length;
+  const zero = CRYPTO_SCORE_FACTORS.map(f => ({ ...f, pct: 0, value: 0, detail: '—' }));
+  if (n < 3) return { score: 0, available: false, tradeCount: n, factors: zero, provisional: true, caps: [], trips };
+
+  // Stop discipline — closed trips with a known stop + open positions carrying one.
+  const withStop = trips.filter(t => t.slUsed != null).length;
+  const liveWithStop = (positions || []).filter(p => live.some(a => a.instId === p.instId && a.slTriggerPx != null)).length;
+  const stopBase = n + (positions?.length || 0);
+  const stopPct = clamp01((withStop + liveWithStop) / (stopBase || 1));
+
+  // Realized expectancy in R.
+  const rs = trips.map(t => t.rMultiple).filter(v => Number.isFinite(v));
+  const expR = rs.length ? mean(rs) : null;
+  const expPct = expR == null ? 0.3 : clamp01((expR + 0.2) / 1.2); // ~+1R ≈ full marks
+
+  // Reward:Risk quality — average win magnitude ÷ average loss magnitude.
+  const pnls = trips.map(t => Number(t.pnl) || 0);
+  const winMags = pnls.filter(v => v > 0);
+  const lossMags = pnls.filter(v => v < 0).map(Math.abs);
+  const avgW = mean(winMags), avgL = mean(lossMags);
+  const rr = avgL > 0 ? avgW / avgL : (avgW > 0 ? 2.5 : 0);
+  const rrPct = clamp01(rr / 2.5); // 2.5:1 ≈ full marks
+
+  // Win-rate vs breakeven implied by RR.
+  const wr = winMags.length / n;
+  const be = rr > 0 ? 1 / (1 + rr) : 0.5;
+  const winPct = clamp01(0.5 + (wr - be) * 2.5);
+
+  // Drawdown control from equity snapshots.
+  const eq = (snapshots || []).map(s => Number(s.totalEq) || 0).filter(v => v > 0);
+  let ddPct = 0.6, ddDetail = 'not enough equity history';
+  if (eq.length > 2) {
+    let peak = eq[0], maxDD = 0;
+    for (const v of eq) { peak = Math.max(peak, v); maxDD = Math.max(maxDD, (peak - v) / peak); }
+    ddPct = clamp01(1 - maxDD / 0.25); // 25% drawdown ≈ zero
+    ddDetail = `max drawdown ${(maxDD * 100).toFixed(1)}%`;
+  }
+
+  const raw = {
+    stopDiscipline: { pct: stopPct, detail: `${withStop + liveWithStop}/${stopBase} with a stop set` },
+    expectancyR:    { pct: expPct, detail: expR == null ? 'no R data yet' : `${expR >= 0 ? '+' : ''}${expR.toFixed(2)}R avg` },
+    rrQuality:      { pct: rrPct, detail: `${rr.toFixed(2)}:1 avg win:loss` },
+    winVsBE:        { pct: winPct, detail: `${(wr * 100).toFixed(0)}% win vs ${(be * 100).toFixed(0)}% breakeven` },
+    drawdown:       { pct: ddPct, detail: ddDetail },
+  };
+  const factors = CRYPTO_SCORE_FACTORS.map(f => ({ ...f, pct: raw[f.key].pct, value: raw[f.key].pct * f.weight, detail: raw[f.key].detail }));
+  let score = Math.round(factors.reduce((s, f) => s + f.value, 0));
+  const caps = [];
+  if (expR != null && expR <= 0) { score = Math.min(score, 45); caps.push('Negative expectancy — capped at 45'); }
+  return { score, factors, available: true, tradeCount: n, provisional: n < 15, caps, trips };
+}
+
 // ---- Shared Ellipse Score panel: 5-axis radar + factor breakdown -------------
 function EllipseScorePanel({ trades, rules, size = 168, compact = false, horizontal = false }) {
   const theme = useTheme();
@@ -1116,6 +1261,7 @@ export default function TradingJournal() {
   const [cryptoSnapshots, setCryptoSnapshots] = useState([]);
   const [cryptoChallenges, setCryptoChallenges] = useState([]);
   const [cryptoLive, setCryptoLive] = useState({ balance: null, positions: [] });
+  const [cryptoAlgos, setCryptoAlgos] = useState({ live: [], history: [] });
   const [syncingOKX, setSyncingOKX] = useState(false);
   const [okxError, setOkxError] = useState(null);
   const [lastSync, setLastSync] = useState(() => {
@@ -1339,6 +1485,13 @@ export default function TradingJournal() {
       getJson('/api/okx/subaccounts')
         .then(r => setSubAccounts(r?.error ? [] : (r.accounts || [])))
         .catch(() => setSubAccounts([]));
+
+      // SL/TP (algo orders) are best-effort too: they power the RR analytics
+      // and crypto Ellipse Score, but a missing order-read permission must not
+      // break the core sync. Scope to the account currently being viewed.
+      getJson(`/api/okx/algo?account=${encodeURIComponent(selectedOkxAccount || 'main')}`)
+        .then(r => setCryptoAlgos(r?.error ? { live: [], history: [] } : { live: r.live || [], history: r.history || [] }))
+        .catch(() => setCryptoAlgos({ live: [], history: [] }));
       if (balRes?.error || posRes?.error || fillsRes?.error) {
         throw new Error(balRes?.msg || posRes?.msg || fillsRes?.msg || balRes?.error || 'OKX sync failed. Check API keys / Vercel env vars.');
       }
@@ -2040,7 +2193,7 @@ export default function TradingJournal() {
                   {activeTab === 'crypto' && <CryptoView
                     subTab={cryptoSubTab} setSubTab={setCryptoSubTab}
                     trades={cryptoTrades} snapshots={cryptoSnapshots} challenges={cryptoChallenges}
-                    live={cryptoLive} syncing={syncingOKX} okxError={okxError} lastSync={lastSync}
+                    live={cryptoLive} algos={cryptoAlgos} syncing={syncingOKX} okxError={okxError} lastSync={lastSync}
                     subAccounts={subAccounts} selectedAccount={selectedOkxAccount} setSelectedAccount={setSelectedOkxAccount}
                     onSync={syncOKX} onAddTrade={addCryptoTrade} onDeleteTrade={deleteCryptoTrade}
                     onUpdateChallenge={updateCryptoChallenge} onDeleteChallenge={deleteCryptoChallenge}
