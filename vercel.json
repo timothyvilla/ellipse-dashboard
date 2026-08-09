@@ -1,5 +1,4 @@
 {
-  "//": "Cron scheduling is handled by GitHub Actions (.github/workflows/okx-sync.yml), which runs hourly for free on any plan. Vercel Hobby only permits once-per-day crons, so no `crons` block is defined here — avoiding both the deploy-time frequency limit and a duplicate trigger.",
   "headers": [
     {
       "source": "/(.*)",
