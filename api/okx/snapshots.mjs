@@ -23,7 +23,7 @@
 // ──────────────────────────────────────────────────────────────────
 import { createClient } from '@supabase/supabase-js';
 import { send } from './_okx.mjs';
-import { requireSession } from '../_auth.mjs';
+import { requireSession } from './_guard.mjs';
 
 const MAX_LIMIT = 5000;
 const DEFAULT_LIMIT = 1000;
