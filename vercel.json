@@ -1,4 +1,9 @@
 {
+  "functions": {
+    "api/**/*.mjs": {
+      "includeFiles": "api/**"
+    }
+  },
   "headers": [
     {
       "source": "/(.*)",
