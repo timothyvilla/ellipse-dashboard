@@ -2,7 +2,7 @@
 // Returns open derivatives positions (perps/futures) with unrealized PnL.
 // GET /api/okx/positions
 import { okxGet, send } from './_okx.mjs';
-import { requireSession } from '../_auth.mjs';
+import { requireSession } from './_guard.mjs';
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') return send(res, 405, { error: 'method_not_allowed' });
