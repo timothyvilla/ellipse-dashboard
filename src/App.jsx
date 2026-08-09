@@ -854,14 +854,24 @@ const posDir = (p) => {
   return (Number(p?.pos) || 0) >= 0 ? 1 : -1;
 };
 
-// Live SL/TP + risk/reward for an open position, matched by instId.
+// Human side label. OKX net (one-way) mode reports posSide "net" for every
+// position/fill, so we recover long/short from the sign of the position size.
+const netSide = (p) => {
+  const side = (p?.posSide || '').toLowerCase();
+  if (side === 'long' || side === 'short') return side;
+  return (Number(p?.pos) || 0) >= 0 ? 'long' : 'short';
+};
+
+// Live SL/TP + risk/reward for an open position. Prefer the position's own
+// attached TP/SL (OKX closeOrderAlgo), then fall back to a standalone algo
+// order matched by instId.
 function positionRR(pos, liveAlgos) {
   const entry = Number(pos?.avgPx) || 0;
   const mark = Number(pos?.markPx) || 0;
   const dir = posDir(pos);
   const a = (liveAlgos || []).find(x => x.instId === pos?.instId && (x.slTriggerPx != null || x.tpTriggerPx != null));
-  const sl = a?.slTriggerPx ?? null;
-  const tp = a?.tpTriggerPx ?? null;
+  const sl = pos?.slTriggerPx ?? a?.slTriggerPx ?? null;
+  const tp = pos?.tpTriggerPx ?? a?.tpTriggerPx ?? null;
   const riskPerUnit = (sl != null && entry) ? Math.abs(entry - sl) : null;
   const rewardPerUnit = (tp != null && entry) ? Math.abs(tp - entry) : null;
   const plannedRR = (riskPerUnit && rewardPerUnit != null) ? rewardPerUnit / riskPerUnit : null;
@@ -1261,7 +1271,8 @@ export default function TradingJournal() {
   const [cryptoSnapshots, setCryptoSnapshots] = useState([]);
   const [cryptoChallenges, setCryptoChallenges] = useState([]);
   const [cryptoLive, setCryptoLive] = useState({ balance: null, positions: [] });
-  const [cryptoAlgos, setCryptoAlgos] = useState({ live: [], history: [] });
+  const [cryptoAlgos, setCryptoAlgos] = useState({ live: [], history: [], pending: [] });
+  const [cryptoFunding, setCryptoFunding] = useState({ totalFunding: 0, byInst: {}, recent: [] });
   const [syncingOKX, setSyncingOKX] = useState(false);
   const [okxError, setOkxError] = useState(null);
   const [lastSync, setLastSync] = useState(() => {
@@ -1490,8 +1501,13 @@ export default function TradingJournal() {
       // and crypto Ellipse Score, but a missing order-read permission must not
       // break the core sync. Scope to the account currently being viewed.
       getJson(`/api/okx/algo?account=${encodeURIComponent(selectedOkxAccount || 'main')}`)
-        .then(r => setCryptoAlgos(r?.error ? { live: [], history: [] } : { live: r.live || [], history: r.history || [] }))
-        .catch(() => setCryptoAlgos({ live: [], history: [] }));
+        .then(r => setCryptoAlgos(r?.error ? { live: [], history: [], pending: [] } : { live: r.live || [], history: r.history || [], pending: r.pending || [] }))
+        .catch(() => setCryptoAlgos({ live: [], history: [], pending: [] }));
+
+      // Funding fees (perp carry cost) — pulled separately from trade P&L.
+      getJson(`/api/okx/funding?account=${encodeURIComponent(selectedOkxAccount || 'main')}`)
+        .then(r => setCryptoFunding(r?.error ? { totalFunding: 0, byInst: {}, recent: [] } : { totalFunding: r.totalFunding || 0, byInst: r.byInst || {}, recent: r.recent || [] }))
+        .catch(() => setCryptoFunding({ totalFunding: 0, byInst: {}, recent: [] }));
       if (balRes?.error || posRes?.error || fillsRes?.error) {
         throw new Error(balRes?.msg || posRes?.msg || fillsRes?.msg || balRes?.error || 'OKX sync failed. Check API keys / Vercel env vars.');
       }
@@ -2193,7 +2209,7 @@ export default function TradingJournal() {
                   {activeTab === 'crypto' && <CryptoView
                     subTab={cryptoSubTab} setSubTab={setCryptoSubTab}
                     trades={cryptoTrades} snapshots={cryptoSnapshots} challenges={cryptoChallenges}
-                    live={cryptoLive} algos={cryptoAlgos} syncing={syncingOKX} okxError={okxError} lastSync={lastSync}
+                    live={cryptoLive} algos={cryptoAlgos} funding={cryptoFunding} syncing={syncingOKX} okxError={okxError} lastSync={lastSync}
                     subAccounts={subAccounts} selectedAccount={selectedOkxAccount} setSelectedAccount={setSelectedOkxAccount}
                     onSync={syncOKX} onAddTrade={addCryptoTrade} onDeleteTrade={deleteCryptoTrade}
                     onUpdateChallenge={updateCryptoChallenge} onDeleteChallenge={deleteCryptoChallenge}
@@ -5529,7 +5545,7 @@ function EditTradeModal({ trade: initialTrade, onClose, onSave, accounts }) {
 }
 
 // ==================== CRYPTO VIEW (OKX) ====================
-function CryptoView({ subTab, setSubTab, trades, snapshots, challenges, live, algos = { live: [], history: [] }, syncing, okxError, lastSync, onSync, onAddTrade, onDeleteTrade, onUpdateChallenge, onDeleteChallenge, subAccounts = [], selectedAccount = 'main', setSelectedAccount }) {
+function CryptoView({ subTab, setSubTab, trades, snapshots, challenges, live, algos = { live: [], history: [], pending: [] }, funding = { totalFunding: 0, byInst: {}, recent: [] }, syncing, okxError, lastSync, onSync, onAddTrade, onDeleteTrade, onUpdateChallenge, onDeleteChallenge, subAccounts = [], selectedAccount = 'main', setSelectedAccount }) {
   const theme = useTheme();
   const tabs = [
     { id: 'portfolio', label: 'Portfolio', icon: Wallet },
@@ -5611,7 +5627,7 @@ function CryptoView({ subTab, setSubTab, trades, snapshots, challenges, live, al
 
       {subTab === 'portfolio' && (
         <CryptoPortfolio
-          balance={balance} positions={live?.positions || []} snapshots={snapshots} algos={algos}
+          balance={balance} positions={live?.positions || []} snapshots={snapshots} algos={algos} funding={funding}
           syncing={syncing} onSync={onSync} fmt={fmt} theme={theme}
           subAccounts={subAccounts} selectedAccount={selectedAccount} setSelectedAccount={setSelectedAccount}
         />
@@ -5815,7 +5831,7 @@ function StatCard({ label, value, color, sub, theme }) {
   );
 }
 
-function CryptoPortfolio({ balance, positions, snapshots, algos = { live: [], history: [] }, syncing, onSync, fmt, theme, subAccounts = [], selectedAccount = 'main', setSelectedAccount }) {
+function CryptoPortfolio({ balance, positions, snapshots, algos = { live: [], history: [], pending: [] }, funding = { totalFunding: 0, byInst: {}, recent: [] }, syncing, onSync, fmt, theme, subAccounts = [], selectedAccount = 'main', setSelectedAccount }) {
   // Only a real, resolved sub-account counts — 'all' and 'main' must fall through
   // to the aggregate / main views below.
   const sub = subAccounts.find(a => a.subAcct === selectedAccount) || null;
@@ -5909,9 +5925,12 @@ function CryptoPortfolio({ balance, positions, snapshots, algos = { live: [], hi
 
   const lastSnap = snapshots && snapshots.length ? snapshots[snapshots.length - 1] : null;
   const totalEq = balance?.totalEq ?? lastSnap?.totalEq ?? 0;
-  // Unrealized P&L is strictly live from OKX — no snapshot fallback, so it is
-  // blank until a sync lands rather than showing a stale stored value.
-  const upl = balance?.upl ?? null;
+  // Unrealized P&L, strictly live from OKX. Some margin configs report account
+  // upl as 0 and only populate it per-position, so sum the open positions when
+  // they're loaded and fall back to the account figure otherwise. No snapshot
+  // fallback — blank until a sync lands rather than a stale stored value.
+  const positionsUpl = (positions || []).reduce((s, p) => s + (Number(p.upl) || 0), 0);
+  const upl = (positions && positions.length) ? positionsUpl : (balance?.upl ?? null);
   const details = balance?.details || lastSnap?.balances || [];
   const displayPositions = (positions && positions.length) ? positions : (lastSnap?.positions || []);
   const positionsAreLive = !!(positions && positions.length);
@@ -5933,6 +5952,7 @@ function CryptoPortfolio({ balance, positions, snapshots, algos = { live: [], hi
         <StatCard label="Unrealized P&L" value={upl == null ? '—' : `${upl >= 0 ? '+' : ''}${fmt(upl)}`} color={upl == null ? theme.textMuted : upl >= 0 ? theme.pos : theme.neg} sub={upl == null ? 'awaiting live sync' : 'live from OKX'} theme={theme} />
         <StatCard label="Open Positions" value={displayPositions.length} sub={`${stopsSet}/${displayPositions.length} with a stop`} theme={theme} />
         <StatCard label="Risk at Stop" value={totalRisk > 0 ? fmt(totalRisk) : '—'} color={theme.neg} sub={avgPlannedRR != null ? `avg planned ${avgPlannedRR.toFixed(2)}R` : 'set stops to see risk'} theme={theme} />
+        <StatCard label="Funding (7d)" value={`${(funding?.totalFunding || 0) >= 0 ? '+' : ''}${fmt(funding?.totalFunding || 0)}`} color={(funding?.totalFunding || 0) >= 0 ? theme.pos : theme.neg} sub="perp carry, not trade P&L" theme={theme} />
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 2fr) minmax(0, 1fr)', gap: 16 }}>
@@ -5986,8 +6006,8 @@ function CryptoPortfolio({ balance, positions, snapshots, algos = { live: [], hi
                 {posRR.map(({ p, rr }, i) => (
                   <tr key={i} className="table-row" style={{ cursor: 'default' }}>
                     <td style={{ padding: '12px 16px', fontSize: 13, fontWeight: 600, color: theme.text }}>{p.instId}</td>
-                    <td style={{ padding: '12px 16px' }}><span className="badge" style={{ background: p.posSide === 'long' ? 'rgba(34,211,165,0.15)' : 'rgba(244,85,122,0.15)', color: p.posSide === 'long' ? theme.pos : theme.neg }}>{(p.posSide || '').toUpperCase()}</span></td>
-                    <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, color: theme.text, fontFamily: 'JetBrains Mono, monospace' }}>{p.pos}</td>
+                    <td style={{ padding: '12px 16px' }}><span className="badge" style={{ background: netSide(p) === 'long' ? 'rgba(34,211,165,0.15)' : 'rgba(244,85,122,0.15)', color: netSide(p) === 'long' ? theme.pos : theme.neg }}>{netSide(p).toUpperCase()}</span></td>
+                    <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, color: theme.text, fontFamily: 'JetBrains Mono, monospace' }}>{Math.abs(Number(p.pos) || 0)}</td>
                     <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, color: theme.textMuted, fontFamily: 'JetBrains Mono, monospace' }}>{p.avgPx}</td>
                     <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, color: theme.textMuted, fontFamily: 'JetBrains Mono, monospace' }}>{p.markPx}</td>
                     <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, color: rr.hasStop ? theme.neg : theme.textFaint, fontFamily: 'JetBrains Mono, monospace' }}>{rr.hasStop ? rr.sl : '—'}</td>
@@ -6005,6 +6025,35 @@ function CryptoPortfolio({ balance, positions, snapshots, algos = { live: [], hi
           <div style={{ padding: 32, textAlign: 'center', color: theme.textFaint, fontSize: 13 }}>No open positions.</div>
         )}
       </div>
+
+      {/* Working orders — pending entry orders resting on the book, with any
+          attached stop/target. Only rendered when the account has some. */}
+      {(algos?.pending || []).length > 0 && (
+        <div className="card-lg" style={{ overflow: 'hidden' }}>
+          <div style={{ padding: '16px 20px', borderBottom: `1px solid ${theme.cardBorder}`, fontSize: 14, fontWeight: 600, color: theme.text }}>Working Orders</div>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead><tr>
+                {['Instrument', 'Side', 'Type', 'Entry', 'Size', 'Stop', 'Target', 'State'].map((h, i) => <th key={h} className="table-header" style={{ textAlign: i < 3 ? 'left' : 'right' }}>{h}</th>)}
+              </tr></thead>
+              <tbody>
+                {(algos.pending || []).map((o, i) => (
+                  <tr key={i} className="table-row" style={{ cursor: 'default' }}>
+                    <td style={{ padding: '12px 16px', fontSize: 13, fontWeight: 600, color: theme.text }}>{o.instId}</td>
+                    <td style={{ padding: '12px 16px' }}><span className="badge" style={{ background: o.side === 'buy' ? 'rgba(34,211,165,0.15)' : 'rgba(244,85,122,0.15)', color: o.side === 'buy' ? theme.pos : theme.neg }}>{(o.side || '').toUpperCase()}</span></td>
+                    <td style={{ padding: '12px 16px', fontSize: 12, color: theme.textMuted }}>{o.ordType}</td>
+                    <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, color: theme.textMuted, fontFamily: 'JetBrains Mono, monospace' }}>{o.px ?? '—'}</td>
+                    <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, color: theme.text, fontFamily: 'JetBrains Mono, monospace' }}>{o.sz ?? '—'}</td>
+                    <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, color: o.slTriggerPx != null ? theme.neg : theme.textFaint, fontFamily: 'JetBrains Mono, monospace' }}>{o.slTriggerPx ?? '—'}</td>
+                    <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, color: o.tpTriggerPx != null ? theme.pos : theme.textFaint, fontFamily: 'JetBrains Mono, monospace' }}>{o.tpTriggerPx ?? '—'}</td>
+                    <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 12, color: theme.textFaint }}>{o.state}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -6119,7 +6168,7 @@ function CryptoTradesView({ trades, algos = { live: [], history: [] }, onAddTrad
             <div style={{ overflowX: 'auto' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                 <thead><tr>
-                  {['Closed', 'Instrument', 'Side', 'Entry', 'Exit', 'Size', 'P&L', 'R'].map((h, i) => <th key={i} className="table-header" style={{ textAlign: i >= 3 ? 'right' : 'left' }}>{h}</th>)}
+                  {['Closed', 'Instrument', 'Side', 'Entry', 'Exit', 'Stop', 'Size', 'P&L', 'R'].map((h, i) => <th key={i} className="table-header" style={{ textAlign: i >= 3 ? 'right' : 'left' }}>{h}</th>)}
                 </tr></thead>
                 <tbody>
                   {trips.map((t, i) => (
@@ -6129,6 +6178,7 @@ function CryptoTradesView({ trades, algos = { live: [], history: [] }, onAddTrad
                       <td style={{ padding: '12px 16px' }}><span className="badge" style={{ background: t.side === 'long' ? 'rgba(34,211,165,0.15)' : 'rgba(244,85,122,0.15)', color: t.side === 'long' ? theme.pos : theme.neg }}>{(t.side || '').toUpperCase()}</span></td>
                       <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, color: theme.textMuted, fontFamily: 'JetBrains Mono, monospace' }}>{t.entryPx.toLocaleString(undefined, { maximumFractionDigits: 6 })}</td>
                       <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, color: theme.textMuted, fontFamily: 'JetBrains Mono, monospace' }}>{t.exitPx.toLocaleString(undefined, { maximumFractionDigits: 6 })}</td>
+                      <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, color: t.slUsed != null ? theme.neg : theme.textFaint, fontFamily: 'JetBrains Mono, monospace' }}>{t.slUsed != null ? t.slUsed.toLocaleString(undefined, { maximumFractionDigits: 6 }) : '—'}</td>
                       <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, color: theme.text, fontFamily: 'JetBrains Mono, monospace' }}>{t.qty}</td>
                       <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, fontWeight: 600, color: t.pnl >= 0 ? theme.pos : theme.neg, fontFamily: 'JetBrains Mono, monospace' }}>{t.pnl >= 0 ? '+' : ''}{fmt(t.pnl)}</td>
                       <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, fontWeight: 600, color: t.rMultiple == null ? theme.textFaint : t.rMultiple >= 0 ? theme.pos : theme.neg, fontFamily: 'JetBrains Mono, monospace' }}>{t.rMultiple == null ? '—' : `${t.rMultiple >= 0 ? '+' : ''}${t.rMultiple.toFixed(2)}R`}</td>
