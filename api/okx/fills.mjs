@@ -3,14 +3,20 @@
 // OKX fills-history covers roughly the last 3 months.
 // GET /api/okx/fills?limit=100
 import { okxGet, send } from './_okx.mjs';
+import { requireSession } from './_guard.mjs';
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') return send(res, 405, { error: 'method_not_allowed' });
+  // Private data: live equity, positions, fills. Requires a valid session cookie.
+  if (!requireSession(req, res)) return;
 
   const limit = Math.min(parseInt(req.query?.limit, 10) || 100, 100);
+  // ?account=<subAcct> signs as that sub-account; omitted/'main' uses the master key.
+  const account = req.query?.account || 'main';
   const path = `/api/v5/trade/fills-history?instType=SWAP&limit=${limit}`;
-  const { status, body } = await okxGet(path);
+  const { status, body } = await okxGet(path, account);
 
+  if (body?.error === 'no_subaccount_credentials') return send(res, 400, body);
   if (body?.code && body.code !== '0') {
     return send(res, 502, { error: 'okx_error', code: body.code, msg: body.msg, raw: body });
   }
@@ -30,5 +36,5 @@ export default async function handler(req, res) {
     ts: parseInt(f.ts, 10) || Date.now(),
   }));
 
-  return send(res, status, { fills, ts: Date.now() });
+  return send(res, status, { fills, account, ts: Date.now() });
 }
