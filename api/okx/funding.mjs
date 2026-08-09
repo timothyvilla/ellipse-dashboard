@@ -16,7 +16,7 @@
 // /account/bills-archive (not fetched here to keep it a single fast call).
 // ──────────────────────────────────────────────────────────────────
 import { okxGet, send } from './_okx.mjs';
-import { requireSession } from '../_auth.mjs';
+import { requireSession } from './_guard.mjs';
 
 const num = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? n : 0; };
 
