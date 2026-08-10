@@ -52,7 +52,7 @@ export default async function handler(req, res) {
       totalFunding,                              // negative = net funding paid
       count: rows.length,
       byInst,
-      recent: rows.slice(0, 25),
+      recent: rows,                              // all fetched rows (with ts) for client-side range filtering
       ts: Date.now(),
     });
   } catch (e) {
