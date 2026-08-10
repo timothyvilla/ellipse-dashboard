@@ -1278,6 +1278,7 @@ export default function TradingJournal() {
   const [cryptoLive, setCryptoLive] = useState({ balance: null, positions: [] });
   const [cryptoAlgos, setCryptoAlgos] = useState({ live: [], history: [], pending: [] });
   const [cryptoFunding, setCryptoFunding] = useState({ totalFunding: 0, byInst: {}, recent: [] });
+  const [cryptoLiveFills, setCryptoLiveFills] = useState([]); // fills for the currently-viewed account (sub-accounts are live-only)
   const [syncingOKX, setSyncingOKX] = useState(false);
   const [okxError, setOkxError] = useState(null);
   const [lastSync, setLastSync] = useState(() => {
@@ -1490,10 +1491,15 @@ export default function TradingJournal() {
         }
         return r.json();
       };
+      // Scope live data to the selected account. 'all' aggregates via the
+      // master key, so it maps to 'main' for these per-account endpoints.
+      const acct = (selectedOkxAccount && selectedOkxAccount !== 'all') ? selectedOkxAccount : 'main';
+      const isMainScope = acct === 'main';
+      const acctQs = `account=${encodeURIComponent(acct)}`;
       const [balRes, posRes, fillsRes] = await Promise.all([
-        getJson('/api/okx/balance'),
-        getJson('/api/okx/positions'),
-        getJson('/api/okx/fills?limit=100'),
+        getJson(`/api/okx/balance?${acctQs}`),
+        getJson(`/api/okx/positions?${acctQs}`),
+        getJson(`/api/okx/fills?limit=100&${acctQs}`),
       ]);
 
       // Sub-account balances are best-effort: the master key may not have
@@ -1505,12 +1511,12 @@ export default function TradingJournal() {
       // SL/TP (algo orders) are best-effort too: they power the RR analytics
       // and crypto Ellipse Score, but a missing order-read permission must not
       // break the core sync. Scope to the account currently being viewed.
-      getJson(`/api/okx/algo?account=${encodeURIComponent(selectedOkxAccount || 'main')}`)
+      getJson(`/api/okx/algo?${acctQs}`)
         .then(r => setCryptoAlgos(r?.error ? { live: [], history: [], pending: [] } : { live: r.live || [], history: r.history || [], pending: r.pending || [] }))
         .catch(() => setCryptoAlgos({ live: [], history: [], pending: [] }));
 
       // Funding fees (perp carry cost) — pulled separately from trade P&L.
-      getJson(`/api/okx/funding?account=${encodeURIComponent(selectedOkxAccount || 'main')}`)
+      getJson(`/api/okx/funding?${acctQs}`)
         .then(r => setCryptoFunding(r?.error ? { totalFunding: 0, byInst: {}, recent: [] } : { totalFunding: r.totalFunding || 0, byInst: r.byInst || {}, recent: r.recent || [] }))
         .catch(() => setCryptoFunding({ totalFunding: 0, byInst: {}, recent: [] }));
       if (balRes?.error || posRes?.error || fillsRes?.error) {
@@ -1519,10 +1525,22 @@ export default function TradingJournal() {
 
       setCryptoLive({ balance: balRes, positions: posRes.positions || [] });
 
+      // Live fills for the currently-selected account, mapped to the trade shape.
+      // Sub-account fills are shown live (not persisted into the main journal).
+      const mapFill = (f) => ({
+        id: 'live_' + f.tradeId, tradeId: f.tradeId, ordId: f.ordId, instId: f.instId,
+        side: f.side, posSide: f.posSide, fillSz: f.fillSz, fillPx: f.fillPx,
+        pnl: f.fillPnl, fee: f.fee, feeCcy: f.feeCcy, execType: f.execType,
+        ts: new Date(f.ts).toISOString(), source: 'okx', notes: '', chartImage: '',
+      });
+      setCryptoLiveFills((fillsRes.fills || []).map(mapFill));
+
+      // Only the MAIN account persists into the journal / equity curve / challenges;
+      // sub-account views are live-only so they never pollute the main history.
       // Dedupe fills against what we already have
       const existingIds = new Set(cryptoTradesRef.current.map(t => t.tradeId).filter(Boolean));
       const newFills = (fillsRes.fills || []).filter(f => f.tradeId && !existingIds.has(f.tradeId));
-      if (newFills.length) {
+      if (isMainScope && newFills.length) {
         const rows = newFills.map(f => ({
           trade_id: f.tradeId, ord_id: f.ordId, inst_id: f.instId, side: f.side,
           pos_side: f.posSide, fill_sz: f.fillSz, fill_px: f.fillPx, pnl: f.fillPnl,
@@ -1544,30 +1562,28 @@ export default function TradingJournal() {
         setCryptoTrades(prev => [...localNew, ...prev].sort((a, b) => new Date(b.ts) - new Date(a.ts)));
       }
 
-      // Snapshot for the equity curve
-      const snapRow = {
-        ts: new Date().toISOString(), total_eq: balRes.totalEq, upl: balRes.upl,
-        balances: balRes.details || [], positions: posRes.positions || [], source: 'okx',
-      };
-      let snapInserted = null;
-      try {
-        const { data, error } = await supabase.from('crypto_snapshots').insert(snapRow).select().single();
-        // supabase-js does NOT throw on RLS/missing-table errors — it returns
-        // { data:null, error }. Log it so a silently-blocked write (the usual
-        // cause of a non-persisting equity curve) is visible; state + localStorage
-        // still get the snapshot via the local_* fallback below.
-        if (error) console.warn('crypto_snapshots insert failed, keeping local copy:', error.message);
-        snapInserted = data;
-      } catch (e) { console.warn('crypto_snapshots insert threw, keeping local copy:', e?.message); }
-      setCryptoSnapshots(prev => [...prev, snapInserted ? mapSnapshotRow(snapInserted) : { ...mapSnapshotRow(snapRow), id: 'local_' + Date.now() }]);
+      // Snapshot for the equity curve + challenge balances — MAIN account only,
+      // so viewing a sub-account never writes its equity into the main curve.
+      if (isMainScope) {
+        const snapRow = {
+          ts: new Date().toISOString(), total_eq: balRes.totalEq, upl: balRes.upl,
+          balances: balRes.details || [], positions: posRes.positions || [], source: 'okx',
+        };
+        let snapInserted = null;
+        try {
+          const { data, error } = await supabase.from('crypto_snapshots').insert(snapRow).select().single();
+          if (error) console.warn('crypto_snapshots insert failed, keeping local copy:', error.message);
+          snapInserted = data;
+        } catch (e) { console.warn('crypto_snapshots insert threw, keeping local copy:', e?.message); }
+        setCryptoSnapshots(prev => [...prev, snapInserted ? mapSnapshotRow(snapInserted) : { ...mapSnapshotRow(snapRow), id: 'local_' + Date.now() }]);
 
-      // Update active challenge balances with live equity
-      setCryptoChallenges(prev => prev.map(c => {
-        if (c.status !== 'active') return c;
-        const updated = { ...c, currentBalance: balRes.totalEq };
-        supabase.from('crypto_challenges').update({ current_balance: balRes.totalEq, updated_at: new Date().toISOString() }).eq('id', c.id).then(() => {}, () => {});
-        return updated;
-      }));
+        setCryptoChallenges(prev => prev.map(c => {
+          if (c.status !== 'active') return c;
+          const updated = { ...c, currentBalance: balRes.totalEq };
+          supabase.from('crypto_challenges').update({ current_balance: balRes.totalEq, updated_at: new Date().toISOString() }).eq('id', c.id).then(() => {}, () => {});
+          return updated;
+        }));
+      }
 
       const syncedAt = new Date();
       setLastSync(syncedAt);
@@ -1597,6 +1613,14 @@ export default function TradingJournal() {
     // syncOKX and lastSync are read through refs so this only re-arms on tab change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, loading]);
+
+  // Re-sync when the viewed account changes, so its live positions/balance load.
+  const didAccountMount = useRef(false);
+  useEffect(() => {
+    if (!didAccountMount.current) { didAccountMount.current = true; return; }
+    if (activeTab === 'crypto' && !loading) syncOKX();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedOkxAccount]);
 
   // Crypto challenge CRUD
   const addCryptoChallenge = async (ch) => {
@@ -2213,7 +2237,7 @@ export default function TradingJournal() {
                   {activeTab === 'calendar' && <CalendarView trades={trades} />}
                   {activeTab === 'crypto' && <CryptoView
                     subTab={cryptoSubTab} setSubTab={setCryptoSubTab}
-                    trades={cryptoTrades} snapshots={cryptoSnapshots} challenges={cryptoChallenges}
+                    trades={cryptoTrades} liveFills={cryptoLiveFills} snapshots={cryptoSnapshots} challenges={cryptoChallenges}
                     live={cryptoLive} algos={cryptoAlgos} funding={cryptoFunding} syncing={syncingOKX} okxError={okxError} lastSync={lastSync}
                     subAccounts={subAccounts} selectedAccount={selectedOkxAccount} setSelectedAccount={setSelectedOkxAccount}
                     onSync={syncOKX} onAddTrade={addCryptoTrade} onDeleteTrade={deleteCryptoTrade}
@@ -5550,7 +5574,7 @@ function EditTradeModal({ trade: initialTrade, onClose, onSave, accounts }) {
 }
 
 // ==================== CRYPTO VIEW (OKX) ====================
-function CryptoView({ subTab, setSubTab, trades, snapshots, challenges, live, algos = { live: [], history: [], pending: [] }, funding = { totalFunding: 0, byInst: {}, recent: [] }, syncing, okxError, lastSync, onSync, onAddTrade, onDeleteTrade, onUpdateChallenge, onDeleteChallenge, subAccounts = [], selectedAccount = 'main', setSelectedAccount }) {
+function CryptoView({ subTab, setSubTab, trades, liveFills = [], snapshots, challenges, live, algos = { live: [], history: [], pending: [] }, funding = { totalFunding: 0, byInst: {}, recent: [] }, syncing, okxError, lastSync, onSync, onAddTrade, onDeleteTrade, onUpdateChallenge, onDeleteChallenge, subAccounts = [], selectedAccount = 'main', setSelectedAccount }) {
   const theme = useTheme();
   const tabs = [
     { id: 'portfolio', label: 'Portfolio', icon: Wallet },
@@ -5569,12 +5593,20 @@ function CryptoView({ subTab, setSubTab, trades, snapshots, challenges, live, al
   const subsTotal = subAccounts.reduce((s, a) => s + (a.totalEq || 0), 0);
   const activeSub = subAccounts.find(a => a.subAcct === selectedAccount) || null;
   const isSub = Boolean(activeSub);
+  const subHasKeys = Boolean(activeSub?.hasKeys);
   const scopeLabel = selectedAccount === 'all' ? 'All Accounts'
     : selectedAccount === 'main' ? 'Main Account'
     : (activeSub?.label || selectedAccount);
 
-  // OKX exposes balances but not fills/positions for sub-accounts to a master key.
-  const subOnlyNotice = isSub && subTab !== 'portfolio';
+  // Without a read-only key inside the sub-account, OKX only exposes its
+  // balances — so trades/positions can't load. Once a key is configured
+  // (hasKeys), the live data flows and the notice disappears.
+  const subOnlyNotice = isSub && !subHasKeys && subTab !== 'portfolio';
+
+  // Sub-accounts render live (non-persisted) fills and have no server equity
+  // snapshots, so scope those views to the account's own live data.
+  const viewTrades = isSub ? liveFills : trades;
+  const viewSnaps = isSub ? [] : snapshots;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
@@ -5632,7 +5664,7 @@ function CryptoView({ subTab, setSubTab, trades, snapshots, challenges, live, al
 
       {subTab === 'portfolio' && (
         <CryptoPortfolio
-          balance={balance} positions={live?.positions || []} snapshots={snapshots} algos={algos} funding={funding}
+          balance={balance} positions={live?.positions || []} snapshots={viewSnaps} algos={algos} funding={funding}
           syncing={syncing} onSync={onSync} fmt={fmt} theme={theme}
           subAccounts={subAccounts} selectedAccount={selectedAccount} setSelectedAccount={setSelectedAccount}
         />
@@ -5642,8 +5674,8 @@ function CryptoView({ subTab, setSubTab, trades, snapshots, challenges, live, al
       ) : (
         <CryptoChallengeView challenges={challenges} snapshots={snapshots} liveEq={balance?.totalEq} onOpen={setDetailId} onUpdate={onUpdateChallenge} onDelete={onDeleteChallenge} fmt={fmt} theme={theme} />
       ))}
-      {subTab === 'trades' && <CryptoTradesView trades={trades} algos={algos} onAddTrade={onAddTrade} onDeleteTrade={onDeleteTrade} fmt={fmt} theme={theme} />}
-      {subTab === 'analytics' && <CryptoAnalyticsView trades={trades} positions={live?.positions || []} algos={algos} snapshots={snapshots} fmt={fmt} theme={theme} />}
+      {subTab === 'trades' && <CryptoTradesView trades={viewTrades} algos={algos} onAddTrade={onAddTrade} onDeleteTrade={onDeleteTrade} fmt={fmt} theme={theme} readOnly={isSub} />}
+      {subTab === 'analytics' && <CryptoAnalyticsView trades={viewTrades} positions={live?.positions || []} algos={algos} snapshots={viewSnaps} fmt={fmt} theme={theme} />}
     </div>
   );
 }
@@ -5885,8 +5917,10 @@ function CryptoPortfolio({ balance, positions, snapshots, algos = { live: [], hi
     );
   }
 
-  // Sub-account view: OKX gives balances only, so render just those.
-  if (isSub) {
+  // Sub-account WITHOUT its own key: OKX gives balances only, so render just
+  // those. With a key configured, fall through to the full live view below
+  // (balance/positions are already scoped to this account by the sync).
+  if (isSub && !sub?.hasKeys) {
     const subDetails = (sub?.details || []).filter(d => (d.eqUsd || 0) > 0.01);
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
@@ -6200,7 +6234,7 @@ function CryptoChallengeView({ challenges, snapshots, liveEq, onOpen, onUpdate, 
   );
 }
 
-function CryptoTradesView({ trades, algos = { live: [], history: [] }, onAddTrade, onDeleteTrade, fmt, theme }) {
+function CryptoTradesView({ trades, algos = { live: [], history: [] }, onAddTrade, onDeleteTrade, fmt, theme, readOnly = false }) {
   const [coin, setCoin] = useState('all');
   const [showAdd, setShowAdd] = useState(false);
   const [view, setView] = useState('trips'); // 'trips' = round trips w/ R · 'fills' = raw fills
@@ -6220,7 +6254,7 @@ function CryptoTradesView({ trades, algos = { live: [], history: [] }, onAddTrad
           {coins.map(c => <option key={c} value={c}>{c === 'all' ? 'All coins' : c}</option>)}
         </select>
         <span style={{ fontSize: 13, color: theme.textMuted }}>{view === 'trips' ? `${trips.length} round trip${trips.length === 1 ? '' : 's'}` : `${filtered.length} fill${filtered.length === 1 ? '' : 's'}`}</span>
-        <button onClick={() => setShowAdd(true)} className="btn-primary flex items-center gap-2" style={{ marginLeft: 'auto' }}><Plus size={15} />Add manual trade</button>
+        {readOnly ? <span style={{ marginLeft: 'auto', fontSize: 11.5, color: theme.textFaint }}>live · sub-account (read-only)</span> : <button onClick={() => setShowAdd(true)} className="btn-primary flex items-center gap-2" style={{ marginLeft: 'auto' }}><Plus size={15} />Add manual trade</button>}
       </div>
 
       {view === 'trips' && (
