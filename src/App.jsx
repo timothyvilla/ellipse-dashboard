@@ -1,7 +1,7 @@
 import React, { useState, useEffect, createContext, useContext, useRef } from 'react';
 import { XAxis, YAxis, Tooltip, ResponsiveContainer, AreaChart, Area, BarChart, Bar, Cell, ComposedChart, Line, ReferenceLine } from 'recharts';
 import { Plus, TrendingUp, TrendingDown, ChevronDown, Calendar, BarChart3, BookOpen, Wallet, CheckCircle, Clock, X, Eye, Database, ChevronLeft, ChevronRight, Trash2, Edit3, Moon, Sun, Settings, Link, Image, ExternalLink, Loader2, CloudOff, Cloud, LayoutGrid, LayoutList, Upload, FileText, AlertCircle, Shield, Target, AlertTriangle, Zap, Trophy, Flag, Activity, Dices, Play, Coins, RefreshCw } from 'lucide-react';
-import { PieChart, Pie } from 'recharts';
+import { PieChart, Pie, Legend } from 'recharts';
 import { supabase } from './lib/supabaseClient';
 import {
   sanitizeImportedHtml,
@@ -5832,6 +5832,9 @@ function StatCard({ label, value, color, sub, theme }) {
 }
 
 function CryptoPortfolio({ balance, positions, snapshots, algos = { live: [], history: [], pending: [] }, funding = { totalFunding: 0, byInst: {}, recent: [] }, syncing, onSync, fmt, theme, subAccounts = [], selectedAccount = 'main', setSelectedAccount }) {
+  // Equity-curve time window. Hook must run before any early return below.
+  const [curveRange, setCurveRange] = useState('ALL'); // 1D | 7D | 1M | 1Y | ALL
+
   // Only a real, resolved sub-account counts — 'all' and 'main' must fall through
   // to the aggregate / main views below.
   const sub = subAccounts.find(a => a.subAcct === selectedAccount) || null;
@@ -5940,36 +5943,62 @@ function CryptoPortfolio({ balance, positions, snapshots, algos = { live: [], hi
   // Risk/reward on open positions from live SL/TP (algo orders).
   const liveAlgos = algos?.live || [];
   const posRR = displayPositions.map(p => ({ p, rr: positionRR(p, liveAlgos) }));
-  const totalRisk = posRR.reduce((s, { p, rr }) => s + ((rr.riskPerUnit != null) ? rr.riskPerUnit * Math.abs(Number(p.pos) || 0) : 0), 0);
   const stopsSet = posRR.filter(({ rr }) => rr.hasStop).length;
-  const plannedRRs = posRR.map(({ rr }) => rr.plannedRR).filter(v => Number.isFinite(v));
-  const avgPlannedRR = plannedRRs.length ? plannedRRs.reduce((s, v) => s + v, 0) / plannedRRs.length : null;
+
+  // Equity-curve window filter.
+  const RANGE_MS = { '1D': 864e5, '7D': 7 * 864e5, '1M': 30 * 864e5, '1Y': 365 * 864e5, ALL: Infinity };
+  const curveCutoff = Date.now() - (RANGE_MS[curveRange] ?? Infinity);
+  const shownCurve = curveRange === 'ALL' ? curve : curve.filter(pt => pt.t >= curveCutoff);
+
+  // Margin & liquidation exposure across open positions.
+  const marginUsed = displayPositions.reduce((s, p) => s + (Number(p.margin) || 0), 0);
+  const totalNotional = displayPositions.reduce((s, p) => s + (Number(p.notionalUsd) || 0), 0);
+  const marginUtilPct = totalEq > 0 ? (marginUsed / totalEq) * 100 : 0;
+  const totalUpl = displayPositions.reduce((s, p) => s + (Number(p.upl) || 0), 0);
+  // Nearest position to its liquidation price, as a % of mark. Smaller = riskier.
+  const liqDistances = displayPositions
+    .map(p => { const m = Number(p.markPx) || 0, l = Number(p.liqPx) || 0; return (m > 0 && l > 0) ? Math.abs(m - l) / m * 100 : null; })
+    .filter(v => v != null);
+  const nearestLiqPct = liqDistances.length ? Math.min(...liqDistances) : null;
+  const liqColor = nearestLiqPct == null ? theme.textMuted : nearestLiqPct < 10 ? theme.neg : nearestLiqPct < 25 ? theme.warn : theme.pos;
+  const liqBand = nearestLiqPct == null ? 'no positions' : nearestLiqPct < 10 ? 'high risk' : nearestLiqPct < 25 ? 'watch' : 'comfortable';
+
+  const RANGES = ['1D', '7D', '1M', '1Y', 'ALL'];
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: 14 }}>
         <StatCard label="Total Equity" value={fmt(totalEq)} theme={theme} />
         <StatCard label="Unrealized P&L" value={upl == null ? '—' : `${upl >= 0 ? '+' : ''}${fmt(upl)}`} color={upl == null ? theme.textMuted : upl >= 0 ? theme.pos : theme.neg} sub={upl == null ? 'awaiting live sync' : 'live from OKX'} theme={theme} />
-        <StatCard label="Open Positions" value={displayPositions.length} sub={`${stopsSet}/${displayPositions.length} with a stop`} theme={theme} />
-        <StatCard label="Risk at Stop" value={totalRisk > 0 ? fmt(totalRisk) : '—'} color={theme.neg} sub={avgPlannedRR != null ? `avg planned ${avgPlannedRR.toFixed(2)}R` : 'set stops to see risk'} theme={theme} />
+        <StatCard label="Margin Utilization" value={marginUsed > 0 ? `${marginUtilPct.toFixed(1)}%` : '—'} color={marginUtilPct >= 80 ? theme.neg : marginUtilPct >= 50 ? theme.warn : theme.text} sub={marginUsed > 0 ? `${fmt(marginUsed)} used · ${fmt(totalNotional)} notional` : 'no margin in use'} theme={theme} />
+        <StatCard label="Risk of Liquidation" value={nearestLiqPct == null ? '—' : `${nearestLiqPct.toFixed(1)}%`} color={liqColor} sub={nearestLiqPct == null ? 'no open positions' : `nearest stop-out · ${liqBand}`} theme={theme} />
         <StatCard label="Funding (7d)" value={`${(funding?.totalFunding || 0) >= 0 ? '+' : ''}${fmt(funding?.totalFunding || 0)}`} color={(funding?.totalFunding || 0) >= 0 ? theme.pos : theme.neg} sub="perp carry, not trade P&L" theme={theme} />
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 2fr) minmax(0, 1fr)', gap: 16 }}>
         <div className="card-lg" style={{ padding: 20 }}>
-          <div style={{ fontSize: 14, fontWeight: 600, color: theme.text, marginBottom: 14 }}>Equity Curve</div>
-          {curve.length > 1 ? (
+          <div className="flex items-center justify-between" style={{ marginBottom: 14, gap: 10, flexWrap: 'wrap' }}>
+            <div style={{ fontSize: 14, fontWeight: 600, color: theme.text }}>Equity Curve</div>
+            <div className="flex items-center" style={{ gap: 2, background: theme.hoverBg, borderRadius: 9, padding: 3 }}>
+              {RANGES.map(r => (
+                <button key={r} onClick={() => setCurveRange(r)} style={{ padding: '4px 10px', borderRadius: 7, fontSize: 11.5, fontWeight: 600, cursor: 'pointer', border: 'none', background: curveRange === r ? theme.primaryGrad : 'transparent', color: curveRange === r ? '#fff' : theme.textMuted }}>{r}</button>
+              ))}
+            </div>
+          </div>
+          {shownCurve.length > 1 ? (
             <ResponsiveContainer width="100%" height={240}>
-              <AreaChart data={curve}>
+              <AreaChart data={shownCurve}>
                 <defs><linearGradient id="eqGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#8b5cf6" stopOpacity={0.4} /><stop offset="100%" stopColor="#8b5cf6" stopOpacity={0} /></linearGradient></defs>
                 <XAxis dataKey="label" tick={{ fontSize: 11, fill: theme.textFaint }} />
                 <YAxis tick={{ fontSize: 11, fill: theme.textFaint }} width={70} domain={['auto', 'auto']} />
-                <Tooltip contentStyle={{ background: theme.card, border: `1px solid ${theme.cardBorder}`, borderRadius: 8, fontSize: 12 }} formatter={(v) => fmt(v)} />
+                <Tooltip contentStyle={{ background: theme.card, border: `1px solid ${theme.cardBorder}`, borderRadius: 8, fontSize: 12 }} itemStyle={{ color: theme.text }} labelStyle={{ color: theme.textMuted }} formatter={(v) => fmt(v)} />
                 <Area type="monotone" dataKey="eq" stroke="#8b5cf6" strokeWidth={2} fill="url(#eqGrad)" />
               </AreaChart>
             </ResponsiveContainer>
           ) : (
-            <div style={{ height: 240, display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.textFaint, fontSize: 13 }}>Sync at least twice to plot your equity curve over time.</div>
+            <div style={{ height: 240, display: 'flex', alignItems: 'center', justifyContent: 'center', color: theme.textFaint, fontSize: 13, textAlign: 'center', padding: '0 20px' }}>
+              {curve.length > 1 ? `No snapshots in the last ${curveRange}. Pick a wider range.` : 'Sync at least twice to plot your equity curve over time.'}
+            </div>
           )}
         </div>
         <div className="card-lg" style={{ padding: 20 }}>
@@ -5980,7 +6009,8 @@ function CryptoPortfolio({ balance, positions, snapshots, algos = { live: [], hi
                 <Pie data={allocation} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={55} outerRadius={90} paddingAngle={2}>
                   {allocation.map((a, i) => <Cell key={i} fill={a.color} />)}
                 </Pie>
-                <Tooltip contentStyle={{ background: theme.card, border: `1px solid ${theme.cardBorder}`, borderRadius: 8, fontSize: 12 }} formatter={(v, n) => [fmt(v), n]} />
+                <Tooltip contentStyle={{ background: theme.card, border: `1px solid ${theme.cardBorder}`, borderRadius: 8, fontSize: 12 }} itemStyle={{ color: theme.text }} labelStyle={{ color: theme.text }} formatter={(v, n) => [fmt(v), n]} />
+                <Legend wrapperStyle={{ fontSize: 11.5, color: theme.text }} formatter={(value) => <span style={{ color: theme.text }}>{value}</span>} />
               </PieChart>
             </ResponsiveContainer>
           ) : (
@@ -6019,6 +6049,15 @@ function CryptoPortfolio({ balance, positions, snapshots, algos = { live: [], hi
                   </tr>
                 ))}
               </tbody>
+              <tfoot>
+                <tr style={{ borderTop: `2px solid ${theme.cardBorder}`, background: theme.hoverBg }}>
+                  <td colSpan={8} style={{ padding: '12px 16px', fontSize: 12.5, fontWeight: 700, color: theme.textMuted }}>
+                    Total · {displayPositions.length} position{displayPositions.length === 1 ? '' : 's'} · {fmt(totalNotional)} notional · {fmt(marginUsed)} margin
+                  </td>
+                  <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, fontWeight: 700, color: totalUpl >= 0 ? theme.pos : theme.neg, fontFamily: 'JetBrains Mono, monospace' }}>{totalUpl >= 0 ? '+' : ''}{fmt(totalUpl)}</td>
+                  <td colSpan={2}></td>
+                </tr>
+              </tfoot>
             </table>
           </div>
         ) : (
