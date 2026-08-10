@@ -5839,6 +5839,7 @@ function StatCard({ label, value, color, sub, theme }) {
 function CryptoPortfolio({ balance, positions, snapshots, algos = { live: [], history: [], pending: [] }, funding = { totalFunding: 0, byInst: {}, recent: [] }, syncing, onSync, fmt, theme, subAccounts = [], selectedAccount = 'main', setSelectedAccount }) {
   // Equity-curve time window. Hook must run before any early return below.
   const [curveRange, setCurveRange] = useState('ALL'); // 1D | 7D | 1M | 1Y | ALL
+  const [fundRange, setFundRange] = useState('7D');    // OKX bills cover ~7d
 
   // Only a real, resolved sub-account counts — 'all' and 'main' must fall through
   // to the aggregate / main views below.
@@ -5970,6 +5971,11 @@ function CryptoPortfolio({ balance, positions, snapshots, algos = { live: [], hi
 
   const RANGES = ['1D', '7D', '1M', '1Y', 'ALL'];
 
+  // Funding within the selected window (OKX bills only span ~7 days).
+  const fundCut = Date.now() - (RANGE_MS[fundRange] ?? Infinity);
+  const fundRows = (funding?.recent || []).filter(r => fundRange === 'ALL' || (r.ts && r.ts >= fundCut));
+  const fundSum = (funding?.recent || []).length ? fundRows.reduce((s, r) => s + (Number(r.amount) || 0), 0) : (funding?.totalFunding || 0);
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: 14 }}>
@@ -5977,7 +5983,18 @@ function CryptoPortfolio({ balance, positions, snapshots, algos = { live: [], hi
         <StatCard label="Unrealized P&L" value={upl == null ? '—' : `${upl >= 0 ? '+' : ''}${fmt(upl)}`} color={upl == null ? theme.textMuted : upl >= 0 ? theme.pos : theme.neg} sub={upl == null ? 'awaiting live sync' : 'live from OKX'} theme={theme} />
         <StatCard label="Margin Utilization" value={marginUsed > 0 ? `${marginUtilPct.toFixed(1)}%` : '—'} color={marginUtilPct >= 80 ? theme.neg : marginUtilPct >= 50 ? theme.warn : theme.text} sub={marginUsed > 0 ? `${fmt(marginUsed)} used · ${fmt(totalNotional)} notional` : 'no margin in use'} theme={theme} />
         <StatCard label="Risk of Liquidation" value={nearestLiqPct == null ? '—' : `${nearestLiqPct.toFixed(1)}%`} color={liqColor} sub={nearestLiqPct == null ? 'no open positions' : `nearest stop-out · ${liqBand}`} theme={theme} />
-        <StatCard label="Funding (7d)" value={`${(funding?.totalFunding || 0) >= 0 ? '+' : ''}${fmt(funding?.totalFunding || 0)}`} color={(funding?.totalFunding || 0) >= 0 ? theme.pos : theme.neg} sub="perp carry, not trade P&L" theme={theme} />
+        <div className="card" style={{ padding: 18 }}>
+          <div className="flex items-center justify-between" style={{ gap: 6 }}>
+            <div className="stat-label">Funding</div>
+            <div className="flex items-center" style={{ gap: 1, background: theme.hoverBg, borderRadius: 7, padding: 2 }}>
+              {['1D', '7D'].map(r => (
+                <button key={r} onClick={() => setFundRange(r)} style={{ padding: '2px 7px', borderRadius: 5, fontSize: 10, fontWeight: 600, cursor: 'pointer', border: 'none', background: fundRange === r ? theme.primaryGrad : 'transparent', color: fundRange === r ? '#fff' : theme.textMuted }}>{r}</button>
+              ))}
+            </div>
+          </div>
+          <div className="stat-value" style={{ color: fundSum >= 0 ? theme.pos : theme.neg, marginTop: 6 }}>{fundSum >= 0 ? '+' : ''}{fmt(fundSum)}</div>
+          <div style={{ fontSize: 12, color: theme.textMuted, marginTop: 4 }}>perp carry over {fundRange}</div>
+        </div>
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 2fr) minmax(0, 1fr)', gap: 16 }}>
@@ -6348,33 +6365,61 @@ function CryptoEllipseScorePanel({ trades, positions, algos, snapshots }) {
 }
 
 function CryptoAnalyticsView({ trades, positions = [], algos = { live: [], history: [] }, snapshots = [], fmt, theme }) {
+  const [aRange, setARange] = useState('ALL'); // 1D | 7D | 1M | 1Y | ALL
+  const A_RANGES = ['1D', '7D', '1M', '1Y', 'ALL'];
+  const A_MS = { '1D': 864e5, '7D': 7 * 864e5, '1M': 30 * 864e5, '1Y': 365 * 864e5, ALL: Infinity };
+  const aCut = Date.now() - (A_MS[aRange] ?? Infinity);
+  const ft = aRange === 'ALL' ? trades : trades.filter(t => new Date(t.ts).getTime() >= aCut);
+
+  const RangeToggle = (
+    <div className="flex items-center" style={{ gap: 2, background: theme.hoverBg, borderRadius: 9, padding: 3 }}>
+      {A_RANGES.map(r => (
+        <button key={r} onClick={() => setARange(r)} style={{ padding: '4px 10px', borderRadius: 7, fontSize: 11.5, fontWeight: 600, cursor: 'pointer', border: 'none', background: aRange === r ? theme.primaryGrad : 'transparent', color: aRange === r ? '#fff' : theme.textMuted }}>{r}</button>
+      ))}
+    </div>
+  );
+
   if (!trades.length) {
     return <div className="card" style={{ padding: 48, textAlign: 'center', color: theme.textMuted, fontSize: 14 }}>No trades to analyze yet. Sync OKX or add trades to see analytics.</div>;
   }
-  const s = computeCryptoStats(trades);
+  if (!ft.length) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <div className="flex items-center justify-between" style={{ flexWrap: 'wrap', gap: 10 }}>
+          <div style={{ fontSize: 14, fontWeight: 600, color: theme.text }}>Analytics</div>{RangeToggle}
+        </div>
+        <div className="card" style={{ padding: 40, textAlign: 'center', color: theme.textFaint, fontSize: 13 }}>No trades in the last {aRange}. Pick a wider range.</div>
+      </div>
+    );
+  }
+  const s = computeCryptoStats(ft);
   const pf = s.profitFactor === Infinity ? '∞' : s.profitFactor.toFixed(2);
 
   // Same shape the Dashboard components expect, so both sections share code.
-  const normalized = trades.map(cryptoToNormalized);
+  const normalized = ft.map(cryptoToNormalized);
   const { cumulative, daily } = buildPnlSeries(normalized, { limit: 30 });
   const gradeCtx = outcomeContext(normalized);
   const expectancy = s.realizedCount ? (s.netPnl / s.realizedCount) : 0;
   const ratio = s.avgLoss > 0 ? s.avgWin / s.avgLoss : (s.avgWin > 0 ? s.avgWin : 0);
 
   // Risk/reward stats from real stops (round trips + algo history).
-  const trips = buildRoundTrips(trades).map(t => attachRealizedR(t, algos?.history || []));
+  const trips = buildRoundTrips(ft).map(t => attachRealizedR(t, algos?.history || []));
   const rMults = trips.map(t => t.rMultiple).filter(v => Number.isFinite(v));
   const avgR = rMults.length ? rMults.reduce((a, b) => a + b, 0) / rMults.length : null;
   const stopCoverage = trips.length ? Math.round((trips.filter(t => t.slUsed != null).length / trips.length) * 100) : 0;
 
   const byCoinMap = {};
-  trades.forEach(t => { const c = coinFromInst(t.instId); byCoinMap[c] = (byCoinMap[c] || 0) + (t.pnl || 0); });
+  ft.forEach(t => { const c = coinFromInst(t.instId); byCoinMap[c] = (byCoinMap[c] || 0) + (t.pnl || 0); });
   const byCoin = Object.entries(byCoinMap).map(([name, pnl]) => ({ name, pnl: +pnl.toFixed(2), color: pnl >= 0 ? theme.pos : theme.neg })).sort((a, b) => b.pnl - a.pnl);
 
   const recent = [...normalized].sort((a, b) => new Date(b.date + ' ' + b.time) - new Date(a.date + ' ' + a.time)).slice(0, 8);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <div className="flex items-center justify-between" style={{ flexWrap: 'wrap', gap: 10 }}>
+        <div style={{ fontSize: 14, fontWeight: 600, color: theme.text }}>Analytics <span style={{ fontSize: 12, fontWeight: 400, color: theme.textFaint }}>· {ft.length} trade{ft.length === 1 ? '' : 's'} in {aRange}</span></div>
+        {RangeToggle}
+      </div>
       {/* Top stats — mirrors the Dashboard row */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 12 }}>
         <StatCard label="Net P&L" value={`${s.netPnl >= 0 ? '+' : ''}${fmt(s.netPnl)}`} color={s.netPnl >= 0 ? theme.pos : theme.neg} sub={`${fmt(s.totalFees)} fees`} theme={theme} />
@@ -6387,7 +6432,7 @@ function CryptoAnalyticsView({ trades, positions = [], algos = { live: [], histo
 
       {/* Score + the two P&L charts, same layout as the Dashboard */}
       <div style={{ display: 'grid', gridTemplateColumns: '340px minmax(0, 1fr)', gap: 12, alignItems: 'stretch' }}>
-        <CryptoEllipseScorePanel trades={trades} positions={positions} algos={algos} snapshots={snapshots} />
+        <CryptoEllipseScorePanel trades={ft} positions={positions} algos={algos} snapshots={snapshots} />
         <div style={{ display: 'grid', gridTemplateRows: '1fr 1fr', gap: 12, minHeight: 0 }}>
           <ChartCard title="Daily Net Cumulative P&L" minHeight={140}>
             <CumulativePnlChart data={cumulative} theme={theme} id="cryptoCum" />
@@ -6432,7 +6477,7 @@ function CryptoAnalyticsView({ trades, positions = [], algos = { live: [], histo
       </div>
 
       {/* Monthly calendar — was previously only reachable inside a challenge */}
-      <CryptoTradingCalendar trades={trades} fmt={fmt} theme={theme} />
+      <CryptoTradingCalendar trades={ft} fmt={fmt} theme={theme} />
     </div>
   );
 }
