@@ -870,14 +870,19 @@ function positionRR(pos, liveAlgos) {
   const mark = Number(pos?.markPx) || 0;
   const dir = posDir(pos);
   const a = (liveAlgos || []).find(x => x.instId === pos?.instId && (x.slTriggerPx != null || x.tpTriggerPx != null));
-  const sl = pos?.slTriggerPx ?? a?.slTriggerPx ?? null;
+  const realSl = pos?.slTriggerPx ?? a?.slTriggerPx ?? null;
   const tp = pos?.tpTriggerPx ?? a?.tpTriggerPx ?? null;
+  const liq = Number(pos?.liqPx) || null;
+  // Fallback: when no stop is set, treat the liquidation price as the worst-case
+  // 1R so risk/reward is still computable (the exchange stops you out there).
+  const usingLiq = realSl == null && liq != null && liq > 0;
+  const sl = realSl != null ? realSl : (usingLiq ? liq : null);
   const riskPerUnit = (sl != null && entry) ? Math.abs(entry - sl) : null;
   const rewardPerUnit = (tp != null && entry) ? Math.abs(tp - entry) : null;
   const plannedRR = (riskPerUnit && rewardPerUnit != null) ? rewardPerUnit / riskPerUnit : null;
   const currentR = (riskPerUnit && entry) ? ((mark - entry) * dir) / riskPerUnit : null;
   return { entry, mark, sl, tp, dir, riskPerUnit, rewardPerUnit, plannedRR, currentR,
-    hasStop: sl != null, hasTarget: tp != null };
+    hasStop: realSl != null, usingLiq, hasTarget: tp != null };
 }
 
 // Pair OKX fills into round-trip trades per instId using net-position
@@ -6040,9 +6045,9 @@ function CryptoPortfolio({ balance, positions, snapshots, algos = { live: [], hi
                     <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, color: theme.text, fontFamily: 'JetBrains Mono, monospace' }}>{Math.abs(Number(p.pos) || 0)}</td>
                     <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, color: theme.textMuted, fontFamily: 'JetBrains Mono, monospace' }}>{p.avgPx}</td>
                     <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, color: theme.textMuted, fontFamily: 'JetBrains Mono, monospace' }}>{p.markPx}</td>
-                    <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, color: rr.hasStop ? theme.neg : theme.textFaint, fontFamily: 'JetBrains Mono, monospace' }}>{rr.hasStop ? rr.sl : '—'}</td>
+                    <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, color: rr.usingLiq ? theme.warn : rr.hasStop ? theme.neg : theme.textFaint, fontFamily: 'JetBrains Mono, monospace' }}>{rr.sl != null ? rr.sl : '—'}{rr.usingLiq ? <span style={{ fontSize: 9.5, color: theme.warn, marginLeft: 4 }}>LIQ</span> : null}</td>
                     <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, color: rr.hasTarget ? theme.pos : theme.textFaint, fontFamily: 'JetBrains Mono, monospace' }}>{rr.hasTarget ? rr.tp : '—'}</td>
-                    <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, fontWeight: 600, color: rr.plannedRR == null ? theme.textFaint : rr.plannedRR >= 1.5 ? theme.pos : theme.warn, fontFamily: 'JetBrains Mono, monospace' }}>{rr.plannedRR == null ? '—' : `${rr.plannedRR.toFixed(2)}`}{rr.currentR != null ? <span style={{ color: theme.textFaint, fontWeight: 400 }}> · {rr.currentR >= 0 ? '+' : ''}{rr.currentR.toFixed(2)}R</span> : null}</td>
+                    <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, fontWeight: 600, color: rr.plannedRR == null ? theme.textFaint : rr.plannedRR >= 1.5 ? theme.pos : theme.warn, fontFamily: 'JetBrains Mono, monospace', opacity: rr.usingLiq ? 0.75 : 1 }}>{rr.plannedRR == null ? '—' : `${rr.plannedRR.toFixed(2)}`}{rr.currentR != null ? <span style={{ color: theme.textFaint, fontWeight: 400 }}> · {rr.currentR >= 0 ? '+' : ''}{rr.currentR.toFixed(2)}R</span> : null}</td>
                     <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, fontWeight: 600, color: p.upl >= 0 ? theme.pos : theme.neg, fontFamily: 'JetBrains Mono, monospace' }}>{p.upl >= 0 ? '+' : ''}{fmt(p.upl)}</td>
                     <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, color: theme.textMuted }}>{p.lever}x</td>
                     <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, color: '#f59e0b', fontFamily: 'JetBrains Mono, monospace' }}>{p.liqPx || '—'}</td>
