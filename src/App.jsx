@@ -1214,7 +1214,8 @@ function TradeGradeBadge({ trade, theme, ctx, showScore = true }) {
   return (
     <span
       className="badge"
-      title={s.parts.map(p => `${p.label}: ${p.pts}/${p.max}${p.note ? ` (${p.note})` : ''}`).join('\n')}
+      aria-label={`Trade quality grade ${s.grade}, score ${s.score} of 100`}
+      title={`Trade quality: ${s.grade} (${s.score}/100)\n` + s.parts.map(p => `${p.label}: ${p.pts}/${p.max}${p.note ? ` (${p.note})` : ''}`).join('\n')}
       style={{ background: `${c}1f`, color: c, fontFamily: "'JetBrains Mono', monospace" }}
     >
       {s.grade}{showScore && ` ${s.score}`}
@@ -1279,6 +1280,7 @@ export default function TradingJournal() {
   const [cryptoAlgos, setCryptoAlgos] = useState({ live: [], history: [], pending: [] });
   const [cryptoFunding, setCryptoFunding] = useState({ totalFunding: 0, byInst: {}, recent: [] });
   const [cryptoLiveFills, setCryptoLiveFills] = useState([]); // fills for the currently-viewed account (sub-accounts are live-only)
+  const [cryptoPnl, setCryptoPnl] = useState([]); // OKX closed-position realized P&L (source for Net P&L + calendar)
   const [syncingOKX, setSyncingOKX] = useState(false);
   const [okxError, setOkxError] = useState(null);
   const [lastSync, setLastSync] = useState(() => {
@@ -1519,6 +1521,11 @@ export default function TradingJournal() {
       getJson(`/api/okx/funding?${acctQs}`)
         .then(r => setCryptoFunding(r?.error ? { totalFunding: 0, byInst: {}, recent: [] } : { totalFunding: r.totalFunding || 0, byInst: r.byInst || {}, recent: r.recent || [] }))
         .catch(() => setCryptoFunding({ totalFunding: 0, byInst: {}, recent: [] }));
+
+      // Closed-position realized P&L from OKX — powers the Net P&L + calendar.
+      getJson(`/api/okx/pnl-history?${acctQs}`)
+        .then(r => setCryptoPnl(Array.isArray(r?.positions) ? r.positions : []))
+        .catch(() => setCryptoPnl([]));
       if (balRes?.error || posRes?.error || fillsRes?.error) {
         throw new Error(balRes?.msg || posRes?.msg || fillsRes?.msg || balRes?.error || 'OKX sync failed. Check API keys / Vercel env vars.');
       }
@@ -1847,10 +1854,10 @@ export default function TradingJournal() {
     cardAlt: darkMode ? '#15121f' : '#faf9fe',
     cardBorder: darkMode ? '#221e33' : '#e5e1f2',
     borderStrong: darkMode ? '#302a47' : '#d5cfe9',
-    // Type
+    // Type — muted/faint lightened for WCAG AA contrast on the dark surfaces
     text: darkMode ? '#f3f1fb' : '#14111f',
-    textMuted: darkMode ? '#9d97b8' : '#615b7a',
-    textFaint: darkMode ? '#6b6588' : '#9691ae',
+    textMuted: darkMode ? '#b7b2ce' : '#55506e',
+    textFaint: darkMode ? '#8f89ab' : '#6f6a89',
     // Inputs
     inputBg: darkMode ? '#15121f' : '#ffffff',
     inputBorder: darkMode ? '#2a2440' : '#e0dbf0',
@@ -1942,11 +1949,19 @@ export default function TradingJournal() {
           /* ---- Navigation ---- */
           .nav-item {
             position: relative; display: flex; align-items: center; gap: 12px;
+            width: 100%; text-align: left; background: none; border: none;
+            font-family: inherit; -webkit-appearance: none; appearance: none;
             padding: 10px 14px; border-radius: 12px; font-size: 13.5px; font-weight: 500;
             color: ${theme.textMuted}; cursor: pointer;
             transition: color 0.15s ease, background 0.15s ease;
           }
           .nav-item:hover { background: ${theme.hoverBg}; color: ${theme.text}; }
+          .nav-item:focus-visible { outline: none; box-shadow: 0 0 0 2px ${theme.primary}; }
+          /* Global keyboard focus ring for interactive elements */
+          button:focus-visible, a:focus-visible, [role="button"]:focus-visible,
+          select:focus-visible, input:focus-visible, textarea:focus-visible {
+            outline: none; box-shadow: 0 0 0 3px ${theme.primarySoft}, 0 0 0 1px ${theme.primary};
+          }
           .nav-item.active {
             background: ${darkMode
               ? 'linear-gradient(100deg, rgba(139,92,246,0.26) 0%, rgba(139,92,246,0.06) 100%)'
@@ -1984,7 +1999,7 @@ export default function TradingJournal() {
           /* ---- Type ---- */
           .label { font-size: 12px; font-weight: 500; color: ${theme.textMuted}; margin-bottom: 6px; display: block; }
           .stat-value { font-size: 25px; font-weight: 700; color: ${theme.text}; letter-spacing: -0.5px; font-variant-numeric: tabular-nums; }
-          .stat-label { font-size: 10.5px; font-weight: 600; color: ${theme.textFaint}; text-transform: uppercase; letter-spacing: 0.7px; }
+          .stat-label { font-size: 12px; font-weight: 600; color: ${theme.textMuted}; text-transform: uppercase; letter-spacing: 0.7px; }
           .eyebrow {
             display: inline-flex; align-items: center; gap: 7px; padding: 5px 12px;
             border-radius: 999px; font-size: 10.5px; font-weight: 700; letter-spacing: 0.9px;
@@ -1993,7 +2008,7 @@ export default function TradingJournal() {
           }
 
           /* ---- Tables ---- */
-          .table-header { font-size: 10.5px; font-weight: 600; color: ${theme.textFaint}; text-transform: uppercase; letter-spacing: 0.7px; padding: 13px 16px; background: ${darkMode ? 'rgba(255,255,255,0.02)' : '#faf9fe'}; border-bottom: 1px solid ${theme.cardBorder}; }
+          .table-header { font-size: 12px; font-weight: 600; color: ${theme.textMuted}; text-transform: uppercase; letter-spacing: 0.7px; padding: 13px 16px; background: ${darkMode ? 'rgba(255,255,255,0.02)' : '#faf9fe'}; border-bottom: 1px solid ${theme.cardBorder}; }
           .table-row { padding: 14px 16px; border-bottom: 1px solid ${theme.cardBorder}; cursor: pointer; transition: background 0.15s; }
           .table-row:hover { background: ${theme.hoverBg}; }
           .table-row:last-child { border-bottom: none; }
@@ -2081,14 +2096,14 @@ export default function TradingJournal() {
                 { id: 'accounts', label: 'Accounts', icon: Wallet },
                 { id: 'calendar', label: 'Calendar', icon: Calendar },
               ].map(item => (
-                <div key={item.id} onClick={() => setActiveTab(item.id)} title={sidebarCollapsed ? item.label : undefined} className={`nav-item ${activeTab === item.id ? 'active' : ''} ${sidebarCollapsed ? 'nav-item-collapsed' : ''}`}>
+                <button key={item.id} type="button" onClick={() => setActiveTab(item.id)} aria-current={activeTab === item.id ? 'page' : undefined} title={sidebarCollapsed ? item.label : undefined} aria-label={sidebarCollapsed ? item.label : undefined} className={`nav-item ${activeTab === item.id ? 'active' : ''} ${sidebarCollapsed ? 'nav-item-collapsed' : ''}`}>
                   <item.icon size={17} style={{ flexShrink: 0 }} />{!sidebarCollapsed && item.label}
                   {!sidebarCollapsed && item.id === 'challenges' && challenges.filter(c => c.status === 'active').length > 0 && (
                     <span style={{ marginLeft: 'auto', fontSize: 10, padding: '2px 8px', borderRadius: 999, background: theme.primarySoft, border: `1px solid ${darkMode ? 'rgba(139,92,246,0.35)' : 'rgba(139,92,246,0.25)'}`, color: darkMode ? '#c4b5fd' : '#6d28d9', fontWeight: 700 }}>
                       {challenges.filter(c => c.status === 'active').length}
                     </span>
                   )}
-                </div>
+                </button>
               ))}
 
               {/* Crypto section */}
@@ -2097,14 +2112,14 @@ export default function TradingJournal() {
                   ? <span style={{ flex: 1, height: 1, background: theme.cardBorder }}></span>
                   : <>Crypto<span style={{ flex: 1, height: 1, background: theme.cardBorder }}></span></>}
               </div>
-              <div onClick={() => setActiveTab('crypto')} title={sidebarCollapsed ? 'OKX Trading' : undefined} className={`nav-item ${activeTab === 'crypto' ? 'active' : ''} ${sidebarCollapsed ? 'nav-item-collapsed' : ''}`}>
+              <button type="button" onClick={() => setActiveTab('crypto')} aria-current={activeTab === 'crypto' ? 'page' : undefined} title={sidebarCollapsed ? 'OKX Trading' : undefined} aria-label={sidebarCollapsed ? 'OKX Trading' : undefined} className={`nav-item ${activeTab === 'crypto' ? 'active' : ''} ${sidebarCollapsed ? 'nav-item-collapsed' : ''}`}>
                 <Coins size={17} style={{ flexShrink: 0 }} />{!sidebarCollapsed && 'OKX Trading'}
                 {!sidebarCollapsed && cryptoChallenges.filter(c => c.status === 'active').length > 0 && (
                   <span style={{ marginLeft: 'auto', fontSize: 10, padding: '2px 8px', borderRadius: 999, background: 'rgba(245,158,11,0.16)', border: '1px solid rgba(245,158,11,0.32)', color: '#fbbf24', fontWeight: 700 }}>
                     {cryptoChallenges.filter(c => c.status === 'active').length}
                   </span>
                 )}
-              </div>
+              </button>
             </nav>
 
             <div style={{ padding: 12, borderTop: `1px solid ${theme.cardBorder}` }}>
@@ -2237,7 +2252,7 @@ export default function TradingJournal() {
                   {activeTab === 'calendar' && <CalendarView trades={trades} />}
                   {activeTab === 'crypto' && <CryptoView
                     subTab={cryptoSubTab} setSubTab={setCryptoSubTab}
-                    trades={cryptoTrades} liveFills={cryptoLiveFills} snapshots={cryptoSnapshots} challenges={cryptoChallenges}
+                    trades={cryptoTrades} liveFills={cryptoLiveFills} pnl={cryptoPnl} snapshots={cryptoSnapshots} challenges={cryptoChallenges}
                     live={cryptoLive} algos={cryptoAlgos} funding={cryptoFunding} syncing={syncingOKX} okxError={okxError} lastSync={lastSync}
                     subAccounts={subAccounts} selectedAccount={selectedOkxAccount} setSelectedAccount={setSelectedOkxAccount}
                     onSync={syncOKX} onAddTrade={addCryptoTrade} onDeleteTrade={deleteCryptoTrade}
@@ -4184,6 +4199,12 @@ function JournalView({ trades, accounts, filterAccount, setFilterAccount, onSele
   const [selectMode, setSelectMode] = useState(false);
   const filtered = filterAccount === 'all' ? trades : trades.filter(t => t.account === filterAccount);
   const gradeCtx = outcomeContext(filtered);
+  // Only show the Structure column when at least one visible trade is tagged —
+  // otherwise it renders as a confusing always-blank column.
+  const showStructure = filtered.some(t => t.marketStructure);
+  const listCols = selectMode
+    ? `36px 1.5fr 80px ${showStructure ? '100px ' : ''}70px 100px 72px`
+    : `1.5fr 80px ${showStructure ? '100px ' : ''}70px 100px 72px 50px`;
 
   const toggleSelect = (id, e) => {
     e.stopPropagation();
@@ -4252,15 +4273,15 @@ function JournalView({ trades, accounts, filterAccount, setFilterAccount, onSele
         </div>
       ) : viewMode === 'list' ? (
         <div className="card-lg" style={{ overflow: 'hidden' }}>
-          <div className="table-header" style={{ display: 'grid', gridTemplateColumns: selectMode ? '36px 1.5fr 80px 100px 70px 100px 72px' : '1.5fr 80px 100px 70px 100px 72px 50px', gap: 12 }}>
+          <div className="table-header" style={{ display: 'grid', gridTemplateColumns: listCols, gap: 12 }}>
             {selectMode && <div></div>}
-            <div>Trade</div><div>Side</div><div>Structure</div><div>Lots</div><div style={{ textAlign: 'right' }}>P&L</div><div style={{ textAlign: 'center' }}>Quality</div>{!selectMode && <div></div>}
+            <div>Trade</div><div>Side</div>{showStructure && <div>Structure</div>}<div>Lots</div><div style={{ textAlign: 'right' }}>P&L</div><div style={{ textAlign: 'center' }}>Quality</div>{!selectMode && <div></div>}
           </div>
           {filtered.map(trade => {
             const chartImg = getTradingViewImageUrl(trade.chartLink) || trade.chartImage;
             const isSelected = selectedIds.has(trade.id);
             return (
-              <div key={trade.id} onClick={() => selectMode ? toggleSelect(trade.id, { stopPropagation: () => {} }) : onSelectTrade(trade)} className="table-row" style={{ display: 'grid', gridTemplateColumns: selectMode ? '36px 1.5fr 80px 100px 70px 100px 72px' : '1.5fr 80px 100px 70px 100px 72px 50px', gap: 12, alignItems: 'center', background: isSelected ? (theme.dark ? 'rgba(139,92,246,0.15)' : 'rgba(139,92,246,0.08)') : undefined }}>
+              <div key={trade.id} onClick={() => selectMode ? toggleSelect(trade.id, { stopPropagation: () => {} }) : onSelectTrade(trade)} className="table-row" style={{ display: 'grid', gridTemplateColumns: listCols, gap: 12, alignItems: 'center', background: isSelected ? (theme.dark ? 'rgba(139,92,246,0.15)' : 'rgba(139,92,246,0.08)') : undefined }}>
                 {selectMode && (
                   <div onClick={(e) => toggleSelect(trade.id, e)} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
                     <div style={{ width: 20, height: 20, borderRadius: 6, border: `2px solid ${isSelected ? '#8b5cf6' : theme.cardBorder}`, background: isSelected ? '#8b5cf6' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.15s' }}>
@@ -4282,7 +4303,9 @@ function JournalView({ trades, accounts, filterAccount, setFilterAccount, onSele
                   </div>
                 </div>
                 <span className="badge" style={{ background: trade.side === 'Long' ? 'rgba(34,211,165,0.1)' : 'rgba(244,85,122,0.1)', color: trade.side === 'Long' ? theme.pos : theme.neg }}>{trade.side}</span>
-                <span className="badge" style={{ background: MARKET_STRUCTURES[trade.marketStructure]?.color, color: 'white' }}>{trade.marketStructure?.replace('_', ' ').slice(0, 8)}</span>
+                {showStructure && (trade.marketStructure
+                  ? <span className="badge" style={{ background: MARKET_STRUCTURES[trade.marketStructure]?.color, color: 'white' }}>{trade.marketStructure.replace('_', ' ').slice(0, 8)}</span>
+                  : <span style={{ fontSize: 13, color: theme.textFaint }}>—</span>)}
                 <span style={{ fontSize: 14, color: theme.text }}>{trade.lots}</span>
                 <span style={{ fontSize: 14, fontWeight: 600, color: trade.pnl >= 0 ? theme.pos : theme.neg, textAlign: 'right' }}>{trade.pnl >= 0 ? '+' : ''}${trade.pnl?.toFixed(2)}</span>
                 <span style={{ textAlign: 'center' }}><TradeGradeBadge trade={trade} theme={theme} ctx={gradeCtx} /></span>
@@ -4476,7 +4499,7 @@ function DashboardView({ trades, accounts, challenges, selectedAccount, setSelec
       {/* Top Stats */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 12 }}>
         <div className="card" style={{ padding: 16 }}>
-          <div className="flex items-center gap-2"><div className="stat-label">Net P&L</div><div style={{ width: 18, height: 18, borderRadius: 4, background: theme.hoverBg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, color: theme.textFaint }}>{totalTrades}</div></div>
+          <div className="flex items-center gap-2"><div className="stat-label">Net P&L</div><div title={`${totalTrades} closed trades`} style={{ minWidth: 18, height: 18, padding: '0 5px', borderRadius: 4, background: theme.hoverBg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, color: theme.textMuted }}>{totalTrades}</div></div>
           <div style={{ fontSize: 22, fontWeight: 700, color: totalPnl >= 0 ? theme.pos : theme.neg, marginTop: 6 }}>{totalPnl >= 0 ? '+' : ''}${totalPnl.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
         </div>
         <div className="card" style={{ padding: 16 }}>
@@ -4491,7 +4514,7 @@ function DashboardView({ trades, accounts, challenges, selectedAccount, setSelec
           </div>
         </div>
         <div className="card" style={{ padding: 16 }}>
-          <div className="flex items-center gap-2"><div className="stat-label">Win %</div><div style={{ display: 'flex', gap: 4 }}><span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 4, background: theme.pos, color: 'white' }}>{wins.length}</span><span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 4, background: theme.neg, color: 'white' }}>{losses.length}</span></div></div>
+          <div className="flex items-center gap-2"><div className="stat-label">Win %</div><div style={{ display: 'flex', gap: 4 }}><span title={`${wins.length} winning trades`} style={{ fontSize: 10, fontWeight: 600, padding: '2px 6px', borderRadius: 4, background: theme.pos, color: 'white' }}>{wins.length}W</span><span title={`${losses.length} losing trades`} style={{ fontSize: 10, fontWeight: 600, padding: '2px 6px', borderRadius: 4, background: theme.neg, color: 'white' }}>{losses.length}L</span></div></div>
           <div className="flex items-center gap-3" style={{ marginTop: 6 }}>
             <span style={{ fontSize: 22, fontWeight: 700, color: theme.text }}>{winRate.toFixed(2)}%</span>
             <DonutChart value={winRate} size={40} strokeWidth={4} color={winRate >= 50 ? theme.pos : theme.neg} />
@@ -4564,7 +4587,7 @@ function DashboardView({ trades, accounts, challenges, selectedAccount, setSelec
                 : 'transparent';
               return (
                 <div key={i} style={{ minHeight: 50, padding: 4, borderRadius: 6, background: dayBg, border: day ? `1px solid ${data ? (data.pnl >= 0 ? 'rgba(34,211,165,0.25)' : 'rgba(244,85,122,0.25)') : theme.cardBorder}` : 'none' }}>
-                  {day && <><div style={{ fontSize: 11, color: data ? (data.pnl >= 0 ? theme.pos : theme.neg) : theme.textMuted, fontWeight: data ? 600 : 400 }}>{day}</div>{data && <div style={{ marginTop: 2 }}><div style={{ fontSize: 11, fontWeight: 600, color: data.pnl >= 0 ? theme.pos : theme.neg }}>{data.pnl >= 0 ? '+' : ''}{Math.abs(data.pnl) >= 1000 ? (data.pnl / 1000).toFixed(1) + 'K' : data.pnl.toFixed(0)}</div><div style={{ fontSize: 9, color: theme.textFaint }}>{data.trades}t</div></div>}</>}
+                  {day && <><div style={{ fontSize: 11, color: data ? (data.pnl >= 0 ? theme.pos : theme.neg) : theme.textMuted, fontWeight: data ? 600 : 400 }}>{day}</div>{data && <div style={{ marginTop: 2 }}><div style={{ fontSize: 11, fontWeight: 600, color: data.pnl >= 0 ? theme.pos : theme.neg }}>{data.pnl >= 0 ? '+' : ''}{Math.abs(data.pnl) >= 1000 ? (data.pnl / 1000).toFixed(1) + 'K' : data.pnl.toFixed(0)}</div><div style={{ fontSize: 10, color: theme.textFaint }}>{data.trades} trade{data.trades > 1 ? 's' : ''}</div></div>}</>}
                 </div>
               );
             })}
@@ -4638,7 +4661,7 @@ function AccountsView({ accounts, challenges, trades, onUpdate, onDelete }) {
           <div className="stat-value" style={{ marginTop: 6 }}>${totalBalance.toLocaleString()}</div>
         </div>
         <div className="card" style={{ padding: 20 }}>
-          <div className="stat-label">Merged Equity</div>
+          <div className="stat-label" title="Combined live equity across all accounts (starting balance + open P&L)" style={{ cursor: 'help' }}>Merged Equity</div>
           <div className="stat-value" style={{ color: totalEquity >= totalBalance ? theme.pos : theme.neg, marginTop: 6 }}>${totalEquity.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
         </div>
         <div className="card" style={{ padding: 20 }}>
@@ -5574,7 +5597,7 @@ function EditTradeModal({ trade: initialTrade, onClose, onSave, accounts }) {
 }
 
 // ==================== CRYPTO VIEW (OKX) ====================
-function CryptoView({ subTab, setSubTab, trades, liveFills = [], snapshots, challenges, live, algos = { live: [], history: [], pending: [] }, funding = { totalFunding: 0, byInst: {}, recent: [] }, syncing, okxError, lastSync, onSync, onAddTrade, onDeleteTrade, onUpdateChallenge, onDeleteChallenge, subAccounts = [], selectedAccount = 'main', setSelectedAccount }) {
+function CryptoView({ subTab, setSubTab, trades, liveFills = [], pnl = [], snapshots, challenges, live, algos = { live: [], history: [], pending: [] }, funding = { totalFunding: 0, byInst: {}, recent: [] }, syncing, okxError, lastSync, onSync, onAddTrade, onDeleteTrade, onUpdateChallenge, onDeleteChallenge, subAccounts = [], selectedAccount = 'main', setSelectedAccount }) {
   const theme = useTheme();
   const tabs = [
     { id: 'portfolio', label: 'Portfolio', icon: Wallet },
@@ -5675,7 +5698,7 @@ function CryptoView({ subTab, setSubTab, trades, liveFills = [], snapshots, chal
         <CryptoChallengeView challenges={challenges} snapshots={snapshots} liveEq={balance?.totalEq} onOpen={setDetailId} onUpdate={onUpdateChallenge} onDelete={onDeleteChallenge} fmt={fmt} theme={theme} />
       ))}
       {subTab === 'trades' && <CryptoTradesView trades={viewTrades} algos={algos} onAddTrade={onAddTrade} onDeleteTrade={onDeleteTrade} fmt={fmt} theme={theme} readOnly={isSub} />}
-      {subTab === 'analytics' && <CryptoAnalyticsView trades={viewTrades} positions={live?.positions || []} algos={algos} snapshots={viewSnaps} fmt={fmt} theme={theme} />}
+      {subTab === 'analytics' && <CryptoAnalyticsView trades={viewTrades} pnl={pnl} positions={live?.positions || []} algos={algos} snapshots={viewSnaps} fmt={fmt} theme={theme} />}
     </div>
   );
 }
@@ -5872,6 +5895,17 @@ function CryptoPortfolio({ balance, positions, snapshots, algos = { live: [], hi
   // Equity-curve time window. Hook must run before any early return below.
   const [curveRange, setCurveRange] = useState('ALL'); // 1D | 7D | 1M | 1Y | ALL
   const [fundRange, setFundRange] = useState('7D');    // OKX bills cover ~7d
+
+  // Format a raw OKX price to a readable precision. OKX returns full float
+  // precision (e.g. 129.87075728742226); decimals are scaled to the magnitude
+  // so large-cap prices stay tight and micro-cap prices keep enough digits.
+  const fmtPx = (v) => {
+    const n = Number(v);
+    if (v == null || v === '' || !isFinite(n) || n === 0) return '—';
+    const abs = Math.abs(n);
+    const dp = abs >= 1000 ? 2 : abs >= 1 ? 4 : abs >= 0.01 ? 5 : 8;
+    return n.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: dp });
+  };
 
   // Only a real, resolved sub-account counts — 'all' and 'main' must fall through
   // to the aggregate / main views below.
@@ -6094,14 +6128,14 @@ function CryptoPortfolio({ balance, positions, snapshots, algos = { live: [], hi
                     <td style={{ padding: '12px 16px', fontSize: 13, fontWeight: 600, color: theme.text }}>{p.instId}</td>
                     <td style={{ padding: '12px 16px' }}><span className="badge" style={{ background: netSide(p) === 'long' ? 'rgba(34,211,165,0.15)' : 'rgba(244,85,122,0.15)', color: netSide(p) === 'long' ? theme.pos : theme.neg }}>{netSide(p).toUpperCase()}</span></td>
                     <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, color: theme.text, fontFamily: 'JetBrains Mono, monospace' }}>{Math.abs(Number(p.pos) || 0)}</td>
-                    <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, color: theme.textMuted, fontFamily: 'JetBrains Mono, monospace' }}>{p.avgPx}</td>
-                    <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, color: theme.textMuted, fontFamily: 'JetBrains Mono, monospace' }}>{p.markPx}</td>
-                    <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, color: rr.usingLiq ? theme.warn : rr.hasStop ? theme.neg : theme.textFaint, fontFamily: 'JetBrains Mono, monospace' }}>{rr.sl != null ? rr.sl : '—'}{rr.usingLiq ? <span style={{ fontSize: 9.5, color: theme.warn, marginLeft: 4 }}>LIQ</span> : null}</td>
-                    <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, color: rr.hasTarget ? theme.pos : theme.textFaint, fontFamily: 'JetBrains Mono, monospace' }}>{rr.hasTarget ? rr.tp : '—'}</td>
+                    <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, color: theme.textMuted, fontFamily: 'JetBrains Mono, monospace' }}>{fmtPx(p.avgPx)}</td>
+                    <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, color: theme.textMuted, fontFamily: 'JetBrains Mono, monospace' }}>{fmtPx(p.markPx)}</td>
+                    <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, color: rr.usingLiq ? theme.warn : rr.hasStop ? theme.neg : theme.textFaint, fontFamily: 'JetBrains Mono, monospace' }}>{rr.sl != null ? fmtPx(rr.sl) : '—'}{rr.usingLiq ? <span style={{ fontSize: 9.5, color: theme.warn, marginLeft: 4 }}>LIQ</span> : null}</td>
+                    <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, color: rr.hasTarget ? theme.pos : theme.textFaint, fontFamily: 'JetBrains Mono, monospace' }}>{rr.hasTarget ? fmtPx(rr.tp) : '—'}</td>
                     <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, fontWeight: 600, color: rr.plannedRR == null ? theme.textFaint : rr.plannedRR >= 1.5 ? theme.pos : theme.warn, fontFamily: 'JetBrains Mono, monospace', opacity: rr.usingLiq ? 0.75 : 1 }}>{rr.plannedRR == null ? '—' : `${rr.plannedRR.toFixed(2)}`}{rr.currentR != null ? <span style={{ color: theme.textFaint, fontWeight: 400 }}> · {rr.currentR >= 0 ? '+' : ''}{rr.currentR.toFixed(2)}R</span> : null}</td>
                     <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, fontWeight: 600, color: p.upl >= 0 ? theme.pos : theme.neg, fontFamily: 'JetBrains Mono, monospace' }}>{p.upl >= 0 ? '+' : ''}{fmt(p.upl)}</td>
                     <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, color: theme.textMuted }}>{p.lever}x</td>
-                    <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, color: '#f59e0b', fontFamily: 'JetBrains Mono, monospace' }}>{p.liqPx || '—'}</td>
+                    <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, color: '#f59e0b', fontFamily: 'JetBrains Mono, monospace' }}>{fmtPx(p.liqPx)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -6137,10 +6171,10 @@ function CryptoPortfolio({ balance, positions, snapshots, algos = { live: [], hi
                     <td style={{ padding: '12px 16px', fontSize: 13, fontWeight: 600, color: theme.text }}>{o.instId}</td>
                     <td style={{ padding: '12px 16px' }}><span className="badge" style={{ background: o.side === 'buy' ? 'rgba(34,211,165,0.15)' : 'rgba(244,85,122,0.15)', color: o.side === 'buy' ? theme.pos : theme.neg }}>{(o.side || '').toUpperCase()}</span></td>
                     <td style={{ padding: '12px 16px', fontSize: 12, color: theme.textMuted }}>{o.ordType}</td>
-                    <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, color: theme.textMuted, fontFamily: 'JetBrains Mono, monospace' }}>{o.px ?? '—'}</td>
+                    <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, color: theme.textMuted, fontFamily: 'JetBrains Mono, monospace' }}>{fmtPx(o.px)}</td>
                     <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, color: theme.text, fontFamily: 'JetBrains Mono, monospace' }}>{o.sz ?? '—'}</td>
-                    <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, color: o.slTriggerPx != null ? theme.neg : theme.textFaint, fontFamily: 'JetBrains Mono, monospace' }}>{o.slTriggerPx ?? '—'}</td>
-                    <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, color: o.tpTriggerPx != null ? theme.pos : theme.textFaint, fontFamily: 'JetBrains Mono, monospace' }}>{o.tpTriggerPx ?? '—'}</td>
+                    <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, color: o.slTriggerPx != null ? theme.neg : theme.textFaint, fontFamily: 'JetBrains Mono, monospace' }}>{fmtPx(o.slTriggerPx)}</td>
+                    <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 13, color: o.tpTriggerPx != null ? theme.pos : theme.textFaint, fontFamily: 'JetBrains Mono, monospace' }}>{fmtPx(o.tpTriggerPx)}</td>
                     <td style={{ padding: '12px 16px', textAlign: 'right', fontSize: 12, color: theme.textFaint }}>{o.state}</td>
                   </tr>
                 ))}
@@ -6398,12 +6432,25 @@ function CryptoEllipseScorePanel({ trades, positions, algos, snapshots }) {
   );
 }
 
-function CryptoAnalyticsView({ trades, positions = [], algos = { live: [], history: [] }, snapshots = [], fmt, theme }) {
+function CryptoAnalyticsView({ trades, pnl = [], positions = [], algos = { live: [], history: [] }, snapshots = [], fmt, theme }) {
   const [aRange, setARange] = useState('ALL'); // 1D | 7D | 1M | 1Y | ALL
   const A_RANGES = ['1D', '7D', '1M', '1Y', 'ALL'];
   const A_MS = { '1D': 864e5, '7D': 7 * 864e5, '1M': 30 * 864e5, '1Y': 365 * 864e5, ALL: Infinity };
   const aCut = Date.now() - (A_MS[aRange] ?? Infinity);
   const ft = aRange === 'ALL' ? trades : trades.filter(t => new Date(t.ts).getTime() >= aCut);
+
+  // Outcome basis = OKX closed positions (realized P&L, fees in, funding out),
+  // mapped to the trade shape so Net P&L, win rate, PF, the P&L charts and the
+  // calendar all match what OKX reports. Falls back to synced fills if OKX
+  // closed-position history isn't available.
+  const pnlTrades = (pnl || []).map(p => ({
+    id: 'pnl_' + (p.closeTs || p.instId), instId: p.instId, posSide: p.direction,
+    fillPx: 0, fillSz: 0, pnl: Number(p.net) || 0, fee: 0,
+    ts: p.closeTs ? new Date(p.closeTs).toISOString() : new Date().toISOString(), source: 'okx',
+  }));
+  const pnlInRange = aRange === 'ALL' ? pnlTrades : pnlTrades.filter(t => new Date(t.ts).getTime() >= aCut);
+  const usePnl = pnlTrades.length > 0;
+  const outcome = usePnl ? pnlInRange : ft; // Net P&L / win% / PF / charts / calendar
 
   const RangeToggle = (
     <div className="flex items-center" style={{ gap: 2, background: theme.hoverBg, borderRadius: 9, padding: 3 }}>
@@ -6413,24 +6460,24 @@ function CryptoAnalyticsView({ trades, positions = [], algos = { live: [], histo
     </div>
   );
 
-  if (!trades.length) {
+  if (!trades.length && !pnlTrades.length) {
     return <div className="card" style={{ padding: 48, textAlign: 'center', color: theme.textMuted, fontSize: 14 }}>No trades to analyze yet. Sync OKX or add trades to see analytics.</div>;
   }
-  if (!ft.length) {
+  if (!outcome.length) {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
         <div className="flex items-center justify-between" style={{ flexWrap: 'wrap', gap: 10 }}>
           <div style={{ fontSize: 14, fontWeight: 600, color: theme.text }}>Analytics</div>{RangeToggle}
         </div>
-        <div className="card" style={{ padding: 40, textAlign: 'center', color: theme.textFaint, fontSize: 13 }}>No trades in the last {aRange}. Pick a wider range.</div>
+        <div className="card" style={{ padding: 40, textAlign: 'center', color: theme.textFaint, fontSize: 13 }}>No closed trades in the last {aRange}. Pick a wider range.</div>
       </div>
     );
   }
-  const s = computeCryptoStats(ft);
+  const s = computeCryptoStats(outcome);
   const pf = s.profitFactor === Infinity ? '∞' : s.profitFactor.toFixed(2);
 
   // Same shape the Dashboard components expect, so both sections share code.
-  const normalized = ft.map(cryptoToNormalized);
+  const normalized = outcome.map(cryptoToNormalized);
   const { cumulative, daily } = buildPnlSeries(normalized, { limit: 30 });
   const gradeCtx = outcomeContext(normalized);
   const expectancy = s.realizedCount ? (s.netPnl / s.realizedCount) : 0;
@@ -6443,7 +6490,7 @@ function CryptoAnalyticsView({ trades, positions = [], algos = { live: [], histo
   const stopCoverage = trips.length ? Math.round((trips.filter(t => t.slUsed != null).length / trips.length) * 100) : 0;
 
   const byCoinMap = {};
-  ft.forEach(t => { const c = coinFromInst(t.instId); byCoinMap[c] = (byCoinMap[c] || 0) + (t.pnl || 0); });
+  outcome.forEach(t => { const c = coinFromInst(t.instId); byCoinMap[c] = (byCoinMap[c] || 0) + (t.pnl || 0); });
   const byCoin = Object.entries(byCoinMap).map(([name, pnl]) => ({ name, pnl: +pnl.toFixed(2), color: pnl >= 0 ? theme.pos : theme.neg })).sort((a, b) => b.pnl - a.pnl);
 
   const recent = [...normalized].sort((a, b) => new Date(b.date + ' ' + b.time) - new Date(a.date + ' ' + a.time)).slice(0, 8);
@@ -6451,7 +6498,7 @@ function CryptoAnalyticsView({ trades, positions = [], algos = { live: [], histo
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       <div className="flex items-center justify-between" style={{ flexWrap: 'wrap', gap: 10 }}>
-        <div style={{ fontSize: 14, fontWeight: 600, color: theme.text }}>Analytics <span style={{ fontSize: 12, fontWeight: 400, color: theme.textFaint }}>· {ft.length} trade{ft.length === 1 ? '' : 's'} in {aRange}</span></div>
+        <div style={{ fontSize: 14, fontWeight: 600, color: theme.text }}>Analytics <span style={{ fontSize: 12, fontWeight: 400, color: theme.textFaint }}>· {outcome.length} {usePnl ? 'closed position' : 'trade'}{outcome.length === 1 ? '' : 's'} in {aRange}{usePnl ? ' · P&L from OKX' : ''}</span></div>
         {RangeToggle}
       </div>
       {/* Top stats — mirrors the Dashboard row */}
@@ -6511,7 +6558,7 @@ function CryptoAnalyticsView({ trades, positions = [], algos = { live: [], histo
       </div>
 
       {/* Monthly calendar — was previously only reachable inside a challenge */}
-      <CryptoTradingCalendar trades={ft} fmt={fmt} theme={theme} />
+      <CryptoTradingCalendar trades={outcome} fmt={fmt} theme={theme} />
     </div>
   );
 }
