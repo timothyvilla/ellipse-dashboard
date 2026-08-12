@@ -3873,43 +3873,83 @@ const IMPACT_COLORS = { High: '#f4557a', Medium: '#f59e0b', Low: '#8b5cf6', Holi
 const NEWS_CURRENCIES = ['All', 'USD', 'EUR', 'GBP', 'JPY', 'AUD', 'CAD', 'CHF', 'NZD'];
 
 // ---- Economic-event reference + pair-impact model ---------------------------
-// The free ForexFactory feed has no descriptions, so we keep a small curated
-// library keyed on words in the event title. `higherIsStronger` says whether a
-// higher-than-expected reading is bullish (true) or bearish (false) for the
-// event's currency, which lets us turn actual-vs-forecast into a pair direction.
+// The free ForexFactory feed carries only title/currency/impact/forecast/previous
+// (see the JSON at faireconomy.media) — none of the on-site "specs" (Measures,
+// Usual Effect, Source, Why Traders Care, etc.). Those specs are static per
+// indicator, so we keep them in a curated library keyed on words in the title.
+// `higherIsStronger` says whether a higher-than-expected reading is bullish (true)
+// or bearish (false) for the currency, which drives the pair-direction model.
+// Fields mirror the ForexFactory detail panel; blank fields are simply hidden.
 const NEWS_EVENT_LIBRARY = [
   { match: ['non-farm', 'nonfarm', 'nfp', 'employment change', 'payroll'], higherIsStronger: true,
-    what: 'Net new jobs added outside farming and government.', why: 'The headline read on the labour market and a primary driver of central-bank rate expectations.' },
+    measures: 'Change in the number of employed people during the previous month, excluding the farming industry.',
+    whyTradersCare: 'Job creation is a leading indicator of consumer spending, which makes up a majority of overall economic activity.',
+    source: 'Bureau of Labor Statistics (US) / national statistics office', frequency: 'Released monthly, usually on the first Friday after the month ends.',
+    alsoCalled: 'Non-Farm Payrolls, NFP, Employment Change', acronym: 'Non-Farm Payrolls (NFP)' },
   { match: ['unemployment rate'], higherIsStronger: false,
-    what: 'Share of the labour force that is jobless and looking for work.', why: 'A rising rate signals a cooling economy and typically weighs on the currency.' },
+    measures: 'Percentage of the total labour force that is unemployed and actively seeking work.',
+    whyTradersCare: 'Although a lagging indicator, the number of unemployed is an important signal of overall economic health because consumer spending is highly correlated with labour-market conditions.',
+    source: 'Bureau of Labor Statistics (US) / national statistics office', frequency: 'Released monthly, about a week after the month ends.',
+    ffNotes: 'A higher reading is negative for the currency — the "usual effect" is inverted versus most indicators.' },
   { match: ['unemployment claims', 'jobless claims'], higherIsStronger: false,
-    what: 'New people filing for unemployment benefits that week.', why: 'A timely labour-market pulse; rising claims weigh on the currency.' },
+    measures: 'The number of individuals who filed for unemployment insurance for the first time during the past week.',
+    whyTradersCare: 'It is the earliest US economic data — timely enough to move markets even though the individual releases are volatile.',
+    source: 'Department of Labor', frequency: 'Released weekly, on Thursday.', alsoCalled: 'Initial Jobless Claims', acronym: 'Initial Jobless Claims' },
   { match: ['average earnings', 'average hourly', 'wage', 'earnings index', 'labor cost', 'labour cost'], higherIsStronger: true,
-    what: 'Change in what workers are paid.', why: 'Wage growth feeds inflation and pulls forward rate-hike expectations.' },
+    measures: 'Change in the price businesses pay for labour, excluding the farming industry.',
+    whyTradersCare: 'It is a leading indicator of consumer inflation — when businesses pay more for labour, the higher costs are usually passed on to consumers.',
+    source: 'Bureau of Labor Statistics / national statistics office', frequency: 'Released monthly, alongside the jobs report.', alsoCalled: 'Average Hourly Earnings' },
   { match: ['core cpi', 'cpi', 'consumer price', 'inflation rate', 'hicp'], higherIsStronger: true,
-    what: 'Change in the price of a basket of consumer goods and services.', why: 'The main inflation gauge — hotter prints push the central bank toward higher rates, supporting the currency.' },
+    measures: 'Change in the price of goods and services purchased by consumers, excluding food and energy (for "Core" prints).',
+    whyTradersCare: 'Consumer prices account for a majority of overall inflation. Inflation is important to currency valuation because rising prices lead the central bank to raise interest rates out of respect for its inflation-containment mandate.',
+    source: 'Bureau of Labor Statistics (US) / national statistics office', frequency: 'Released monthly, about 11 days after the month ends.',
+    ffNotes: 'Food and energy prices are about a quarter of CPI but are very volatile, so the FOMC pays more attention to the Core data — and so do traders.',
+    alsoCalled: 'CPI Ex Food and Energy, Underlying CPI', acronym: 'Consumer Price Index (CPI)' },
   { match: ['ppi', 'producer price'], higherIsStronger: true,
-    what: 'Change in prices producers receive — an early inflation signal.', why: 'Feeds through to consumer inflation and rate expectations.' },
+    measures: 'Change in the price of finished goods and services sold by producers.',
+    whyTradersCare: 'It is a leading indicator of consumer inflation — when producers charge more, the higher costs are usually passed on to the consumer.',
+    source: 'Bureau of Labor Statistics / national statistics office', frequency: 'Released monthly, about 13 days after the month ends.', acronym: 'Producer Price Index (PPI)' },
   { match: ['gdp', 'gross domestic'], higherIsStronger: true,
-    what: 'Total value of goods and services produced.', why: 'The broadest growth measure; beats support the currency.' },
+    measures: 'Change in the inflation-adjusted value of all goods and services produced by the economy.',
+    whyTradersCare: 'It is the broadest measure of economic activity and the primary gauge of the economy’s health.',
+    source: 'National statistics office', frequency: 'Released quarterly, with prelim and final revisions.', acronym: 'Gross Domestic Product (GDP)' },
   { match: ['retail sales'], higherIsStronger: true,
-    what: 'Change in the total value of retail purchases.', why: 'Consumer spending is the main engine of growth.' },
+    measures: 'Change in the total value of sales at the retail level ("Core" excludes automobiles).',
+    whyTradersCare: 'It is the primary gauge of consumer spending, which accounts for the majority of overall economic activity.',
+    source: 'Census Bureau / national statistics office', frequency: 'Released monthly, about 16 days after the month ends.' },
   { match: ['rate decision', 'rate statement', 'interest rate', 'cash rate', 'bank rate', 'refinancing rate', 'official cash', 'fomc', 'monetary policy'], higherIsStronger: true,
-    what: 'The central bank sets its benchmark interest rate and policy stance.', why: 'The most direct driver of a currency — higher rates attract capital.' },
+    measures: 'The central bank sets its benchmark interest rate and communicates its policy stance.',
+    whyTradersCare: 'Short-term interest rates are the paramount factor in currency valuation — traders look at most other indicators merely to predict how rates will change in future.',
+    source: 'Central bank (Federal Reserve, ECB, BoE, RBA, etc.)', frequency: 'Roughly 8 scheduled meetings per year.', alsoCalled: 'Official Bank Rate, Cash Rate, Federal Funds Rate' },
   { match: ['manufacturing pmi', 'services pmi', 'composite pmi', 'flash pmi', 'pmi', 'purchasing managers'], higherIsStronger: true,
-    what: 'Business-activity survey; above 50 signals expansion, below 50 contraction.', why: 'A timely lead indicator of the economy’s direction.' },
+    measures: 'Diffusion index based on surveyed purchasing managers; above 50.0 signals expansion, below 50.0 contraction.',
+    whyTradersCare: 'It is a leading indicator of economic health — businesses react quickly to market conditions, so purchasing managers hold timely insight into the economy.',
+    source: 'S&P Global / ISM / national bodies', frequency: 'Released monthly; a "Flash" estimate lands about a week before the final.', acronym: 'Purchasing Managers’ Index (PMI)' },
   { match: ['ism'], higherIsStronger: true,
-    what: 'US business-activity survey; above 50 signals expansion.', why: 'Closely watched lead indicator for growth and jobs.' },
+    measures: 'US business-activity diffusion index; above 50.0 signals expansion, below 50.0 contraction.',
+    whyTradersCare: 'A closely watched, timely lead indicator for growth, prices and employment.',
+    source: 'Institute for Supply Management', frequency: 'Released monthly, on the first business day (manufacturing) / third (services).', acronym: 'Institute for Supply Management (ISM)' },
   { match: ['trade balance'], higherIsStronger: true,
-    what: 'Difference between the value of exports and imports.', why: 'A wider surplus (or smaller deficit) tends to support the currency.' },
+    measures: 'Difference in value between imported and exported goods and services over the period.',
+    whyTradersCare: 'Export demand and currency demand are directly linked, because foreigners must buy the domestic currency to pay for the nation’s exports.',
+    source: 'National statistics office', frequency: 'Released monthly.' },
   { match: ['consumer confidence', 'consumer sentiment', 'sentiment', 'ifo', 'zew'], higherIsStronger: true,
-    what: 'Survey of how optimistic consumers or businesses feel.', why: 'Confidence leads spending and investment, which lead growth.' },
+    measures: 'Survey-based index of how optimistic consumers or businesses feel about economic conditions.',
+    whyTradersCare: 'Financial confidence is a leading indicator of spending and investment, which are major drivers of overall economic activity.',
+    source: 'Conference Board / University of Michigan / Ifo / ZEW', frequency: 'Released monthly.' },
   { match: ['durable goods', 'factory orders', 'industrial production'], higherIsStronger: true,
-    what: 'New orders / output in the goods-producing sector.', why: 'A read on business investment and future production.' },
+    measures: 'Change in new orders for, or output of, long-lasting manufactured goods.',
+    whyTradersCare: 'It is a leading indicator of production — rising orders signal businesses will ramp up activity to fill them.',
+    source: 'Census Bureau / national statistics office', frequency: 'Released monthly.' },
   { match: ['building permits', 'housing starts', 'home sales', 'building approvals'], higherIsStronger: true,
-    what: 'Activity in the housing sector.', why: 'Housing is an interest-rate-sensitive growth driver.' },
+    measures: 'Activity in the housing sector — permits, starts or completed sales.',
+    whyTradersCare: 'Housing is highly interest-rate-sensitive and an early signal of economic momentum and consumer confidence.',
+    source: 'Census Bureau / national statistics office', frequency: 'Released monthly.' },
   { match: ['crude oil inventories', 'oil inventories'], higherIsStronger: false,
-    what: 'Weekly change in US crude-oil stockpiles.', why: 'Larger builds imply softer demand, pressuring oil and oil-linked currencies like CAD.' },
+    measures: 'Change in the number of barrels of crude oil held in inventory by commercial firms during the past week.',
+    whyTradersCare: 'Inventories affect the price of petroleum products, which feeds inflation, and directly move oil-linked currencies such as CAD.',
+    source: 'Energy Information Administration (EIA)', frequency: 'Released weekly, on Wednesday.',
+    ffNotes: 'A larger-than-expected build implies weaker demand and is negative for oil (and oil currencies).' },
 ];
 
 // Pairs we know how to reason about, so we can show the ones a currency appears in.
@@ -4239,8 +4279,10 @@ function NewsCalendarView() {
     const cachedTime = localStorage.getItem(cacheTimeKey);
     const now = Date.now();
     
-    // Use cache if less than 4 hours old
-    if (cached && cachedTime && (now - parseInt(cachedTime)) < 4 * 60 * 60 * 1000) {
+    // Use cache if less than 24 hours old. The JBlanked free tier is ~1 request/
+    // day, so a long client cache (on top of the server-side daily cache) keeps
+    // per-browser usage within budget; Refresh still re-checks the server cache.
+    if (cached && cachedTime && (now - parseInt(cachedTime)) < 24 * 60 * 60 * 1000) {
       try {
         setEvents(JSON.parse(cached));
         setLastFetched(new Date(parseInt(cachedTime)));
@@ -4253,16 +4295,39 @@ function NewsCalendarView() {
     setError('');
 
     const normalize = (data) => (Array.isArray(data) ? data : []).map(e => ({
-      title: e.title || e.event || e.name || '',
-      country: e.country || e.currency || '',
-      date: e.date || '',
-      impact: e.impact || e.importance || 'Low',
-      forecast: e.forecast ?? '',
-      previous: e.previous ?? '',
-      actual: e.actual ?? '',
+      title: e.title || e.event || e.name || e.Name || '',
+      country: e.country || e.currency || e.Currency || '',
+      date: e.date || e.Date || '',
+      impact: e.impact || e.importance || e.Impact || 'Low',
+      forecast: e.forecast ?? e.Forecast ?? '',
+      previous: e.previous ?? e.Previous ?? '',
+      actual: e.actual ?? e.Actual ?? '',
+      // Enriched fields from the JBlanked proxy (blank on the free feed).
+      category: e.category || e.Category || '',
+      outcome: e.outcome || e.Outcome || '',
+      strength: e.strength || e.Strength || '',
+      quality: e.quality || e.Quality || '',
     }));
 
-    // Try multiple sources in order
+    // Preferred source: JBlanked via our serverless proxy (richer fields incl.
+    // Outcome/Strength/Quality). Needs JBLANKED_API_KEY on the server; if it's
+    // absent or the call fails, we fall through to the free Forex Factory feed.
+    try {
+      const res = await fetch(`/api/news/calendar?mode=${mode === 'today' ? 'today' : 'week'}`, { signal: AbortSignal.timeout(9000) });
+      if (res.ok) {
+        const payload = await res.json();
+        if (payload && Array.isArray(payload.events) && payload.events.length) {
+          const normalized = normalize(payload.events);
+          setEvents(normalized);
+          setLastFetched(payload.fetchedAt ? new Date(payload.fetchedAt) : new Date());
+          try { localStorage.setItem(cacheKey, JSON.stringify(normalized)); localStorage.setItem(cacheTimeKey, now.toString()); } catch {}
+          setLoading(false);
+          return;
+        }
+      }
+    } catch { /* fall through to the free feed */ }
+
+    // Try multiple free sources in order
     const sources = [
       // 1. Supabase Edge Function proxy (if you deploy it)
       `https://ksbhbhjnrrkcnunehksx.supabase.co/functions/v1/forex-calendar`,
@@ -4540,7 +4605,12 @@ function NewsCalendarView() {
                 const isOpen = expandedEvent === rowKey;
                 const info = isOpen ? lookupEventInfo(event.title) : null;
                 const surprise = isOpen ? newsSurprise(event, info) : null;
-                const pairs = isOpen ? affectedPairs(event.country, surprise?.dir ?? 0) : [];
+                // Prefer the provider's Quality (Good/Bad-for-currency) when present;
+                // otherwise fall back to our computed actual-vs-forecast bias.
+                const qualityDir = isOpen && event.quality ? (/good/i.test(event.quality) ? 1 : /bad/i.test(event.quality) ? -1 : 0) : null;
+                const biasDir = qualityDir != null ? qualityDir : (surprise?.dir ?? 0);
+                const hasProvider = isOpen && (event.quality || event.strength || event.outcome || event.category);
+                const pairs = isOpen ? affectedPairs(event.country, biasDir) : [];
                 return (
                   <div key={rowKey}>
                     <div
@@ -4557,6 +4627,12 @@ function NewsCalendarView() {
                       </span>
                       <span style={{ fontSize: 13, color: theme.text, fontWeight: isHigh ? 600 : 400, display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
                         <ChevronDown size={13} style={{ color: theme.textFaint, flexShrink: 0, transform: isOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }} />
+                        {event.quality && (
+                          <span
+                            title={`${event.strength || ''}${event.strength && event.quality ? ' · ' : ''}${event.quality || ''}`.trim()}
+                            style={{ width: 7, height: 7, borderRadius: 999, flexShrink: 0, background: /good/i.test(event.quality) ? theme.pos : /bad/i.test(event.quality) ? theme.neg : theme.textFaint, opacity: /weak/i.test(event.strength || '') ? 0.4 : 1 }}
+                          />
+                        )}
                         <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{event.title}</span>
                       </span>
                       <span style={{ fontSize: 13, color: theme.textMuted, textAlign: 'right', fontFamily: "'JetBrains Mono', monospace" }}>{event.forecast || '—'}</span>
@@ -4567,12 +4643,34 @@ function NewsCalendarView() {
                     {isOpen && (
                       <div style={{ padding: '4px 18px 16px 44px', borderBottom: `1px solid ${theme.cardBorder}`, background: theme.hoverBg }}>
                         {info ? (
-                          <>
-                            <div style={{ fontSize: 12.5, color: theme.text, lineHeight: 1.55 }}>{info.what}</div>
-                            <div style={{ fontSize: 12, color: theme.textMuted, marginTop: 4, lineHeight: 1.55 }}><strong style={{ color: theme.text }}>Why it matters:</strong> {info.why}</div>
-                          </>
+                          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(90px, auto) 1fr', gap: '6px 14px', alignItems: 'baseline' }}>
+                            {[
+                              ['Measures', info.measures],
+                              ['Usual Effect', `'Actual' ${info.higherIsStronger ? 'greater' : 'less'} than 'Forecast' is good for ${event.country}`],
+                              ['Frequency', info.frequency],
+                              ['Source', info.source],
+                              ['Why Traders Care', info.whyTradersCare],
+                              ['FF Notes', info.ffNotes],
+                              ['Also Called', info.alsoCalled],
+                              ['Acronym', info.acronym],
+                            ].filter(([, v]) => v).map(([label, value]) => (
+                              <React.Fragment key={label}>
+                                <div style={{ fontSize: 10.5, fontWeight: 600, color: theme.textFaint, textTransform: 'uppercase', letterSpacing: '0.4px' }}>{label}</div>
+                                <div style={{ fontSize: 12.5, color: theme.text, lineHeight: 1.5 }}>{value}</div>
+                              </React.Fragment>
+                            ))}
+                          </div>
                         ) : (
-                          <div style={{ fontSize: 12.5, color: theme.textMuted, lineHeight: 1.55 }}>No description on file for this release — showing the raw numbers only.</div>
+                          <div style={{ fontSize: 12.5, color: theme.textMuted, lineHeight: 1.55 }}>No specs on file for this release — showing the raw numbers and pair impact only.</div>
+                        )}
+
+                        {hasProvider && (
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 10 }}>
+                            {event.category && <span className="badge" style={{ background: theme.hoverBg, color: theme.textMuted }}>{event.category}</span>}
+                            {event.strength && <span className="badge" style={{ background: theme.hoverBg, color: /strong/i.test(event.strength) ? theme.text : theme.textFaint }}>{event.strength}</span>}
+                            {event.quality && <span className="badge" style={{ background: /good/i.test(event.quality) ? theme.accentSoft : /bad/i.test(event.quality) ? 'rgba(244,85,122,0.1)' : theme.hoverBg, color: /good/i.test(event.quality) ? theme.pos : /bad/i.test(event.quality) ? theme.neg : theme.textMuted }}>{event.quality}</span>}
+                            {event.outcome && <span style={{ fontSize: 11, color: theme.textFaint, fontFamily: "'JetBrains Mono', monospace", alignSelf: 'center' }}>{event.outcome}</span>}
+                          </div>
                         )}
 
                         {surprise ? (
@@ -4580,9 +4678,10 @@ function NewsCalendarView() {
                             Actual <strong style={{ fontFamily: "'JetBrains Mono', monospace" }}>{event.actual}</strong> {surprise.label} {surprise.vs} <strong style={{ fontFamily: "'JetBrains Mono', monospace" }}>{surprise.vs === 'forecast' ? event.forecast : event.previous}</strong>
                             {surprise.pct != null && surprise.dir !== 0 ? ` (${surprise.pct >= 0 ? '+' : ''}${surprise.pct.toFixed(1)}%)` : ''}
                             {' → '}
-                            <span style={{ fontWeight: 600, color: surprise.dir > 0 ? theme.pos : surprise.dir < 0 ? theme.neg : theme.textMuted }}>
-                              {surprise.dir > 0 ? `${event.country} bullish` : surprise.dir < 0 ? `${event.country} bearish` : 'neutral'}
+                            <span style={{ fontWeight: 600, color: biasDir > 0 ? theme.pos : biasDir < 0 ? theme.neg : theme.textMuted }}>
+                              {biasDir > 0 ? `${event.country} bullish` : biasDir < 0 ? `${event.country} bearish` : 'neutral'}
                             </span>
+                            {qualityDir != null && <span style={{ fontSize: 10.5, color: theme.textFaint }}> (provider read)</span>}
                           </div>
                         ) : (
                           <div style={{ marginTop: 10, fontSize: 12, color: theme.textFaint }}>Not released yet — the directional read appears once the actual prints. Pairs to watch:</div>
