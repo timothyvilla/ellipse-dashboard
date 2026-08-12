@@ -1175,8 +1175,11 @@ function buildPnlSeries(trades, { limit = 14 } = {}) {
     if (!d) continue;
     byDay[d] = (byDay[d] || 0) + (Number(t.pnl) || 0) - Math.abs(Number(t.fee) || 0);
   }
-  const days = Object.keys(byDay).sort().slice(-limit);
-  let cum = 0;
+  const allDays = Object.keys(byDay).sort();
+  const days = allDays.slice(-limit);
+  // Seed the running total with days before the visible window so the cumulative
+  // line is a true total rather than restarting at 0 inside the window.
+  let cum = allDays.slice(0, allDays.length - days.length).reduce((s, d) => s + byDay[d], 0);
   const cumulative = [], daily = [];
   for (const d of days) {
     cum += byDay[d];
@@ -1892,6 +1895,10 @@ export default function TradingJournal() {
         <style>{`
           @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
           * { box-sizing: border-box; }
+          /* Tell the browser which scheme native controls use, so date-picker
+             text/icons, select dropdowns, scrollbars and autofill render with
+             visible (light) text in dark mode instead of default black. */
+          html { color-scheme: ${darkMode ? 'dark' : 'light'}; }
           ::selection { background: rgba(139,92,246,0.32); color: ${theme.text}; }
 
           /* ---- Surfaces ---- */
@@ -4364,6 +4371,8 @@ function JournalView({ trades, accounts, filterAccount, setFilterAccount, onSele
 function DashboardView({ trades, accounts, challenges, selectedAccount, setSelectedAccount }) {
   const theme = useTheme();
   const [dashboardMonth, setDashboardMonth] = useState(new Date());
+  const [pnlRangeDays, setPnlRangeDays] = useState(14); // trading days shown on the P&L cards; 0 = all history
+  const pnlWindow = pnlRangeDays > 0 ? pnlRangeDays : Infinity;
   // Score against the real prop rules for this account when a challenge is active.
   const propRules = resolvePropRules(challenges, accounts, selectedAccount);
   const filtered = selectedAccount === 'all' ? trades : trades.filter(t => t.account === selectedAccount);
@@ -4404,22 +4413,27 @@ function DashboardView({ trades, accounts, challenges, selectedAccount, setSelec
 
   // Chart data
   const dailyPnlData = [];
-  const uniqueDates = [...new Set(filtered.map(t => t.date))].sort().slice(-14);
+  const uniqueDates = [...new Set(filtered.map(t => t.date))].sort().slice(-pnlWindow);
   uniqueDates.forEach(date => {
     const dayTrades = filtered.filter(t => t.date === date);
     dailyPnlData.push({ date: date.slice(5), pnl: dayTrades.reduce((s, t) => s + t.pnl, 0) });
   });
 
-  let cumulative = 0;
   const cumulativePnlData = [];
   const dateGroups = {};
   [...filtered].sort((a, b) => new Date(a.date) - new Date(b.date)).forEach(t => {
     if (!dateGroups[t.date]) dateGroups[t.date] = 0;
     dateGroups[t.date] += t.pnl;
   });
-  Object.entries(dateGroups).slice(-14).forEach(([date, pnl]) => {
+  // Entries are ascending by date (inserted in sorted order). Show the selected
+  // window but seed the running total with everything before it, so the
+  // "cumulative" line reflects the true total instead of restarting at 0.
+  const cumEntries = Object.entries(dateGroups);
+  const cumWindowStart = Math.max(0, cumEntries.length - pnlWindow);
+  let cumulative = cumEntries.slice(0, cumWindowStart).reduce((s, [, pnl]) => s + pnl, 0);
+  cumEntries.slice(cumWindowStart).forEach(([date, pnl]) => {
     cumulative += pnl;
-    cumulativePnlData.push({ date: date.slice(5), pnl: cumulative });
+    cumulativePnlData.push({ date: date.slice(5), pnl: +cumulative.toFixed(2) });
   });
 
   // Where y=0 sits as a 0..1 fraction of the chart's vertical range, used to
@@ -4428,6 +4442,23 @@ function DashboardView({ trades, accounts, challenges, selectedAccount, setSelec
   const cumMax = cumValues.length ? Math.max(...cumValues) : 0;
   const cumMin = cumValues.length ? Math.min(...cumValues) : 0;
   const cumZeroOffset = cumMax <= 0 ? 0 : cumMin >= 0 ? 1 : cumMax / (cumMax - cumMin);
+
+  // Shared range selector for the two P&L cards (windows the most recent N trading days).
+  const pnlRangeControl = (
+    <select
+      value={pnlRangeDays}
+      onChange={(e) => setPnlRangeDays(Number(e.target.value))}
+      className="input input-sm"
+      aria-label="P&L date range"
+      style={{ width: 'auto', padding: '4px 8px', fontSize: 12 }}
+    >
+      <option value={7}>7D</option>
+      <option value={14}>14D</option>
+      <option value={30}>30D</option>
+      <option value={90}>90D</option>
+      <option value={0}>All</option>
+    </select>
+  );
 
   const sortedTrades = [...filtered].sort((a, b) => new Date(b.date + ' ' + b.time) - new Date(a.date + ' ' + a.time));
   const recentTrades = sortedTrades.slice(0, 5);
@@ -4466,7 +4497,8 @@ function DashboardView({ trades, accounts, challenges, selectedAccount, setSelec
       {activeChallenges.length > 0 && (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 12 }}>
           {activeChallenges.map(ch => {
-            const chTrades = trades.filter(t => t.account === ch.account && (!ch.startDate || t.date >= ch.startDate));
+            // Phase-scoped: profit resets to the initial account size each phase (incl. after passing into Funded)
+            const chTrades = tradesInPhase(trades, ch, ch.currentPhase ?? 0);
             const chPnl = chTrades.reduce((s, t) => s + (parseFloat(t.pnl) || 0), 0);
             const chAccountSize = ch.accountSize || 1;
             const chProfitPct = (chPnl / chAccountSize) * 100;
@@ -4537,10 +4569,10 @@ function DashboardView({ trades, accounts, challenges, selectedAccount, setSelec
       <div style={{ display: 'grid', gridTemplateColumns: '340px minmax(0, 1fr)', gap: 12, alignItems: 'stretch' }}>
         <EllipseScorePanel trades={filtered} rules={propRules} size={150} />
         <div style={{ display: 'grid', gridTemplateRows: '1fr 1fr', gap: 12, minHeight: 0 }}>
-          <ChartCard title="Daily Net Cumulative P&L" minHeight={140}>
+          <ChartCard title="Daily Net Cumulative P&L" minHeight={140} right={pnlRangeControl}>
             <CumulativePnlChart data={cumulativePnlData} theme={theme} id="dashCum" />
           </ChartCard>
-          <ChartCard title="Net Daily P&L" minHeight={140}>
+          <ChartCard title="Net Daily P&L" minHeight={140} right={pnlRangeControl}>
             <DailyPnlChart data={dailyPnlData} theme={theme} />
           </ChartCard>
         </div>
@@ -4611,7 +4643,8 @@ function AccountsView({ accounts, challenges, trades, onUpdate, onDelete }) {
   // Build challenge groups with merged equity
   const challengeGroups = challenges.map(ch => {
     const linkedAccount = accounts.find(a => a.name === ch.account);
-    const accountTrades = trades.filter(t => t.account === ch.account && (!ch.startDate || t.date >= ch.startDate));
+    // Phase-scoped so merged equity resets to the initial account size after each pass (incl. Funded)
+    const accountTrades = tradesInPhase(trades, ch, ch.currentPhase ?? 0);
     const totalPnl = accountTrades.reduce((s, t) => s + (parseFloat(t.pnl) || 0), 0);
     const mergedEquity = ch.accountSize + totalPnl;
     const phase = ch.phases?.[ch.currentPhase] || ch.phases?.[0] || {};
