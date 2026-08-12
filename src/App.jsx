@@ -3872,6 +3872,91 @@ function JournalEntryForm({ entry, onSave, onCancel }) {
 const IMPACT_COLORS = { High: '#f4557a', Medium: '#f59e0b', Low: '#8b5cf6', Holiday: '#64748b' };
 const NEWS_CURRENCIES = ['All', 'USD', 'EUR', 'GBP', 'JPY', 'AUD', 'CAD', 'CHF', 'NZD'];
 
+// ---- Economic-event reference + pair-impact model ---------------------------
+// The free ForexFactory feed has no descriptions, so we keep a small curated
+// library keyed on words in the event title. `higherIsStronger` says whether a
+// higher-than-expected reading is bullish (true) or bearish (false) for the
+// event's currency, which lets us turn actual-vs-forecast into a pair direction.
+const NEWS_EVENT_LIBRARY = [
+  { match: ['non-farm', 'nonfarm', 'nfp', 'employment change', 'payroll'], higherIsStronger: true,
+    what: 'Net new jobs added outside farming and government.', why: 'The headline read on the labour market and a primary driver of central-bank rate expectations.' },
+  { match: ['unemployment rate'], higherIsStronger: false,
+    what: 'Share of the labour force that is jobless and looking for work.', why: 'A rising rate signals a cooling economy and typically weighs on the currency.' },
+  { match: ['unemployment claims', 'jobless claims'], higherIsStronger: false,
+    what: 'New people filing for unemployment benefits that week.', why: 'A timely labour-market pulse; rising claims weigh on the currency.' },
+  { match: ['average earnings', 'average hourly', 'wage', 'earnings index', 'labor cost', 'labour cost'], higherIsStronger: true,
+    what: 'Change in what workers are paid.', why: 'Wage growth feeds inflation and pulls forward rate-hike expectations.' },
+  { match: ['core cpi', 'cpi', 'consumer price', 'inflation rate', 'hicp'], higherIsStronger: true,
+    what: 'Change in the price of a basket of consumer goods and services.', why: 'The main inflation gauge — hotter prints push the central bank toward higher rates, supporting the currency.' },
+  { match: ['ppi', 'producer price'], higherIsStronger: true,
+    what: 'Change in prices producers receive — an early inflation signal.', why: 'Feeds through to consumer inflation and rate expectations.' },
+  { match: ['gdp', 'gross domestic'], higherIsStronger: true,
+    what: 'Total value of goods and services produced.', why: 'The broadest growth measure; beats support the currency.' },
+  { match: ['retail sales'], higherIsStronger: true,
+    what: 'Change in the total value of retail purchases.', why: 'Consumer spending is the main engine of growth.' },
+  { match: ['rate decision', 'rate statement', 'interest rate', 'cash rate', 'bank rate', 'refinancing rate', 'official cash', 'fomc', 'monetary policy'], higherIsStronger: true,
+    what: 'The central bank sets its benchmark interest rate and policy stance.', why: 'The most direct driver of a currency — higher rates attract capital.' },
+  { match: ['manufacturing pmi', 'services pmi', 'composite pmi', 'flash pmi', 'pmi', 'purchasing managers'], higherIsStronger: true,
+    what: 'Business-activity survey; above 50 signals expansion, below 50 contraction.', why: 'A timely lead indicator of the economy’s direction.' },
+  { match: ['ism'], higherIsStronger: true,
+    what: 'US business-activity survey; above 50 signals expansion.', why: 'Closely watched lead indicator for growth and jobs.' },
+  { match: ['trade balance'], higherIsStronger: true,
+    what: 'Difference between the value of exports and imports.', why: 'A wider surplus (or smaller deficit) tends to support the currency.' },
+  { match: ['consumer confidence', 'consumer sentiment', 'sentiment', 'ifo', 'zew'], higherIsStronger: true,
+    what: 'Survey of how optimistic consumers or businesses feel.', why: 'Confidence leads spending and investment, which lead growth.' },
+  { match: ['durable goods', 'factory orders', 'industrial production'], higherIsStronger: true,
+    what: 'New orders / output in the goods-producing sector.', why: 'A read on business investment and future production.' },
+  { match: ['building permits', 'housing starts', 'home sales', 'building approvals'], higherIsStronger: true,
+    what: 'Activity in the housing sector.', why: 'Housing is an interest-rate-sensitive growth driver.' },
+  { match: ['crude oil inventories', 'oil inventories'], higherIsStronger: false,
+    what: 'Weekly change in US crude-oil stockpiles.', why: 'Larger builds imply softer demand, pressuring oil and oil-linked currencies like CAD.' },
+];
+
+// Pairs we know how to reason about, so we can show the ones a currency appears in.
+const NEWS_MAJORS = ['EUR/USD', 'GBP/USD', 'USD/JPY', 'USD/CHF', 'USD/CAD', 'AUD/USD', 'NZD/USD'];
+const NEWS_CROSSES = ['EUR/GBP', 'EUR/JPY', 'GBP/JPY', 'AUD/JPY', 'EUR/AUD', 'AUD/NZD', 'CAD/JPY'];
+
+function lookupEventInfo(title) {
+  const t = (title || '').toLowerCase();
+  return NEWS_EVENT_LIBRARY.find(e => e.match.some(m => t.includes(m))) || null;
+}
+
+// Parse a feed value like "175K", "3.2%", "-0.4", "1.2M", "2.75%" into a number.
+function parseNewsNum(v) {
+  if (v == null || v === '') return null;
+  const s = String(v).replace(/[,%$]/g, '').trim();
+  const m = s.match(/^(-?\d*\.?\d+)\s*([KMBT])?/i);
+  if (!m) return null;
+  const mult = { K: 1e3, M: 1e6, B: 1e9, T: 1e12 }[(m[2] || '').toUpperCase()] || 1;
+  return parseFloat(m[1]) * mult;
+}
+
+// Turn actual-vs-forecast (falling back to previous) into a currency bias.
+function newsSurprise(event, info) {
+  const actual = parseNewsNum(event.actual);
+  if (actual == null) return null; // not released yet
+  const fc = parseNewsNum(event.forecast);
+  const base = fc != null ? fc : parseNewsNum(event.previous);
+  if (base == null) return null;
+  const diff = actual - base;
+  const vs = fc != null ? 'forecast' : 'previous';
+  if (diff === 0) return { dir: 0, label: 'in line with', pct: 0, vs };
+  const beat = diff > 0;
+  const bullish = info ? (info.higherIsStronger ? beat : !beat) : beat;
+  const pct = base !== 0 ? (diff / Math.abs(base)) * 100 : null;
+  return { dir: bullish ? 1 : -1, label: beat ? 'beat' : 'missed', pct, vs };
+}
+
+// Majors/crosses the currency appears in, with the direction the bias implies.
+// A currency-bullish surprise lifts pairs where it's the base and drops pairs
+// where it's the quote. dir 0/undefined => pairs to watch, no direction.
+function affectedPairs(ccy, dir) {
+  if (!ccy) return [];
+  return [...NEWS_MAJORS, ...NEWS_CROSSES]
+    .filter(p => p.startsWith(ccy + '/') || p.endsWith('/' + ccy))
+    .map(p => ({ pair: p, up: !dir ? null : (p.slice(0, 3) === ccy ? dir > 0 : dir < 0) }));
+}
+
 // ---- Trading sessions (defined in UTC; rendered in the user's chosen timezone) ----
 const TRADING_SESSIONS = [
   { id: 'sydney',  name: 'Sydney',       startUTC: 22 * 60, endUTC: 7 * 60,  color: '#a78bfa', tags: ['AUD', 'NZD', 'Asia-Pacific indices'], note: 'Often quieter, useful for AUD/NZD preparation.' },
@@ -4097,6 +4182,7 @@ function NewsCalendarView() {
     try { return JSON.parse(localStorage.getItem('ellipse_news_profiles') || '[]'); } catch { return []; }
   });
   const [profileName, setProfileName] = useState('');
+  const [expandedEvent, setExpandedEvent] = useState(null);
   const persistProfiles = (list) => { setSavedProfiles(list); try { localStorage.setItem('ellipse_news_profiles', JSON.stringify(list)); } catch {} };
   const saveProfile = () => {
     const name = profileName.trim();
@@ -4450,19 +4536,74 @@ function NewsCalendarView() {
                 const eventTime = event.date ? new Date(event.date).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true }) : '--:--';
                 const impactColor = IMPACT_COLORS[event.impact] || theme.textFaint;
                 const isHigh = event.impact === 'High';
+                const rowKey = `${event.date}|${event.title}|${event.country}`;
+                const isOpen = expandedEvent === rowKey;
+                const info = isOpen ? lookupEventInfo(event.title) : null;
+                const surprise = isOpen ? newsSurprise(event, info) : null;
+                const pairs = isOpen ? affectedPairs(event.country, surprise?.dir ?? 0) : [];
                 return (
-                  <div key={i} className="news-row" style={{ position: 'relative', display: 'grid', gridTemplateColumns: '76px 54px 74px 1fr 82px 82px 82px', gap: 8, padding: '13px 18px', borderBottom: `1px solid ${theme.cardBorder}`, background: isHigh ? (theme.dark ? 'rgba(244,85,122,0.055)' : 'rgba(244,85,122,0.035)') : 'transparent' }}>
-                    {isHigh && <span style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 2.5, background: theme.neg }} />}
-                    <span style={{ fontSize: 12.5, color: theme.textMuted, fontFamily: "'JetBrains Mono', monospace" }}>{eventTime}</span>
-                    <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>{event.country}</span>
-                    <span className="badge" style={{ background: `${impactColor}1f`, color: impactColor, justifySelf: 'start' }}>
-                      <span style={{ width: 5, height: 5, borderRadius: 999, background: impactColor }} />
-                      {event.impact}
-                    </span>
-                    <span style={{ fontSize: 13, color: theme.text, fontWeight: isHigh ? 600 : 400 }}>{event.title}</span>
-                    <span style={{ fontSize: 13, color: theme.textMuted, textAlign: 'right', fontFamily: "'JetBrains Mono', monospace" }}>{event.forecast || '—'}</span>
-                    <span style={{ fontSize: 13, color: theme.textMuted, textAlign: 'right', fontFamily: "'JetBrains Mono', monospace" }}>{event.previous || '—'}</span>
-                    <span style={{ fontSize: 13, fontWeight: event.actual ? 600 : 400, color: event.actual ? theme.text : theme.textFaint, textAlign: 'right', fontFamily: "'JetBrains Mono', monospace" }}>{event.actual || '—'}</span>
+                  <div key={rowKey}>
+                    <div
+                      className="news-row"
+                      onClick={() => setExpandedEvent(isOpen ? null : rowKey)}
+                      style={{ position: 'relative', display: 'grid', gridTemplateColumns: '76px 54px 74px 1fr 82px 82px 82px', gap: 8, padding: '13px 18px', borderBottom: isOpen ? 'none' : `1px solid ${theme.cardBorder}`, background: isOpen ? theme.hoverBg : (isHigh ? (theme.dark ? 'rgba(244,85,122,0.055)' : 'rgba(244,85,122,0.035)') : 'transparent'), cursor: 'pointer' }}
+                    >
+                      {isHigh && <span style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 2.5, background: theme.neg }} />}
+                      <span style={{ fontSize: 12.5, color: theme.textMuted, fontFamily: "'JetBrains Mono', monospace" }}>{eventTime}</span>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: theme.text }}>{event.country}</span>
+                      <span className="badge" style={{ background: `${impactColor}1f`, color: impactColor, justifySelf: 'start' }}>
+                        <span style={{ width: 5, height: 5, borderRadius: 999, background: impactColor }} />
+                        {event.impact}
+                      </span>
+                      <span style={{ fontSize: 13, color: theme.text, fontWeight: isHigh ? 600 : 400, display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+                        <ChevronDown size={13} style={{ color: theme.textFaint, flexShrink: 0, transform: isOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }} />
+                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{event.title}</span>
+                      </span>
+                      <span style={{ fontSize: 13, color: theme.textMuted, textAlign: 'right', fontFamily: "'JetBrains Mono', monospace" }}>{event.forecast || '—'}</span>
+                      <span style={{ fontSize: 13, color: theme.textMuted, textAlign: 'right', fontFamily: "'JetBrains Mono', monospace" }}>{event.previous || '—'}</span>
+                      <span style={{ fontSize: 13, fontWeight: event.actual ? 600 : 400, color: event.actual ? theme.text : theme.textFaint, textAlign: 'right', fontFamily: "'JetBrains Mono', monospace" }}>{event.actual || '—'}</span>
+                    </div>
+
+                    {isOpen && (
+                      <div style={{ padding: '4px 18px 16px 44px', borderBottom: `1px solid ${theme.cardBorder}`, background: theme.hoverBg }}>
+                        {info ? (
+                          <>
+                            <div style={{ fontSize: 12.5, color: theme.text, lineHeight: 1.55 }}>{info.what}</div>
+                            <div style={{ fontSize: 12, color: theme.textMuted, marginTop: 4, lineHeight: 1.55 }}><strong style={{ color: theme.text }}>Why it matters:</strong> {info.why}</div>
+                          </>
+                        ) : (
+                          <div style={{ fontSize: 12.5, color: theme.textMuted, lineHeight: 1.55 }}>No description on file for this release — showing the raw numbers only.</div>
+                        )}
+
+                        {surprise ? (
+                          <div style={{ marginTop: 10, fontSize: 12.5, color: theme.text }}>
+                            Actual <strong style={{ fontFamily: "'JetBrains Mono', monospace" }}>{event.actual}</strong> {surprise.label} {surprise.vs} <strong style={{ fontFamily: "'JetBrains Mono', monospace" }}>{surprise.vs === 'forecast' ? event.forecast : event.previous}</strong>
+                            {surprise.pct != null && surprise.dir !== 0 ? ` (${surprise.pct >= 0 ? '+' : ''}${surprise.pct.toFixed(1)}%)` : ''}
+                            {' → '}
+                            <span style={{ fontWeight: 600, color: surprise.dir > 0 ? theme.pos : surprise.dir < 0 ? theme.neg : theme.textMuted }}>
+                              {surprise.dir > 0 ? `${event.country} bullish` : surprise.dir < 0 ? `${event.country} bearish` : 'neutral'}
+                            </span>
+                          </div>
+                        ) : (
+                          <div style={{ marginTop: 10, fontSize: 12, color: theme.textFaint }}>Not released yet — the directional read appears once the actual prints. Pairs to watch:</div>
+                        )}
+
+                        {pairs.length > 0 && (
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
+                            {pairs.map(({ pair, up }) => (
+                              <span key={pair} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '4px 10px', borderRadius: 999, fontSize: 11.5, fontWeight: 600, border: `1px solid ${up == null ? theme.cardBorder : (up ? 'rgba(34,211,165,0.35)' : 'rgba(244,85,122,0.35)')}`, background: up == null ? 'transparent' : (up ? theme.accentSoft : 'rgba(244,85,122,0.1)'), color: up == null ? theme.textMuted : (up ? theme.pos : theme.neg) }}>
+                                {up == null ? <Activity size={12} /> : up ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
+                                {pair}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+
+                        <div style={{ fontSize: 10.5, color: theme.textFaint, marginTop: 10, fontStyle: 'italic' }}>
+                          General guide from the release surprise, not trade advice — price often moves on the details and forward guidance.
+                        </div>
+                      </div>
+                    )}
                   </div>
                 );
               })}
