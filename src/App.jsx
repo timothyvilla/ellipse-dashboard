@@ -559,7 +559,27 @@ function phaseBounds(challenge, phaseIdx) {
   return { start: start || null, end };
 }
 
+// Is this trade part of the challenge at all (right account, on/after start)?
+function inChallengeWindow(challenge, t) {
+  if (t.account !== challenge.account) return false;
+  if (challenge.startDate && t.date < challenge.startDate) return false;
+  return true;
+}
+
+// Phase membership is explicit: when a phase is passed, its trades are tagged
+// with that phase index (challenge.tradePhase[tradeId] = idx). This fixes the
+// same-day transition problem that date-only boundaries can't handle — the
+// balance genuinely resets to the initial account size for the next phase.
+// The still-open current phase holds every in-window trade not yet tagged to an
+// earlier phase. Legacy challenges without tags fall back to date boundaries.
 function tradesInPhase(trades, challenge, phaseIdx) {
+  const map = challenge.tradePhase;
+  const cur = challenge.currentPhase ?? 0;
+  if (map && Object.keys(map).length) {
+    if (phaseIdx < cur) return (trades || []).filter(t => map[t.id] === phaseIdx);
+    if (phaseIdx === cur) return (trades || []).filter(t => inChallengeWindow(challenge, t) && (map[t.id] === undefined || map[t.id] === cur));
+    return []; // future phases have no trades yet
+  }
   const { start, end } = phaseBounds(challenge, phaseIdx);
   return (trades || []).filter(t => {
     if (t.account !== challenge.account) return false;
@@ -567,6 +587,17 @@ function tradesInPhase(trades, challenge, phaseIdx) {
     if (end && t.date >= end) return false;
     return true;
   });
+}
+
+// Freeze the phase being left: tag every still-untagged in-window trade with it.
+function assignTradesToPhase(challenge, trades, phaseIdx) {
+  const map = { ...(challenge.tradePhase || {}) };
+  const assigned = [];
+  (trades || []).forEach(t => {
+    if (t.id == null || !inChallengeWindow(challenge, t)) return;
+    if (map[t.id] === undefined) { map[t.id] = phaseIdx; assigned.push(t.id); }
+  });
+  return { map, assigned };
 }
 
 // Append-only log so any transition can be stepped back.
@@ -577,42 +608,50 @@ function pushHistory(challenge, entry) {
     fromPhase: challenge.currentPhase ?? 0,
     fromStatus: challenge.status || 'active',
     prevStartDates: { ...(challenge.phaseStartDates || {}) },
+    prevTradePhase: { ...(challenge.tradePhase || {}) },
     ...entry,
   }];
 }
 
 // effectiveDate lets a detected split record when the phase really started.
-function advanceChallenge(challenge, { effectiveDate, source = 'manual', note = '' } = {}) {
+function advanceChallenge(challenge, trades, { effectiveDate, source = 'manual', note = '' } = {}) {
   const date = effectiveDate || todayISO();
   const last = (challenge.phases?.length || 1) - 1;
   const cur = challenge.currentPhase ?? 0;
+  const { map, assigned } = assignTradesToPhase(challenge, trades, cur);
 
   if (cur >= last) {
     return {
       ...challenge,
       status: 'funded',
-      phaseHistory: pushHistory(challenge, { action: 'complete', toPhase: cur, toStatus: 'funded', date, source, note }),
+      tradePhase: map,
+      phaseHistory: pushHistory(challenge, { action: 'complete', toPhase: cur, toStatus: 'funded', date, source, note, assignedTradeIds: assigned }),
     };
   }
   const next = cur + 1;
   return {
     ...challenge,
     currentPhase: next,
+    tradePhase: map,
     phaseStartDates: { ...(challenge.phaseStartDates || {}), [next]: date },
-    phaseHistory: pushHistory(challenge, { action: 'advance', toPhase: next, toStatus: challenge.status || 'active', date, source, note }),
+    phaseHistory: pushHistory(challenge, { action: 'advance', toPhase: next, toStatus: challenge.status || 'active', date, source, note, assignedTradeIds: assigned }),
   };
 }
 
-function setChallengeStatus(challenge, status, { source = 'manual' } = {}) {
+function setChallengeStatus(challenge, status, trades, { source = 'manual' } = {}) {
+  // Freeze the current phase's trades when the challenge reaches a terminal state
+  // so later-added trades don't retroactively change a passed/failed result.
+  const { map } = assignTradesToPhase(challenge, trades, challenge.currentPhase ?? 0);
   return {
     ...challenge,
     status,
+    tradePhase: map,
     phaseHistory: pushHistory(challenge, { action: 'status', toPhase: challenge.currentPhase ?? 0, toStatus: status, date: todayISO(), source }),
   };
 }
 
-// Step back one entry, restoring the phase index, status and start dates that
-// were in place before it.
+// Step back one entry, restoring the phase index, status, start dates and trade
+// tags that were in place before it.
 function undoLastPhaseChange(challenge) {
   const history = Array.isArray(challenge.phaseHistory) ? challenge.phaseHistory : [];
   if (!history.length) return challenge;
@@ -622,6 +661,7 @@ function undoLastPhaseChange(challenge) {
     currentPhase: last.fromPhase,
     status: last.fromStatus,
     phaseStartDates: { ...(last.prevStartDates || {}) },
+    tradePhase: { ...(last.prevTradePhase || {}) },
     phaseHistory: history.slice(0, -1),
   };
 }
@@ -666,12 +706,15 @@ const DEFAULT_PROP_RULES = {
   consistencyRule: 40,   // max % of gross profit from a single day
 };
 
+// Five behavioural axes rendered as a skill web. Each measures a discipline that
+// blows prop accounts even when the P&L looks fine, and each is scored 0..100 where
+// higher = more disciplined. Equal 20-pt weights so the web reads as a balanced shape.
 const SCORE_FACTORS = [
-  { key: 'edge',        label: 'Edge',              weight: 25 },
-  { key: 'dailyLoss',   label: 'Daily loss control', weight: 25 },
-  { key: 'drawdown',    label: 'Drawdown headroom',  weight: 20 },
-  { key: 'consistency', label: 'Consistency',        weight: 15 },
-  { key: 'progress',    label: 'Risk-adj. progress', weight: 15 },
+  { key: 'scale',         label: 'Scale Variance',    weight: 20 },
+  { key: 'concentration', label: 'Concentration Cap', weight: 20 },
+  { key: 'timeDensity',   label: 'Time Density',      weight: 20 },
+  { key: 'holdDuration',  label: 'Hold Duration',     weight: 20 },
+  { key: 'tilt',          label: 'Tilt Resistance',   weight: 20 },
 ];
 
 const clamp01 = (n) => Math.max(0, Math.min(1, Number.isFinite(n) ? n : 0));
@@ -707,92 +750,116 @@ function computeEllipseScore(trades, rules) {
       factors: SCORE_FACTORS.map(f => ({ ...f, pct: 0, value: 0, detail: '—' })) };
   }
 
-  const size = R.accountSize > 0 ? R.accountSize : DEFAULT_PROP_RULES.accountSize;
-  const pctOf = (v) => (v / size) * 100;
+  const consistencyTarget = (R.consistencyRule || 40) / 100;
 
-  // ---- Edge: expectancy per trade in units of an average loss.
-  const pnls = closed.map(netOf);
-  const wins = pnls.filter(v => v > 0);
-  const lossMags = pnls.filter(v => v < 0).map(Math.abs);
-  const avgWin = mean(wins), avgLoss = mean(lossMags);
-  const wr = wins.length / closed.length;
-  const expectancy = wr * avgWin - (1 - wr) * avgLoss;
-  const edgeValue = avgLoss > 0 ? expectancy / avgLoss : (expectancy > 0 ? 1 : 0);
-  const edgePct = clamp01(edgeValue / 0.5);
-  const edgeDetail = `${edgeValue >= 0 ? '+' : ''}${edgeValue.toFixed(2)}x avg loss per trade`;
+  // Chronological order for the sequence-based axes (timing, tilt).
+  const seq = [...closed].sort((a, b) =>
+    new Date(`${a.date || ''} ${a.time || '00:00'}`) - new Date(`${b.date || ''} ${b.time || '00:00'}`));
+  const nets = seq.map(netOf);
 
-  // ---- Per-day aggregation, the unit prop firms actually police.
-  const byDay = {};
-  for (const t of closed) {
-    const d = t.date || (t.ts || '').slice(0, 10);
-    if (d) byDay[d] = (byDay[d] || 0) + netOf(t);
-  }
-  const days = Object.keys(byDay).sort();
-  const dayVals = days.map(d => byDay[d]);
-
-  // ---- Daily loss control: worst day against the daily limit.
-  const lossDays = dayVals.filter(v => v < 0).map(Math.abs);
-  let dailyPct = 1, dailyDetail = 'No losing days yet';
-  if (lossDays.length) {
-    const worstPct = pctOf(Math.max(...lossDays));
-    const used = worstPct / R.maxDailyDrawdown;              // 1.0 = limit hit
-    const nearMisses = lossDays.filter(v => pctOf(v) > R.maxDailyDrawdown * 0.6).length;
-    const headroom = clamp01(1 - used / 0.8);                 // <=80% of limit scores
-    const frequency = clamp01(1 - (nearMisses / days.length) * 5);
-    dailyPct = clamp01(headroom * 0.7 + frequency * 0.3);
-    dailyDetail = `worst day ${worstPct.toFixed(2)}% of ${R.maxDailyDrawdown}% limit · ${nearMisses} near-miss${nearMisses === 1 ? '' : 'es'}`;
-  }
-
-  // ---- Drawdown headroom: peak-to-trough against the overall limit.
-  let cum = 0, peak = 0, maxDD = 0;
-  for (const d of days) { cum += byDay[d]; peak = Math.max(peak, cum); maxDD = Math.max(maxDD, peak - cum); }
-  const netProfit = cum;
-  const ddUsedPct = pctOf(maxDD);
-  const ddBudget = ddUsedPct / R.maxTotalDrawdown;
-  const ddPct = clamp01(1 - ddBudget / 0.8);
-  const ddDetail = `max DD ${ddUsedPct.toFixed(2)}% of ${R.maxTotalDrawdown}% limit (${Math.round(ddBudget * 100)}% used)`;
-
-  // ---- Consistency: best day's share of gross profit vs the firm's rule.
-  const profitDays = dayVals.filter(v => v > 0);
-  const grossProfit = profitDays.reduce((s, v) => s + v, 0);
-  let consPct = 0, consDetail = 'No profitable days yet';
-  if (grossProfit > 0) {
-    const share = (Math.max(...profitDays) / grossProfit) * 100;
-    consPct = clamp01((R.consistencyRule * 1.4 - share) / (R.consistencyRule * 1.4 - R.consistencyRule * 0.5));
-    consDetail = `best day ${share.toFixed(0)}% of profit · rule ${R.consistencyRule}%`;
-  }
-
-  // ---- Risk-adjusted progress: target reached vs drawdown budget spent.
-  const targetPct = R.profitTarget > 0 ? pctOf(netProfit) / R.profitTarget : (netProfit > 0 ? 1 : 0);
-  const spend = Math.max(ddBudget, 0.01);
-  const efficiency = targetPct / spend;
-  const progPct = clamp01(efficiency / 1.5);
-  const progDetail = netProfit <= 0
-    ? `no progress · ${Math.round(ddBudget * 100)}% of DD budget spent`
-    : `${Math.round(targetPct * 100)}% of target on ${Math.round(ddBudget * 100)}% of DD budget`;
-
-  const raw = {
-    edge: { pct: edgePct, detail: edgeDetail },
-    dailyLoss: { pct: dailyPct, detail: dailyDetail },
-    drawdown: { pct: ddPct, detail: ddDetail },
-    consistency: { pct: consPct, detail: consDetail },
-    progress: { pct: progPct, detail: progDetail },
+  const std = (arr) => {
+    if (arr.length < 2) return 0;
+    const m = mean(arr);
+    return Math.sqrt(arr.reduce((s, v) => s + (v - m) ** 2, 0) / arr.length);
   };
+  const cvOf = (arr) => { const m = mean(arr); return m > 0 ? std(arr) / m : 0; };
+
+  const raw = {};
+
+  // 1) Scale Variance (sizing risk): how consistent position size is. Wild swings
+  //    in lots blow accounts on the one oversized trade.
+  const sizes = seq.map(t => Math.abs(Number(t.lots) || 0)).filter(v => v > 0);
+  if (sizes.length >= 3) {
+    const cv = cvOf(sizes);
+    raw.scale = { pct: clamp01(1 - cv), detail: `size CV ${(cv * 100).toFixed(0)}% · ${cv < 0.3 ? 'consistent' : cv < 0.6 ? 'variable' : 'erratic'} sizing` };
+  } else {
+    raw.scale = { pct: 0.5, detail: 'not enough size data', limited: true };
+  }
+
+  // 2) Concentration Cap (consistency): no single day should carry the account,
+  //    measured against the firm's consistency rule.
+  const byDay = {};
+  for (const t of seq) { if (t.date) byDay[t.date] = (byDay[t.date] || 0) + netOf(t); }
+  const posDays = Object.values(byDay).filter(v => v > 0);
+  const gross = posDays.reduce((s, v) => s + v, 0);
+  if (gross > 0) {
+    const share = Math.max(...posDays) / gross;
+    const pct = share <= consistencyTarget ? 1 : clamp01(1 - (share - consistencyTarget) / (1 - consistencyTarget));
+    raw.concentration = { pct, detail: `best day ${(share * 100).toFixed(0)}% of profit · cap ${(consistencyTarget * 100).toFixed(0)}%` };
+  } else {
+    raw.concentration = { pct: 0.5, detail: 'no net-profitable days yet', limited: true };
+  }
+
+  // 3) Time Density (news & event risk): rapid-fire, clustered entries and
+  //    over-trading raise exposure to spikes and event whipsaws.
+  const stamps = seq.map(t => new Date(`${t.date || ''} ${t.time || '00:00'}`).getTime());
+  const stampsOk = stamps.every(v => Number.isFinite(v));
+  if (stampsOk && seq.length >= 3) {
+    let clustered = 0;
+    for (let i = 1; i < stamps.length; i++) {
+      const gapMin = (stamps[i] - stamps[i - 1]) / 60000;
+      if (gapMin >= 0 && gapMin < 10) clustered++;
+    }
+    const density = clustered / (stamps.length - 1);
+    const activeDays = new Set(seq.map(t => t.date)).size || 1;
+    const perDay = seq.length / activeDays;
+    const overtrade = clamp01((perDay - 6) / 10); // >6 trades/day starts to bite
+    const pct = clamp01(1 - density * 0.7 - overtrade * 0.3);
+    raw.timeDensity = { pct, detail: `${(density * 100).toFixed(0)}% <10min apart · ${perDay.toFixed(1)}/day` };
+  } else {
+    raw.timeDensity = { pct: 0.5, detail: 'not enough timestamps', limited: true };
+  }
+
+  // 4) Hold Duration (style drift): consistency of time-in-trade. Needs open+close
+  //    timestamps (available on exchange round-trips); degrades gracefully.
+  const durations = seq.map(t => {
+    const o = t.openTs ? new Date(t.openTs).getTime() : null;
+    const c = t.closeTs ? new Date(t.closeTs).getTime() : null;
+    return (o && c && c > o) ? (c - o) / 60000 : null;
+  }).filter(v => v != null);
+  if (durations.length >= 3) {
+    const cv = cvOf(durations);
+    raw.holdDuration = { pct: clamp01(1 - cv), detail: `hold CV ${(cv * 100).toFixed(0)}% · ${cv < 0.5 ? 'steady style' : 'drifting'}` };
+  } else {
+    raw.holdDuration = { pct: 0.5, detail: 'hold time not tracked', limited: true };
+  }
+
+  // 5) Tilt Resistance (psychological discipline): after a loss, do you size up or
+  //    revenge-enter? Counts oversized/rushed entries that follow a losing trade.
+  const sortedSizes = [...sizes].sort((a, b) => a - b);
+  const medSize = sortedSizes.length
+    ? (sortedSizes.length % 2 ? sortedSizes[(sortedSizes.length - 1) / 2]
+       : (sortedSizes[sortedSizes.length / 2 - 1] + sortedSizes[sortedSizes.length / 2]) / 2)
+    : 0;
+  let afterLoss = 0, tiltEvents = 0;
+  for (let i = 1; i < seq.length; i++) {
+    if (nets[i - 1] >= 0) continue;
+    afterLoss++;
+    const sz = Math.abs(Number(seq[i].lots) || 0);
+    const gapMin = stampsOk ? (stamps[i] - stamps[i - 1]) / 60000 : 99;
+    const sizeSpike = medSize > 0 && sz > medSize * 1.75;
+    const revenge = gapMin >= 0 && gapMin < 5;
+    if (sizeSpike || revenge) tiltEvents++;
+  }
+  if (afterLoss >= 2 && (sizes.length >= 3 || stampsOk)) {
+    const rate = tiltEvents / afterLoss;
+    raw.tilt = { pct: clamp01(1 - rate), detail: `${tiltEvents}/${afterLoss} post-loss ${tiltEvents === 1 ? 'entry' : 'entries'} oversized/rushed` };
+  } else {
+    raw.tilt = { pct: 0.5, detail: 'not enough post-loss trades', limited: true };
+  }
+
   const factors = SCORE_FACTORS.map(f => ({
     ...f, pct: raw[f.key].pct, value: raw[f.key].pct * f.weight, detail: raw[f.key].detail,
   }));
+  const score = Math.round(factors.reduce((s, f) => s + f.value, 0));
 
-  let score = factors.reduce((s, f) => s + f.value, 0);
   const caps = [];
-  if (edgeValue <= 0) { score = Math.min(score, 40); caps.push('No positive edge — capped at 40'); }
-  if (ddBudget >= 1) { score = Math.min(score, 25); caps.push(`Overall drawdown limit breached — capped at 25`); }
-  if (lossDays.length && pctOf(Math.max(...lossDays)) >= R.maxDailyDrawdown) {
-    score = Math.min(score, 25); caps.push('Daily loss limit breached — capped at 25');
-  }
+  const limitedAxes = SCORE_FACTORS.filter(f => raw[f.key].limited).map(f => f.label);
+  if (limitedAxes.length) caps.push(`Limited data: ${limitedAxes.join(', ')}`);
 
   return {
-    score: Math.round(score), factors, available: true, tradeCount: n,
-    provisional: n < 20, caps, rules: R,
+    score, factors, available: true, tradeCount: n,
+    provisional: n < 20 || limitedAxes.length > 0, caps, rules: R,
     ruleLabel: R.label,
   };
 }
@@ -1355,6 +1422,7 @@ export default function TradingJournal() {
               account: c.account || '',
               startDate: c.start_date,
               phaseStartDates: c.phase_start_dates || {},
+              tradePhase: c.trade_phase || {},
               status: c.status || 'active',
               profitSplit: c.profit_split || 80,
               drawdownType: c.drawdown_type || 'balance',
@@ -1826,6 +1894,7 @@ export default function TradingJournal() {
         name: challenge.name, current_phase: challenge.currentPhase,
         status: challenge.status, phases: challenge.phases, notes: challenge.notes,
         phase_start_dates: challenge.phaseStartDates || {},
+        trade_phase: challenge.tradePhase || {},
         phase_history: challenge.phaseHistory || [],
         detected_splits: challenge.detectedSplits || []
       }).eq('id', challenge.id);
@@ -2295,10 +2364,9 @@ function ChallengesView({ challenges, trades, accounts, onUpdate, onDelete }) {
   // Auto-progression check: for each active challenge, check if profit target + min trading days are met
   useEffect(() => {
     activeChallenges.forEach(challenge => {
-      const accountTrades = trades.filter(t => t.account === challenge.account);
-      // FIX #2: Phase-scoped — only count trades since current phase started
-      const phaseStart = challenge.phaseStartDates?.[challenge.currentPhase] || challenge.startDate;
-      const challengeTrades = accountTrades.filter(t => !phaseStart || t.date >= phaseStart);
+      // Phase-scoped via explicit trade tags (falls back to date boundaries for
+      // legacy challenges), so profit/drawdown reset to the initial balance each phase.
+      const challengeTrades = tradesInPhase(trades, challenge, challenge.currentPhase ?? 0);
       const phase = challenge.phases?.[challenge.currentPhase] || challenge.phases?.[0] || {};
       const accountSize = challenge.accountSize || 1;
       const totalPnl = challengeTrades.reduce((s, t) => s + (parseFloat(t.pnl) || 0), 0);
@@ -2316,31 +2384,22 @@ function ChallengesView({ challenges, trades, accounts, onUpdate, onDelete }) {
         if (eq < lowestEquity) lowestEquity = eq;
       });
       const maxDD = accountSize > 0 ? ((accountSize - lowestEquity) / accountSize) * 100 : 0;
-      
+
       if (maxDD >= (phase.maxTotalDrawdown || 10)) {
         // Auto-fail: max drawdown breached
         if (challenge.status === 'active') {
-          onUpdate({ ...challenge, status: 'failed', notes: (challenge.notes || '') + `\nAuto-failed: Max drawdown ${maxDD.toFixed(2)}% exceeded ${phase.maxTotalDrawdown}% limit.` });
+          onUpdate(setChallengeStatus(challenge, 'failed', trades, { source: 'auto' }));
         }
         return;
       }
 
-      // Auto-advance: profit target met + min trading days met
-      // FIX #2: Stamp the new phase's start date so the next phase resets its profit counter
+      // Auto-advance: profit target met + min trading days met. Tagging the phase's
+      // trades on advance freezes the closed phase and resets the next one.
       if (targetPct && profitPct >= targetPct && tradingDays >= minDays) {
-        const today = new Date().toISOString().split('T')[0];
         if (challenge.currentPhase < challenge.phases.length - 1) {
-          const nextPhaseIdx = challenge.currentPhase + 1;
-          const phaseStartDates = { ...(challenge.phaseStartDates || {}), [nextPhaseIdx]: today };
-          onUpdate({
-            ...challenge,
-            currentPhase: nextPhaseIdx,
-            phaseStartDates,
-            notes: (challenge.notes || '') + `\nAuto-advanced to ${challenge.phases[nextPhaseIdx]?.name}: +${profitPct.toFixed(2)}% in ${tradingDays} days.`
-          });
+          onUpdate(advanceChallenge(challenge, trades, { source: 'auto', note: `Auto-advanced: +${profitPct.toFixed(2)}% in ${tradingDays} days.` }));
         } else {
-          // Last phase — mark as passed
-          onUpdate({ ...challenge, status: 'passed', notes: (challenge.notes || '') + `\nAuto-passed: +${profitPct.toFixed(2)}% in ${tradingDays} days.` });
+          onUpdate(setChallengeStatus(challenge, 'passed', trades, { source: 'auto' }));
         }
       }
     });
@@ -2412,10 +2471,9 @@ function ChallengesView({ challenges, trades, accounts, onUpdate, onDelete }) {
 function ChallengeCard({ challenge, trades, onSelect, onUpdate, onDelete, compact }) {
   const theme = useTheme();
 
-  // FIX #2: Phase-scoped — only count trades for the current phase
-  const phaseStart = challenge.phaseStartDates?.[challenge.currentPhase] || challenge.startDate;
-  const accountTrades = trades.filter(t => t.account === challenge.account);
-  const challengeTrades = accountTrades.filter(t => !phaseStart || t.date >= phaseStart);
+  // Phase-scoped via explicit trade tags (date-boundary fallback for legacy data)
+  // so the card's P&L resets to the initial balance after each phase pass.
+  const challengeTrades = tradesInPhase(trades, challenge, challenge.currentPhase ?? 0);
 
   const phase = challenge.phases?.[challenge.currentPhase] || challenge.phases?.[0] || {};
   const accountSize = challenge.accountSize || 1; // prevent division by zero
@@ -2682,12 +2740,67 @@ function ChallengeDetailModal({ challenge, trades, onClose, onUpdate }) {
   const consistencyPct = totalPnl > 0 ? (maxDailyProfit / totalPnl) * 100 : 0;
 
   const [confirmAdvance, setConfirmAdvance] = useState(null); // null | {effectiveDate, source, note}
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(null);
   const isLastPhase = (challenge.currentPhase ?? 0) >= (challenge.phases?.length || 1) - 1;
+  const cur = challenge.currentPhase ?? 0;
 
-  const doAdvance = (opts) => { onUpdate(advanceChallenge(challenge, opts)); setConfirmAdvance(null); };
-  const handleMarkPassed = () => onUpdate(setChallengeStatus(challenge, 'passed'));
-  const handleMarkFailed = () => onUpdate(setChallengeStatus(challenge, 'failed'));
+  const doAdvance = (opts) => { onUpdate(advanceChallenge(challenge, trades, opts)); setConfirmAdvance(null); };
+  const handleMarkPassed = () => onUpdate(setChallengeStatus(challenge, 'passed', trades));
+  const handleMarkFailed = () => onUpdate(setChallengeStatus(challenge, 'failed', trades));
   const handleUndo = () => onUpdate(undoLastPhaseChange(challenge));
+
+  // ---- Edit existing phases ----
+  const startEdit = () => { setDraft({ accountSize: challenge.accountSize, consistencyRule: challenge.consistencyRule ?? '', phases: JSON.parse(JSON.stringify(challenge.phases || [])) }); setEditing(true); };
+  const setDraftPhase = (idx, field, value) => setDraft(d => ({ ...d, phases: d.phases.map((p, i) => i === idx ? { ...p, [field]: value } : p) }));
+  const saveEdit = () => {
+    const cleanPhases = draft.phases.map(p => ({
+      ...p,
+      profitTarget: p.profitTarget === '' || p.profitTarget == null ? null : parseFloat(p.profitTarget),
+      maxDailyDrawdown: parseFloat(p.maxDailyDrawdown) || 0,
+      maxTotalDrawdown: parseFloat(p.maxTotalDrawdown) || 0,
+      minTradingDays: parseInt(p.minTradingDays) || 0,
+      maxTradingDays: p.maxTradingDays === '' || p.maxTradingDays == null ? null : parseInt(p.maxTradingDays),
+    }));
+    onUpdate({ ...challenge, accountSize: parseFloat(draft.accountSize) || challenge.accountSize, consistencyRule: draft.consistencyRule === '' ? null : parseFloat(draft.consistencyRule), phases: cleanPhases });
+    setEditing(false);
+  };
+
+  // ---- Per-phase breakdown (uses explicit trade tags so each phase resets) ----
+  const phaseStats = (challenge.phases || []).map((p, idx) => {
+    const pts = tradesInPhase(trades, challenge, idx);
+    const pnl = pts.reduce((s, t) => s + (parseFloat(t.pnl) || 0), 0);
+    const days = new Set(pts.map(t => t.date)).size;
+    let pk = accountSize, run = accountSize, dd = 0;
+    [...pts].sort((a, b) => new Date(`${a.date} ${a.time || '00:00'}`) - new Date(`${b.date} ${b.time || '00:00'}`)).forEach(t => {
+      run += parseFloat(t.pnl) || 0; if (run > pk) pk = run;
+      const d = pk > 0 ? ((pk - run) / pk) * 100 : 0; if (d > dd) dd = d;
+    });
+    const status = idx < cur ? 'passed'
+      : idx === cur ? (challenge.status === 'active' ? 'current' : challenge.status)
+      : 'locked';
+    return { p, idx, pnl, pct: accountSize > 0 ? (pnl / accountSize) * 100 : 0, days, dd, count: pts.length, status };
+  });
+
+  // ---- Live rule-compliance checklist for the current phase ----
+  const worstDayLoss = dailyEntries.length ? Math.abs(Math.min(0, ...dailyEntries.map(([, d]) => d.pnl))) : 0;
+  const worstDayDDpct = accountSize > 0 ? (worstDayLoss / accountSize) * 100 : 0;
+  const checklist = [
+    phase.profitTarget != null && { label: `Profit target ${phase.profitTarget}%`, ok: profitPct >= phase.profitTarget, detail: `at ${profitPct.toFixed(2)}%` },
+    { label: `Daily drawdown under ${phase.maxDailyDrawdown || 5}%`, ok: worstDayDDpct < (phase.maxDailyDrawdown || 5), detail: `worst ${worstDayDDpct.toFixed(2)}%` },
+    { label: `Total drawdown under ${phase.maxTotalDrawdown || 10}%`, ok: maxDD < (phase.maxTotalDrawdown || 10), detail: `at ${maxDD.toFixed(2)}%` },
+    { label: `Min ${phase.minTradingDays || 0} trading days`, ok: tradingDays >= (phase.minTradingDays || 0), detail: `${tradingDays} logged` },
+    phase.maxTradingDays && { label: `Max ${phase.maxTradingDays} trading days`, ok: tradingDays <= phase.maxTradingDays, detail: `${tradingDays} used` },
+    challenge.consistencyRule && { label: `Consistency under ${challenge.consistencyRule}%`, ok: consistencyPct <= challenge.consistencyRule, detail: `best day ${consistencyPct.toFixed(0)}%` },
+  ].filter(Boolean);
+
+  // ---- Trade-by-trade list for the current phase ----
+  const phaseTradeRows = (() => {
+    let run = accountSize;
+    return [...challengeTrades]
+      .sort((a, b) => new Date(`${a.date} ${a.time || '00:00'}`) - new Date(`${b.date} ${b.time || '00:00'}`))
+      .map(t => { const net = parseFloat(t.pnl) || 0; run += net; return { t, net, equity: run }; });
+  })();
 
   return (
     <Modal width={700} onClose={onClose}>
@@ -2696,7 +2809,12 @@ function ChallengeDetailModal({ challenge, trades, onClose, onUpdate }) {
           <h3 style={{ fontSize: 16, fontWeight: 600, color: theme.text }}>{challenge.name}</h3>
           <p style={{ fontSize: 12, color: theme.textFaint }}>{challenge.propFirm} · {phase?.name} · ${accountSize.toLocaleString()}</p>
         </div>
-        <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4 }}><X size={20} style={{ color: theme.textFaint }} /></button>
+        <div className="flex items-center gap-2">
+          <button onClick={editing ? () => setEditing(false) : startEdit} className="btn-ghost" style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', fontSize: 12.5 }}>
+            <Edit3 size={14} />{editing ? 'Close editor' : 'Edit phases'}
+          </button>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4 }}><X size={20} style={{ color: theme.textFaint }} /></button>
+        </div>
       </div>
       {pendingSplit && challenge.status === 'active' && !confirmAdvance && (
         <div style={{ margin: '16px 20px 0', padding: 14, borderRadius: 14, border: `1px solid ${theme.primary}55`, background: theme.primarySoft, display: 'flex', alignItems: 'flex-start', gap: 10 }}>
@@ -2721,6 +2839,46 @@ function ChallengeDetailModal({ challenge, trades, onClose, onUpdate }) {
       )}
 
       <div style={{ padding: 20, maxHeight: '70vh', overflow: 'auto' }} className="scrollbar">
+        {/* Edit phases */}
+        {editing && draft && (
+          <div style={{ marginBottom: 20, padding: 16, borderRadius: 12, border: `1px solid ${theme.primary}55`, background: theme.primarySoft }}>
+            <div className="flex items-center justify-between" style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: theme.text }}>Edit challenge phases</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <label style={{ fontSize: 11, color: theme.textMuted }}>Account size $</label>
+                <input type="number" value={draft.accountSize} onChange={e => setDraft(d => ({ ...d, accountSize: e.target.value }))} className="input input-sm" style={{ width: 120 }} />
+                <label style={{ fontSize: 11, color: theme.textMuted }}>Consistency %</label>
+                <input type="number" value={draft.consistencyRule} onChange={e => setDraft(d => ({ ...d, consistencyRule: e.target.value }))} className="input input-sm" style={{ width: 80 }} placeholder="—" />
+              </div>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {draft.phases.map((p, idx) => (
+                <div key={idx} style={{ padding: 12, borderRadius: 10, background: theme.card, border: `1px solid ${theme.cardBorder}` }}>
+                  <input value={p.name || ''} onChange={e => setDraftPhase(idx, 'name', e.target.value)} className="input input-sm" style={{ marginBottom: 8, fontWeight: 600 }} placeholder={`Phase ${idx + 1} name`} />
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 8 }}>
+                    {[
+                      { f: 'profitTarget', label: 'Target %', ph: 'none' },
+                      { f: 'maxDailyDrawdown', label: 'Daily DD %' },
+                      { f: 'maxTotalDrawdown', label: 'Total DD %' },
+                      { f: 'minTradingDays', label: 'Min days' },
+                      { f: 'maxTradingDays', label: 'Max days', ph: 'none' },
+                    ].map(({ f, label, ph }) => (
+                      <div key={f}>
+                        <label style={{ fontSize: 10, color: theme.textFaint, display: 'block', marginBottom: 3 }}>{label}</label>
+                        <input type="number" value={p[f] ?? ''} onChange={e => setDraftPhase(idx, f, e.target.value)} className="input input-sm" placeholder={ph || '0'} />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="flex justify-end gap-2" style={{ marginTop: 12 }}>
+              <button onClick={() => setEditing(false)} className="btn-ghost">Cancel</button>
+              <button onClick={saveEdit} className="btn-primary">Save changes</button>
+            </div>
+          </div>
+        )}
+
         {/* Summary Stats */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 20 }}>
           <div style={{ padding: 14, borderRadius: 10, background: theme.hoverBg, textAlign: 'center' }}>
@@ -2817,6 +2975,76 @@ function ChallengeDetailModal({ challenge, trades, onClose, onUpdate }) {
                   );
                 });
               })()}
+            </div>
+          </div>
+        )}
+
+        {/* Phase-by-phase history */}
+        {phaseStats.length > 1 && (
+          <div style={{ marginTop: 20 }}>
+            <div className="stat-label" style={{ marginBottom: 10 }}>Phase History</div>
+            <div style={{ borderRadius: 10, border: `1px solid ${theme.cardBorder}`, overflow: 'hidden' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 90px 70px 60px 70px 78px', gap: 8, padding: '10px 14px', background: theme.hoverBg }}>
+                {['PHASE', 'P&L', '%', 'DAYS', 'MAX DD', 'STATUS'].map((h, i) => (
+                  <span key={h} style={{ fontSize: 11, fontWeight: 600, color: theme.textMuted, textAlign: i === 0 ? 'left' : i === 5 ? 'center' : 'right' }}>{h}</span>
+                ))}
+              </div>
+              {phaseStats.map(ps => {
+                const sc = { passed: theme.pos, current: theme.primary, funded: '#f59e0b', failed: theme.neg, locked: theme.textFaint }[ps.status] || theme.textMuted;
+                return (
+                  <div key={ps.idx} style={{ display: 'grid', gridTemplateColumns: '1.4fr 90px 70px 60px 70px 78px', gap: 8, padding: '10px 14px', borderTop: `1px solid ${theme.cardBorder}`, alignItems: 'center', opacity: ps.status === 'locked' ? 0.5 : 1 }}>
+                    <span style={{ fontSize: 13, color: theme.text }}>{ps.p.name || `Phase ${ps.idx + 1}`}<span style={{ fontSize: 11, color: theme.textFaint }}> · {ps.count} trade{ps.count === 1 ? '' : 's'}</span></span>
+                    <span style={{ fontSize: 13, fontWeight: 600, color: ps.pnl >= 0 ? theme.pos : theme.neg, textAlign: 'right' }}>{ps.pnl >= 0 ? '+' : ''}${ps.pnl.toFixed(2)}</span>
+                    <span style={{ fontSize: 13, color: theme.textMuted, textAlign: 'right' }}>{ps.pct >= 0 ? '+' : ''}{ps.pct.toFixed(2)}%</span>
+                    <span style={{ fontSize: 13, color: theme.textMuted, textAlign: 'right' }}>{ps.days}</span>
+                    <span style={{ fontSize: 13, color: ps.dd >= (ps.p.maxTotalDrawdown || 10) * 0.7 ? theme.neg : theme.textMuted, textAlign: 'right' }}>{ps.dd.toFixed(2)}%</span>
+                    <span style={{ textAlign: 'center' }}><span className="badge" style={{ background: `${sc}1f`, color: sc, textTransform: 'capitalize' }}>{ps.status}</span></span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Rule-compliance checklist */}
+        {challenge.status === 'active' && checklist.length > 0 && (
+          <div style={{ marginTop: 20 }}>
+            <div className="stat-label" style={{ marginBottom: 10 }}>Rule Compliance · {phase?.name}</div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 8 }}>
+              {checklist.map((c, i) => (
+                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', borderRadius: 10, background: theme.hoverBg, border: `1px solid ${c.ok ? 'rgba(34,211,165,0.3)' : 'rgba(244,85,122,0.3)'}` }}>
+                  {c.ok ? <CheckCircle size={16} style={{ color: theme.pos, flexShrink: 0 }} /> : <AlertTriangle size={16} style={{ color: theme.neg, flexShrink: 0 }} />}
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: 12.5, color: theme.text, fontWeight: 500 }}>{c.label}</div>
+                    <div style={{ fontSize: 11, color: theme.textFaint }}>{c.detail}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Trade-by-trade (current phase) */}
+        {phaseTradeRows.length > 0 && (
+          <div style={{ marginTop: 20 }}>
+            <div className="stat-label" style={{ marginBottom: 10 }}>Trades · {phase?.name} ({phaseTradeRows.length})</div>
+            <div style={{ borderRadius: 10, border: `1px solid ${theme.cardBorder}`, overflow: 'hidden' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1.3fr 60px 70px 90px 100px', gap: 8, padding: '10px 14px', background: theme.hoverBg }}>
+                {['DATE', 'SIDE', 'LOTS', 'P&L', 'EQUITY'].map((h, i) => (
+                  <span key={h} style={{ fontSize: 11, fontWeight: 600, color: theme.textMuted, textAlign: i === 0 || i === 1 ? 'left' : 'right' }}>{h}</span>
+                ))}
+              </div>
+              <div style={{ maxHeight: 260, overflow: 'auto' }} className="scrollbar">
+                {phaseTradeRows.map(({ t, net, equity }, i) => (
+                  <div key={t.id ?? i} style={{ display: 'grid', gridTemplateColumns: '1.3fr 60px 70px 90px 100px', gap: 8, padding: '9px 14px', borderTop: `1px solid ${theme.cardBorder}`, alignItems: 'center' }}>
+                    <span style={{ fontSize: 12.5, color: theme.text }}>{t.date}{t.time ? ` ${t.time}` : ''}<span style={{ fontSize: 11, color: theme.textFaint }}>{t.symbol ? ` · ${t.symbol}` : ''}</span></span>
+                    <span style={{ fontSize: 12, color: (t.side === 'Long' || t.side === 'buy') ? theme.pos : theme.neg }}>{t.side || '—'}</span>
+                    <span style={{ fontSize: 12.5, color: theme.textMuted, textAlign: 'right' }}>{t.lots ?? '—'}</span>
+                    <span style={{ fontSize: 12.5, fontWeight: 600, color: net >= 0 ? theme.pos : theme.neg, textAlign: 'right' }}>{net >= 0 ? '+' : ''}${net.toFixed(2)}</span>
+                    <span style={{ fontSize: 12.5, color: theme.textMuted, textAlign: 'right' }}>${equity.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
         )}
@@ -3864,6 +4092,26 @@ function NewsCalendarView() {
     try { localStorage.setItem('ellipse_news_tz', tz); } catch {}
   }, [tz]);
 
+  // Saved filter profiles (currencies + impact + view), persisted locally.
+  const [savedProfiles, setSavedProfiles] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('ellipse_news_profiles') || '[]'); } catch { return []; }
+  });
+  const [profileName, setProfileName] = useState('');
+  const persistProfiles = (list) => { setSavedProfiles(list); try { localStorage.setItem('ellipse_news_profiles', JSON.stringify(list)); } catch {} };
+  const saveProfile = () => {
+    const name = profileName.trim();
+    if (!name) return;
+    const profile = { name, currencies: [...selectedCurrencies], impact: filterImpact, viewMode };
+    persistProfiles([...savedProfiles.filter(p => p.name !== name), profile]);
+    setProfileName('');
+  };
+  const applyProfile = (p) => {
+    setSelectedCurrencies(new Set(p.currencies || []));
+    setFilterImpact(p.impact || 'All');
+    if (p.viewMode) setViewMode(p.viewMode);
+  };
+  const deleteProfile = (name) => persistProfiles(savedProfiles.filter(p => p.name !== name));
+
   const scrollTo = (ref) => ref.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
   // Preset currency groups
@@ -4112,6 +4360,34 @@ function NewsCalendarView() {
               Clear
             </button>
           )}
+        </div>
+
+        {/* Row 3: Saved filter profiles */}
+        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontSize: 11, color: theme.textFaint, marginRight: 2 }}>Profiles:</span>
+          {savedProfiles.length === 0 && <span style={{ fontSize: 11, color: theme.textFaint, fontStyle: 'italic' }}>none saved yet</span>}
+          {savedProfiles.map(p => (
+            <span key={p.name} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '4px 6px 4px 12px', borderRadius: 999, border: `1px solid ${theme.cardBorder}`, background: theme.dark ? 'rgba(255,255,255,0.04)' : 'rgba(20,17,31,0.03)' }}>
+              <button onClick={() => applyProfile(p)} title={`${(p.currencies || []).join(', ') || 'All currencies'} · ${p.impact} · ${p.viewMode}`} style={{ padding: 0, border: 'none', background: 'none', cursor: 'pointer', fontSize: 11, fontWeight: 600, color: theme.textMuted }}>
+                {p.name}
+              </button>
+              <button onClick={() => deleteProfile(p.name)} title="Delete profile" style={{ display: 'flex', padding: 2, border: 'none', background: 'none', cursor: 'pointer', color: theme.textFaint }}>
+                <X size={11} />
+              </button>
+            </span>
+          ))}
+          <div style={{ width: 1, height: 18, background: theme.cardBorder, margin: '0 2px' }} />
+          <input
+            value={profileName}
+            onChange={e => setProfileName(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') saveProfile(); }}
+            placeholder="Save current as…"
+            className="input input-sm"
+            style={{ width: 150, padding: '4px 10px', fontSize: 11 }}
+          />
+          <button onClick={saveProfile} disabled={!profileName.trim()} className="btn-ghost" style={{ padding: '5px 12px', fontSize: 11, borderRadius: 999, opacity: profileName.trim() ? 1 : 0.5, cursor: profileName.trim() ? 'pointer' : 'default' }}>
+            Save
+          </button>
         </div>
       </div>
 
@@ -4381,6 +4657,21 @@ function DashboardView({ trades, accounts, challenges, selectedAccount, setSelec
   const wins = filtered.filter(t => t.pnl > 0);
   const losses = filtered.filter(t => t.pnl < 0);
   const totalPnl = filtered.reduce((s, t) => s + t.pnl, 0);
+
+  // NET P&L card: when the selected account has an active challenge, show only its
+  // current-phase profit (which resets after each pass). Otherwise, all-time P&L.
+  const activeChallengeForCard = selectedAccount === 'all'
+    ? null
+    : challenges.find(c => c.status === 'active' && c.account === selectedAccount);
+  const netPnlCardTrades = activeChallengeForCard
+    ? tradesInPhase(trades, activeChallengeForCard, activeChallengeForCard.currentPhase ?? 0)
+    : filtered;
+  const netPnlCard = netPnlCardTrades.reduce((s, t) => s + (parseFloat(t.pnl) || 0), 0);
+  const netPnlCardCount = netPnlCardTrades.length;
+  const netPnlCardPhase = activeChallengeForCard
+    ? (activeChallengeForCard.phases?.[activeChallengeForCard.currentPhase ?? 0]?.name || 'Current phase')
+    : null;
+
   const winRate = totalTrades > 0 ? (wins.length / totalTrades) * 100 : 0;
   const avgWin = wins.length > 0 ? wins.reduce((s, t) => s + t.pnl, 0) / wins.length : 0;
   const avgLoss = losses.length > 0 ? Math.abs(losses.reduce((s, t) => s + t.pnl, 0) / losses.length) : 1;
@@ -4531,8 +4822,9 @@ function DashboardView({ trades, accounts, challenges, selectedAccount, setSelec
       {/* Top Stats */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 12 }}>
         <div className="card" style={{ padding: 16 }}>
-          <div className="flex items-center gap-2"><div className="stat-label">Net P&L</div><div title={`${totalTrades} closed trades`} style={{ minWidth: 18, height: 18, padding: '0 5px', borderRadius: 4, background: theme.hoverBg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, color: theme.textMuted }}>{totalTrades}</div></div>
-          <div style={{ fontSize: 22, fontWeight: 700, color: totalPnl >= 0 ? theme.pos : theme.neg, marginTop: 6 }}>{totalPnl >= 0 ? '+' : ''}${totalPnl.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+          <div className="flex items-center gap-2"><div className="stat-label">Net P&L</div><div title={`${netPnlCardCount} ${netPnlCardPhase ? 'phase' : 'closed'} trades`} style={{ minWidth: 18, height: 18, padding: '0 5px', borderRadius: 4, background: theme.hoverBg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, color: theme.textMuted }}>{netPnlCardCount}</div></div>
+          <div style={{ fontSize: 22, fontWeight: 700, color: netPnlCard >= 0 ? theme.pos : theme.neg, marginTop: 6 }}>{netPnlCard >= 0 ? '+' : ''}${netPnlCard.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+          {netPnlCardPhase && <div title="Scoped to the active challenge's current phase" style={{ fontSize: 10, color: theme.textFaint, marginTop: 3 }}>{netPnlCardPhase} · resets each phase</div>}
         </div>
         <div className="card" style={{ padding: 16 }}>
           <div className="stat-label">Trade Expectancy</div>
