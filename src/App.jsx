@@ -2693,7 +2693,7 @@ function ChallengeCard({ challenge, trades, onSelect, onUpdate, onDelete, compac
               {totalPnl >= 0 ? '+' : ''}${totalPnl.toFixed(2)}
             </div>
             <div style={{ fontSize: 11, color: theme.textFaint, marginTop: 2 }}>
-              {profitPct >= 0 ? '+' : ''}{profitPct.toFixed(2)}%
+              {profitPct >= 0 ? '+' : ''}{profitPct.toFixed(2)}% · Bal ${(accountSize + totalPnl).toLocaleString(undefined, { maximumFractionDigits: 0 })}
             </div>
           </div>
 
@@ -3044,13 +3044,20 @@ function ChallengeDetailModal({ challenge, trades, onClose, onUpdate }) {
         )}
 
         {/* Summary Stats */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 20 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 20 }}>
           <div style={{ padding: 14, borderRadius: 10, background: theme.hoverBg, textAlign: 'center' }}>
             <div className="stat-label">Net P&L</div>
             <div style={{ fontSize: 22, fontWeight: 700, color: totalPnl >= 0 ? theme.pos : theme.neg, marginTop: 4 }}>
               {totalPnl >= 0 ? '+' : ''}${totalPnl.toFixed(2)}
             </div>
             <div style={{ fontSize: 11, color: theme.textFaint }}>{profitPct.toFixed(2)}%</div>
+          </div>
+          <div style={{ padding: 14, borderRadius: 10, background: theme.hoverBg, textAlign: 'center' }}>
+            <div className="stat-label">Balance</div>
+            <div style={{ fontSize: 22, fontWeight: 700, color: theme.text, marginTop: 4 }}>
+              ${(accountSize + totalPnl).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </div>
+            <div style={{ fontSize: 11, color: theme.textFaint }}>from ${accountSize.toLocaleString()}</div>
           </div>
           <div style={{ padding: 14, borderRadius: 10, background: theme.hoverBg, textAlign: 'center' }}>
             <div className="stat-label">Max Drawdown</div>
