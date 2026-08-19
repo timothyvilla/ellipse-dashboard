@@ -1,6 +1,6 @@
 import React, { useState, useEffect, createContext, useContext, useRef } from 'react';
 import { XAxis, YAxis, Tooltip, ResponsiveContainer, AreaChart, Area, BarChart, Bar, Cell, ComposedChart, Line, ReferenceLine } from 'recharts';
-import { Plus, TrendingUp, TrendingDown, ChevronDown, Calendar, BarChart3, BookOpen, Wallet, CheckCircle, Clock, X, Eye, Database, ChevronLeft, ChevronRight, Trash2, Edit3, Moon, Sun, Settings, Link, Image, ExternalLink, Loader2, CloudOff, Cloud, LayoutGrid, LayoutList, Upload, FileText, AlertCircle, Shield, Target, AlertTriangle, Zap, Trophy, Flag, Activity, Dices, Play, Coins, RefreshCw } from 'lucide-react';
+import { Plus, TrendingUp, TrendingDown, ChevronDown, Calendar, BarChart3, BookOpen, Wallet, CheckCircle, Clock, X, Eye, Database, ChevronLeft, ChevronRight, Trash2, Edit3, Moon, Sun, Settings, Link, Image, ExternalLink, Loader2, CloudOff, Cloud, LayoutGrid, LayoutList, Upload, FileText, AlertCircle, Shield, Target, AlertTriangle, Zap, Trophy, Flag, Activity, Dices, Play, Coins, RefreshCw, Info } from 'lucide-react';
 import { PieChart, Pie, Legend } from 'recharts';
 import { supabase } from './lib/supabaseClient';
 import {
@@ -65,6 +65,14 @@ const PROP_FIRM_PRESETS = {
 };
 
 
+// Stable identity for a trade so re-uploaded statements don't duplicate history.
+// Prefer the broker's ticket / position id; otherwise fingerprint the immutable
+// fields. A persisted dedupKey (from the DB) wins so keys stay stable over time.
+const tradeFingerprint = (t) =>
+  `${t.date}|${t.time}|${t.symbol}|${t.side}|${t.entry}|${t.exit}|${t.lots}|${t.pnl}`;
+const tradeDedupKey = (t) =>
+  (t && t.dedupKey) || (t && t.ticket ? `tkt:${t.ticket}` : `fp:${tradeFingerprint(t || {})}`);
+
 // Parse MT5 HTML statement
 const parseMT5Statement = (html) => {
   const trades = [];
@@ -107,7 +115,8 @@ const parseMT5Statement = (html) => {
         const commission = Math.abs(parseFloat(getValue(['commission']).replace(/[^-\d.]/g, '')) || 0);
         const swap = parseFloat(getValue(['swap']).replace(/[^-\d.]/g, '')) || 0;
         const timeStr = getValue(['time', 'open time', 'close time']);
-        
+        const ticket = getValue(['ticket', 'position id', 'deal id', 'order id', 'position', 'deal']);
+
         if (!type.includes('buy') && !type.includes('sell')) continue;
         if (!symbol || volume === 0) continue;
         
@@ -123,7 +132,7 @@ const parseMT5Statement = (html) => {
         trades.push({
           date, time, symbol, side: type.includes('buy') ? 'Long' : 'Short',
           entry: openPrice || closePrice, exit: closePrice || openPrice,
-          lots: volume, pnl: profit, commission, swap,
+          lots: volume, pnl: profit, commission, swap, ticket: ticket || '',
           marketStructure: '', candleType: '',
           liquidityTaken: [], liquidityTarget: [],
           notes: 'Imported from MT5', chartLink: '', chartImage: ''
@@ -134,7 +143,7 @@ const parseMT5Statement = (html) => {
   // FIX: Dedupe in case the HTML has nested duplicate tables
   const seenMT5 = new Set();
   return trades.filter(t => {
-    const key = `${t.date}|${t.time}|${t.symbol}|${t.side}|${t.entry}|${t.exit}|${t.lots}|${t.pnl}`;
+    const key = tradeDedupKey(t);
     if (seenMT5.has(key)) return false;
     seenMT5.add(key);
     return true;
@@ -234,6 +243,7 @@ const parseCTraderStatement = (html) => {
         if (headerTexts.some(h => h.includes('symbol')) && headerTexts.some(h => h.includes('direction'))) {
           headerTexts.forEach((h, i) => {
             if (h.includes('symbol')) columnMap.symbol = i;
+            if (h.includes('position id') || h.includes('deal id') || h.includes('order id') || h === 'id' || h === 'ticket') columnMap.ticket = i;
             if (h.includes('opening direction') || h === 'direction') columnMap.direction = i;
             if (h.includes('opening time')) columnMap.openTime = i;
             if (h.includes('closing time')) columnMap.closeTime = i;
@@ -254,6 +264,7 @@ const parseCTraderStatement = (html) => {
       
       const getText = (idx) => idx !== undefined && cells[idx] ? cells[idx].textContent.trim() : '';
       const symbol = getText(columnMap.symbol);
+      const ticket = getText(columnMap.ticket);
       const directionText = getText(columnMap.direction).toLowerCase();
       const openTimeText = getText(columnMap.openTime);
       const closeTimeText = getText(columnMap.closeTime);
@@ -283,7 +294,7 @@ const parseCTraderStatement = (html) => {
       trades.push({
         date, time, symbol: symbol.replace('/', '').toUpperCase(),
         side: directionText.includes('buy') ? 'Long' : 'Short',
-        entry: entryPrice, exit: closePrice, lots, pnl: netPnl, commission, swap,
+        entry: entryPrice, exit: closePrice, lots, pnl: netPnl, commission, swap, ticket: ticket || '',
         marketStructure: '', candleType: '',
         liquidityTaken: [], liquidityTarget: [],
         notes: 'Imported from cTrader', chartLink: '', chartImage: '',
@@ -298,7 +309,7 @@ const parseCTraderStatement = (html) => {
   const seenCT = new Set();
   const uniqueTrades = [];
   for (const t of trades) {
-    const key = `${t.date}|${t.time}|${t.symbol}|${t.side}|${t.entry}|${t.exit}|${t.lots}|${t.pnl}`;
+    const key = tradeDedupKey(t);
     if (seenCT.has(key)) continue;
     seenCT.add(key);
     uniqueTrades.push(t);
@@ -547,6 +558,16 @@ const mergeSnapshots = (...lists) => {
 // carry the real date.
 
 const todayISO = () => new Date().toISOString().split('T')[0];
+
+// ---- MT5 server time --------------------------------------------------------
+// MT5 statements record closing times in the broker's server timezone, which is
+// GMT+3 for this account. Daily-profit boundaries ("today", daily reset) should
+// follow the server day, not the browser's local/UTC day, so the "Today's P&L"
+// figure flips over at server midnight and lines up with the imported trade
+// dates. To change the server offset, edit MT5_SERVER_OFFSET_MIN below.
+const MT5_SERVER_OFFSET_MIN = 3 * 60; // GMT+3 (fixed)
+// Current date on the MT5 server, as YYYY-MM-DD.
+const serverToday = () => new Date(Date.now() + MT5_SERVER_OFFSET_MIN * 60000).toISOString().split('T')[0];
 
 // Inclusive start, exclusive end. end === null means "still open".
 function phaseBounds(challenge, phaseIdx) {
@@ -1394,7 +1415,8 @@ export default function TradingJournal() {
             marketStructure: t.market_structure,
             candleType: t.candle_type, liquidityTaken: t.liquidity_taken || [],
             liquidityTarget: t.liquidity_target || [], notes: t.notes,
-            account: t.account, chartLink: t.chart_link, chartImage: t.chart_image
+            account: t.account, chartLink: t.chart_link, chartImage: t.chart_image,
+            ticket: t.ticket || '', dedupKey: t.dedup_key || ''
           })));
         }
         
@@ -1803,7 +1825,21 @@ export default function TradingJournal() {
   };
 
   const importTrades = async (newTrades, accountName) => {
-    const dbTrades = newTrades.map(trade => ({
+    // Skip anything already in this account (matched by broker ticket, else by
+    // an immutable-field fingerprint), and collapse repeats within this upload.
+    const existing = new Set(trades.filter(t => t.account === accountName).map(tradeDedupKey));
+    const seen = new Set();
+    const unique = [];
+    for (const t of newTrades) {
+      const key = tradeDedupKey(t);
+      if (existing.has(key) || seen.has(key)) continue;
+      seen.add(key);
+      unique.push({ ...t, _dedupKey: key });
+    }
+    const skipped = newTrades.length - unique.length;
+    if (!unique.length) return { imported: 0, skipped };
+
+    const rowOf = (trade) => ({
       date: trade.date, time: trade.time, symbol: trade.symbol, side: trade.side,
       entry: trade.entry, exit_price: trade.exit, lots: trade.lots,
       pnl: trade.pnl,
@@ -1811,13 +1847,35 @@ export default function TradingJournal() {
       market_structure: trade.marketStructure, candle_type: trade.candleType,
       liquidity_taken: trade.liquidityTaken, liquidity_target: trade.liquidityTarget,
       notes: trade.notes, account: accountName,
-      chart_link: trade.chartLink, chart_image: trade.chartImage
-    }));
-    const { data, error } = await supabase.from('trades').insert(dbTrades).select();
-    if (error) { console.error('Error importing trades:', error); return 0; }
-    const importedTrades = data.map((t, i) => ({ ...newTrades[i], id: t.id, account: accountName }));
+      chart_link: trade.chartLink, chart_image: trade.chartImage,
+      ticket: trade.ticket || null, dedup_key: trade._dedupKey,
+    });
+
+    // Prefer an upsert on (account, dedup_key) so a duplicate can't slip in even
+    // across devices. If the column/constraint isn't there yet, fall back to a
+    // plain insert of the client-deduped set (client-side dedup still applies).
+    let data, error;
+    ({ data, error } = await supabase.from('trades')
+      .upsert(unique.map(rowOf), { onConflict: 'account,dedup_key', ignoreDuplicates: true })
+      .select());
+    if (error) {
+      const bare = unique.map(t => { const r = rowOf(t); delete r.ticket; delete r.dedup_key; return r; });
+      ({ data, error } = await supabase.from('trades').insert(bare).select());
+    }
+    if (error) { console.error('Error importing trades:', error); return { imported: 0, skipped }; }
+
+    // The upsert may drop cross-device duplicates, so returned rows can be fewer
+    // than we sent and out of order — match them back by key, not by index.
+    let importedTrades;
+    if (data && data.length === unique.length) {
+      importedTrades = data.map((row, i) => ({ ...unique[i], id: row.id, account: accountName, dedupKey: unique[i]._dedupKey }));
+    } else {
+      const byKey = new Map(unique.map(t => [t._dedupKey, t]));
+      importedTrades = (data || []).map(row => { const t = byKey.get(row.dedup_key) || {}; return { ...t, id: row.id, account: accountName, dedupKey: row.dedup_key || t._dedupKey }; });
+    }
+    const dbSkipped = unique.length - importedTrades.length; // duplicates caught at the DB level
     setTrades(prev => [...importedTrades, ...prev].sort((a, b) => new Date(b.date) - new Date(a.date)));
-    return data.length;
+    return { imported: importedTrades.length, skipped: skipped + dbSkipped };
   };
 
   const deleteTrade = async (id) => {
@@ -1911,7 +1969,7 @@ export default function TradingJournal() {
   };
 
   const filteredTrades = filterAccount === 'all' ? trades : trades.filter(t => t.account === filterAccount);
-  const today = new Date().toISOString().split('T')[0];
+  const today = serverToday(); // MT5 server day (GMT+3) for daily P&L
   const todayTrades = filteredTrades.filter(t => t.date === today);
   const todayPnl = todayTrades.reduce((sum, t) => sum + (parseFloat(t.pnl) || 0), 0);
   const todayWins = todayTrades.filter(t => t.pnl > 0).length;
@@ -2482,8 +2540,8 @@ function ChallengeCard({ challenge, trades, onSelect, onUpdate, onDelete, compac
   const profitTargetPct = phase.profitTarget ?? 10;
   const profitProgress = profitTargetPct ? Math.min((profitPct / profitTargetPct) * 100, 100) : 0;
 
-  // Daily drawdown calculation
-  const today = new Date().toISOString().split('T')[0];
+  // Daily drawdown calculation — uses the MT5 server day (GMT+3)
+  const today = serverToday();
   const todayTrades = challengeTrades.filter(t => t.date === today);
   const todayPnl = todayTrades.reduce((s, t) => s + t.pnl, 0);
   const dailyDrawdownPct = accountSize > 0 ? Math.abs(Math.min(todayPnl, 0)) / accountSize * 100 : 0;
@@ -2506,6 +2564,13 @@ function ChallengeCard({ challenge, trades, onSelect, onUpdate, onDelete, compac
   // Trading days
   const tradingDays = new Set(challengeTrades.map(t => t.date)).size;
   const minTradingDays = phase?.minTradingDays || 0;
+
+  // Profitable days for the current phase (days closing net positive)
+  const dailyPnlByDate = {};
+  challengeTrades.forEach(t => { dailyPnlByDate[t.date] = (dailyPnlByDate[t.date] || 0) + (parseFloat(t.pnl) || 0); });
+  const profitableDays = Object.values(dailyPnlByDate).filter(v => v > 0).length;
+  const minProfitableDays = phase?.minProfitableDays || 0;
+  const profitableDaysMet = minProfitableDays === 0 || profitableDays >= minProfitableDays;
 
   // Drawdown danger levels
   const isDailyDanger = dailyDDUsed >= 70;
@@ -2572,6 +2637,16 @@ function ChallengeCard({ challenge, trades, onSelect, onUpdate, onDelete, compac
             <div className="pulse-warn" style={{ padding: '6px 12px', borderRadius: 8, background: 'rgba(244,85,122,0.15)', display: 'flex', alignItems: 'center', gap: 6 }}>
               <AlertTriangle size={14} style={{ color: theme.neg }} />
               <span style={{ fontSize: 12, fontWeight: 600, color: theme.neg }}>DRAWDOWN WARNING</span>
+            </div>
+          )}
+          {minProfitableDays > 0 && (
+            <div
+              title={`Profitable days rule: ${profitableDays} of ${minProfitableDays} required in ${phase?.name || 'this phase'}${profitableDaysMet ? ' — met' : ` — ${minProfitableDays - profitableDays} more to go`}`}
+              style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '5px 9px', borderRadius: 8, cursor: 'help',
+                background: profitableDaysMet ? 'rgba(34,211,165,0.12)' : 'rgba(245,158,11,0.12)' }}
+            >
+              <Info size={13} style={{ color: profitableDaysMet ? theme.pos : '#f59e0b' }} />
+              <span style={{ fontSize: 12, fontWeight: 600, color: profitableDaysMet ? theme.pos : '#f59e0b' }}>{profitableDays}/{minProfitableDays}</span>
             </div>
           )}
           <span className="badge" style={{ background: statusStyle.bg, color: statusStyle.text, padding: '6px 12px' }}>{statusStyle.label}</span>
@@ -2722,7 +2797,11 @@ function ChallengeDetailModal({ challenge, trades, onClose, onUpdate }) {
   const tradingDays = Object.keys(dailyData).length;
   const worstDay = dailyEntries.length > 0 ? Math.min(...dailyEntries.map(([, d]) => d.pnl)) : 0;
   const bestDay = dailyEntries.length > 0 ? Math.max(...dailyEntries.map(([, d]) => d.pnl)) : 0;
+  const bestDayPct = accountSize > 0 ? (bestDay / accountSize) * 100 : 0;
   const avgDailyPnl = tradingDays > 0 ? totalPnl / tradingDays : 0;
+  // Profitable days: number of days in the current phase that closed net positive
+  const profitableDays = dailyEntries.filter(([, d]) => d.pnl > 0).length;
+  const minProfitableDays = phase?.minProfitableDays || 0;
 
   // Max drawdown from peak
   let peak = accountSize;
@@ -2742,6 +2821,8 @@ function ChallengeDetailModal({ challenge, trades, onClose, onUpdate }) {
   const [confirmAdvance, setConfirmAdvance] = useState(null); // null | {effectiveDate, source, note}
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(null);
+  const [showProfitableDays, setShowProfitableDays] = useState(true); // toggle: profitable-day counts
+  const [bestDayMode, setBestDayMode] = useState('dollar'); // 'dollar' | 'percent' — how Best Day is measured
   const isLastPhase = (challenge.currentPhase ?? 0) >= (challenge.phases?.length || 1) - 1;
   const cur = challenge.currentPhase ?? 0;
 
@@ -2761,6 +2842,7 @@ function ChallengeDetailModal({ challenge, trades, onClose, onUpdate }) {
       maxTotalDrawdown: parseFloat(p.maxTotalDrawdown) || 0,
       minTradingDays: parseInt(p.minTradingDays) || 0,
       maxTradingDays: p.maxTradingDays === '' || p.maxTradingDays == null ? null : parseInt(p.maxTradingDays),
+      minProfitableDays: p.minProfitableDays === '' || p.minProfitableDays == null ? 0 : parseInt(p.minProfitableDays),
     }));
     onUpdate({ ...challenge, accountSize: parseFloat(draft.accountSize) || challenge.accountSize, consistencyRule: draft.consistencyRule === '' ? null : parseFloat(draft.consistencyRule), phases: cleanPhases });
     setEditing(false);
@@ -2771,6 +2853,9 @@ function ChallengeDetailModal({ challenge, trades, onClose, onUpdate }) {
     const pts = tradesInPhase(trades, challenge, idx);
     const pnl = pts.reduce((s, t) => s + (parseFloat(t.pnl) || 0), 0);
     const days = new Set(pts.map(t => t.date)).size;
+    const dayPnl = {};
+    pts.forEach(t => { dayPnl[t.date] = (dayPnl[t.date] || 0) + (parseFloat(t.pnl) || 0); });
+    const profDays = Object.values(dayPnl).filter(v => v > 0).length;
     let pk = accountSize, run = accountSize, dd = 0;
     [...pts].sort((a, b) => new Date(`${a.date} ${a.time || '00:00'}`) - new Date(`${b.date} ${b.time || '00:00'}`)).forEach(t => {
       run += parseFloat(t.pnl) || 0; if (run > pk) pk = run;
@@ -2779,7 +2864,7 @@ function ChallengeDetailModal({ challenge, trades, onClose, onUpdate }) {
     const status = idx < cur ? 'passed'
       : idx === cur ? (challenge.status === 'active' ? 'current' : challenge.status)
       : 'locked';
-    return { p, idx, pnl, pct: accountSize > 0 ? (pnl / accountSize) * 100 : 0, days, dd, count: pts.length, status };
+    return { p, idx, pnl, pct: accountSize > 0 ? (pnl / accountSize) * 100 : 0, days, profDays, minProf: p.minProfitableDays || 0, dd, count: pts.length, status };
   });
 
   // ---- Live rule-compliance checklist for the current phase ----
@@ -2855,13 +2940,14 @@ function ChallengeDetailModal({ challenge, trades, onClose, onUpdate }) {
               {draft.phases.map((p, idx) => (
                 <div key={idx} style={{ padding: 12, borderRadius: 10, background: theme.card, border: `1px solid ${theme.cardBorder}` }}>
                   <input value={p.name || ''} onChange={e => setDraftPhase(idx, 'name', e.target.value)} className="input input-sm" style={{ marginBottom: 8, fontWeight: 600 }} placeholder={`Phase ${idx + 1} name`} />
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 8 }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 8 }}>
                     {[
                       { f: 'profitTarget', label: 'Target %', ph: 'none' },
                       { f: 'maxDailyDrawdown', label: 'Daily DD %' },
                       { f: 'maxTotalDrawdown', label: 'Total DD %' },
                       { f: 'minTradingDays', label: 'Min days' },
                       { f: 'maxTradingDays', label: 'Max days', ph: 'none' },
+                      { f: 'minProfitableDays', label: 'Min prof. days', ph: '0' },
                     ].map(({ f, label, ph }) => (
                       <div key={f}>
                         <label style={{ fontSize: 10, color: theme.textFaint, display: 'block', marginBottom: 3 }}>{label}</label>
@@ -2903,12 +2989,41 @@ function ChallengeDetailModal({ challenge, trades, onClose, onUpdate }) {
         </div>
 
         {/* Additional Stats */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, marginBottom: 20 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
+          {/* Best Day measurement toggle: net $ vs % of account */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ fontSize: 11, color: theme.textFaint }}>Best Day</span>
+            <div style={{ display: 'inline-flex', borderRadius: 8, overflow: 'hidden', border: `1px solid ${theme.cardBorder}` }}>
+              {[{ k: 'dollar', t: '$' }, { k: 'percent', t: '%' }].map(o => (
+                <button key={o.k} onClick={() => setBestDayMode(o.k)} style={{
+                  padding: '4px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer', border: 'none',
+                  background: bestDayMode === o.k ? theme.primary : 'transparent',
+                  color: bestDayMode === o.k ? '#fff' : theme.textMuted,
+                }}>{o.t}</button>
+              ))}
+            </div>
+          </div>
+          {/* Profitable-days toggle */}
+          <button onClick={() => setShowProfitableDays(v => !v)} className="btn-ghost" style={{
+            display: 'flex', alignItems: 'center', gap: 6, padding: '5px 11px', fontSize: 12,
+            border: `1px solid ${showProfitableDays ? theme.primary : theme.cardBorder}`,
+            color: showProfitableDays ? theme.primaryHi || theme.primary : theme.textMuted, borderRadius: 8,
+          }}>
+            <CheckCircle size={13} style={{ opacity: showProfitableDays ? 1 : 0.4 }} />
+            Profitable days
+          </button>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: `repeat(${showProfitableDays ? 5 : 4}, 1fr)`, gap: 10, marginBottom: 20 }}>
           {[
-            { label: 'Best Day', value: `+$${bestDay.toFixed(2)}`, color: theme.pos },
+            { label: 'Best Day', value: bestDayMode === 'percent' ? `${bestDay >= 0 ? '+' : ''}${bestDayPct.toFixed(2)}%` : `${bestDay >= 0 ? '+' : ''}$${bestDay.toFixed(2)}`, color: theme.pos },
             { label: 'Worst Day', value: `$${worstDay.toFixed(2)}`, color: theme.neg },
             { label: 'Avg Daily', value: `$${avgDailyPnl.toFixed(2)}`, color: avgDailyPnl >= 0 ? theme.pos : theme.neg },
-            { label: 'Consistency', value: `${consistencyPct.toFixed(0)}%`, color: consistencyPct <= 40 ? theme.pos : '#f59e0b' }
+            { label: 'Consistency', value: `${consistencyPct.toFixed(0)}%`, color: consistencyPct <= 40 ? theme.pos : '#f59e0b' },
+            ...(showProfitableDays ? [{
+              label: 'Profitable Days',
+              value: minProfitableDays > 0 ? `${profitableDays}/${minProfitableDays}` : `${profitableDays}`,
+              color: minProfitableDays > 0 ? (profitableDays >= minProfitableDays ? theme.pos : '#f59e0b') : theme.text,
+            }] : []),
           ].map(stat => (
             <div key={stat.label} style={{ padding: 12, borderRadius: 8, background: theme.hoverBg }}>
               <div className="stat-label">{stat.label}</div>
@@ -2984,24 +3099,32 @@ function ChallengeDetailModal({ challenge, trades, onClose, onUpdate }) {
           <div style={{ marginTop: 20 }}>
             <div className="stat-label" style={{ marginBottom: 10 }}>Phase History</div>
             <div style={{ borderRadius: 10, border: `1px solid ${theme.cardBorder}`, overflow: 'hidden' }}>
-              <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 90px 70px 60px 70px 78px', gap: 8, padding: '10px 14px', background: theme.hoverBg }}>
-                {['PHASE', 'P&L', '%', 'DAYS', 'MAX DD', 'STATUS'].map((h, i) => (
-                  <span key={h} style={{ fontSize: 11, fontWeight: 600, color: theme.textMuted, textAlign: i === 0 ? 'left' : i === 5 ? 'center' : 'right' }}>{h}</span>
-                ))}
-              </div>
-              {phaseStats.map(ps => {
-                const sc = { passed: theme.pos, current: theme.primary, funded: '#f59e0b', failed: theme.neg, locked: theme.textFaint }[ps.status] || theme.textMuted;
-                return (
-                  <div key={ps.idx} style={{ display: 'grid', gridTemplateColumns: '1.4fr 90px 70px 60px 70px 78px', gap: 8, padding: '10px 14px', borderTop: `1px solid ${theme.cardBorder}`, alignItems: 'center', opacity: ps.status === 'locked' ? 0.5 : 1 }}>
-                    <span style={{ fontSize: 13, color: theme.text }}>{ps.p.name || `Phase ${ps.idx + 1}`}<span style={{ fontSize: 11, color: theme.textFaint }}> · {ps.count} trade{ps.count === 1 ? '' : 's'}</span></span>
-                    <span style={{ fontSize: 13, fontWeight: 600, color: ps.pnl >= 0 ? theme.pos : theme.neg, textAlign: 'right' }}>{ps.pnl >= 0 ? '+' : ''}${ps.pnl.toFixed(2)}</span>
-                    <span style={{ fontSize: 13, color: theme.textMuted, textAlign: 'right' }}>{ps.pct >= 0 ? '+' : ''}{ps.pct.toFixed(2)}%</span>
-                    <span style={{ fontSize: 13, color: theme.textMuted, textAlign: 'right' }}>{ps.days}</span>
-                    <span style={{ fontSize: 13, color: ps.dd >= (ps.p.maxTotalDrawdown || 10) * 0.7 ? theme.neg : theme.textMuted, textAlign: 'right' }}>{ps.dd.toFixed(2)}%</span>
-                    <span style={{ textAlign: 'center' }}><span className="badge" style={{ background: `${sc}1f`, color: sc, textTransform: 'capitalize' }}>{ps.status}</span></span>
+              {(() => {
+                const gridCols = `1.4fr 90px 70px 60px 70px${showProfitableDays ? ' 78px' : ''} 78px`;
+                const headers = ['PHASE', 'P&L', '%', 'DAYS', 'MAX DD', ...(showProfitableDays ? ['PROF DAYS'] : []), 'STATUS'];
+                return (<>
+                  <div style={{ display: 'grid', gridTemplateColumns: gridCols, gap: 8, padding: '10px 14px', background: theme.hoverBg }}>
+                    {headers.map((h, i) => (
+                      <span key={h} style={{ fontSize: 11, fontWeight: 600, color: theme.textMuted, textAlign: i === 0 ? 'left' : i === headers.length - 1 ? 'center' : 'right' }}>{h}</span>
+                    ))}
                   </div>
-                );
-              })}
+                  {phaseStats.map(ps => {
+                    const sc = { passed: theme.pos, current: theme.primary, funded: '#f59e0b', failed: theme.neg, locked: theme.textFaint }[ps.status] || theme.textMuted;
+                    const profColor = ps.minProf > 0 ? (ps.profDays >= ps.minProf ? theme.pos : '#f59e0b') : theme.textMuted;
+                    return (
+                      <div key={ps.idx} style={{ display: 'grid', gridTemplateColumns: gridCols, gap: 8, padding: '10px 14px', borderTop: `1px solid ${theme.cardBorder}`, alignItems: 'center', opacity: ps.status === 'locked' ? 0.5 : 1 }}>
+                        <span style={{ fontSize: 13, color: theme.text }}>{ps.p.name || `Phase ${ps.idx + 1}`}<span style={{ fontSize: 11, color: theme.textFaint }}> · {ps.count} trade{ps.count === 1 ? '' : 's'}</span></span>
+                        <span style={{ fontSize: 13, fontWeight: 600, color: ps.pnl >= 0 ? theme.pos : theme.neg, textAlign: 'right' }}>{ps.pnl >= 0 ? '+' : ''}${ps.pnl.toFixed(2)}</span>
+                        <span style={{ fontSize: 13, color: theme.textMuted, textAlign: 'right' }}>{ps.pct >= 0 ? '+' : ''}{ps.pct.toFixed(2)}%</span>
+                        <span style={{ fontSize: 13, color: theme.textMuted, textAlign: 'right' }}>{ps.days}</span>
+                        <span style={{ fontSize: 13, color: ps.dd >= (ps.p.maxTotalDrawdown || 10) * 0.7 ? theme.neg : theme.textMuted, textAlign: 'right' }}>{ps.dd.toFixed(2)}%</span>
+                        {showProfitableDays && <span style={{ fontSize: 13, color: profColor, textAlign: 'right' }}>{ps.minProf > 0 ? `${ps.profDays}/${ps.minProf}` : ps.profDays}</span>}
+                        <span style={{ textAlign: 'center' }}><span className="badge" style={{ background: `${sc}1f`, color: sc, textTransform: 'capitalize' }}>{ps.status}</span></span>
+                      </div>
+                    );
+                  })}
+                </>);
+              })()}
             </div>
           </div>
         )}
@@ -3379,7 +3502,9 @@ function ImportModal({ onClose, onImport, accounts }) {
     setImporting(true); setError('');
     try {
       let totalImported = 0;
-      
+      let totalSkipped = 0;
+      const tally = (r) => { if (typeof r === 'number') { totalImported += r; } else if (r) { totalImported += r.imported || 0; totalSkipped += r.skipped || 0; } };
+
       if (phaseSplits.length > 0 && detectedPhases.length > 1) {
         // Import each phase to its designated account
         for (const phase of detectedPhases) {
@@ -3388,17 +3513,17 @@ function ImportModal({ onClose, onImport, accounts }) {
           if (phaseTrades.length > 0 && targetAccount) {
             // Strip _phase from trades before importing
             const cleanTrades = phaseTrades.map(({ _phase, ...rest }) => rest);
-            const count = await onImport(cleanTrades, targetAccount);
-            totalImported += count;
+            tally(await onImport(cleanTrades, targetAccount));
           }
         }
       } else {
         // Single phase — import all to one account
         const cleanTrades = parsedTrades.map(({ _phase, ...rest }) => rest);
-        totalImported = await onImport(cleanTrades, account);
+        tally(await onImport(cleanTrades, account));
       }
-      
-      setSuccess(`Imported ${totalImported} trades${detectedPhases.length > 1 ? ` across ${detectedPhases.length} phases` : ''}!`);
+
+      const skipNote = totalSkipped > 0 ? ` · skipped ${totalSkipped} duplicate${totalSkipped === 1 ? '' : 's'}` : '';
+      setSuccess(`Imported ${totalImported} trade${totalImported === 1 ? '' : 's'}${detectedPhases.length > 1 ? ` across ${detectedPhases.length} phases` : ''}${skipNote}!`);
       setParsedTrades([]);
       setPhaseSplits([]);
       setTimeout(onClose, 1500);
