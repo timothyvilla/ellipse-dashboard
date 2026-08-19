@@ -17,7 +17,8 @@
 import crypto from 'crypto';
 
 const COOKIE_NAME = 'ellipse_session';
-const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days ("remember me")
+const SHORT_TTL_MS = 24 * 60 * 60 * 1000;         // 1 day (no "remember me" → session cookie)
 
 function safeEqual(a, b) {
   const ha = crypto.createHash('sha256').update(Buffer.from(String(a))).digest();
@@ -49,14 +50,19 @@ export function passwordMatches(candidate) {
   return safeEqual(candidate, process.env.APP_PASSWORD);
 }
 
-export function buildSessionCookie() {
-  const expiresAt = Date.now() + SESSION_TTL_MS;
+export function buildSessionCookie(remember = true) {
+  // remember=true  → persistent 30-day cookie.
+  // remember=false → session cookie (no Max-Age; cleared when the browser closes)
+  //                  with a shorter internal token expiry as a backstop.
+  const ttl = remember ? SESSION_TTL_MS : SHORT_TTL_MS;
+  const expiresAt = Date.now() + ttl;
   const token = `${expiresAt}.${signToken(expiresAt, process.env.AUTH_SECRET)}`;
-  return [
+  const parts = [
     `${COOKIE_NAME}=${encodeURIComponent(token)}`,
     'Path=/', 'HttpOnly', 'Secure', 'SameSite=Lax',
-    `Max-Age=${Math.floor(SESSION_TTL_MS / 1000)}`,
-  ].join('; ');
+  ];
+  if (remember) parts.push(`Max-Age=${Math.floor(ttl / 1000)}`);
+  return parts.join('; ');
 }
 
 export function buildClearCookie() {
