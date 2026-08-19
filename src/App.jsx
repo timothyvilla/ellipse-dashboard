@@ -2442,6 +2442,29 @@ function ChallengesView({ challenges, trades, accounts, onUpdate, onDelete }) {
   const [selectedChallenge, setSelectedChallenge] = useState(null);
   const [deleteId, setDeleteId] = useState(null);
 
+  // ---- Live account snapshots from the cTrader cBot feed (/api/ctrader/live) ----
+  // Keyed by account name so a challenge maps to its live equity/floating P&L.
+  // Polls every 15s; silently no-ops if the route/feed isn't available.
+  const [accountLive, setAccountLive] = useState({});
+  useEffect(() => {
+    let alive = true;
+    const load = async () => {
+      try {
+        const r = await fetch('/api/ctrader/live');
+        if (!r.ok) return;
+        if (!(r.headers.get('content-type') || '').includes('application/json')) return;
+        const data = await r.json();
+        if (!alive || !Array.isArray(data.accounts)) return;
+        const map = {};
+        data.accounts.forEach(a => { if (a && a.account) map[a.account] = a; });
+        setAccountLive(map);
+      } catch {}
+    };
+    load();
+    const id = setInterval(load, 15000);
+    return () => { alive = false; clearInterval(id); };
+  }, []);
+
   const activeChallenges = challenges.filter(c => c.status === 'active');
   const completedChallenges = challenges.filter(c => c.status !== 'active');
 
@@ -2505,7 +2528,7 @@ function ChallengesView({ challenges, trades, accounts, onUpdate, onDelete }) {
               <div style={{ fontSize: 13, fontWeight: 600, color: theme.textMuted, textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 12 }}>Active Challenges</div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
                 {activeChallenges.map(challenge => (
-                  <ChallengeCard key={challenge.id} challenge={challenge} trades={trades} onSelect={() => setSelectedChallenge(challenge)} onUpdate={onUpdate} onDelete={() => setDeleteId(challenge.id)} />
+                  <ChallengeCard key={challenge.id} challenge={challenge} trades={trades} live={accountLive[challenge.account]} onSelect={() => setSelectedChallenge(challenge)} onUpdate={onUpdate} onDelete={() => setDeleteId(challenge.id)} />
                 ))}
               </div>
             </div>
@@ -2516,7 +2539,7 @@ function ChallengesView({ challenges, trades, accounts, onUpdate, onDelete }) {
               <div style={{ fontSize: 13, fontWeight: 600, color: theme.textMuted, textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 12 }}>Completed / Failed</div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                 {completedChallenges.map(challenge => (
-                  <ChallengeCard key={challenge.id} challenge={challenge} trades={trades} onSelect={() => setSelectedChallenge(challenge)} onUpdate={onUpdate} onDelete={() => setDeleteId(challenge.id)} compact />
+                  <ChallengeCard key={challenge.id} challenge={challenge} trades={trades} live={accountLive[challenge.account]} onSelect={() => setSelectedChallenge(challenge)} onUpdate={onUpdate} onDelete={() => setDeleteId(challenge.id)} compact />
                 ))}
               </div>
             </div>
@@ -2529,6 +2552,7 @@ function ChallengesView({ challenges, trades, accounts, onUpdate, onDelete }) {
         <ChallengeDetailModal
           challenge={selectedChallenge}
           trades={trades}
+          live={accountLive[selectedChallenge.account]}
           onClose={() => setSelectedChallenge(null)}
           onUpdate={(updated) => { onUpdate(updated); setSelectedChallenge(updated); }}
         />
@@ -2552,8 +2576,12 @@ function ChallengesView({ challenges, trades, accounts, onUpdate, onDelete }) {
 }
 
 // ==================== CHALLENGE CARD ====================
-function ChallengeCard({ challenge, trades, onSelect, onUpdate, onDelete, compact }) {
+function ChallengeCard({ challenge, trades, live, onSelect, onUpdate, onDelete, compact }) {
   const theme = useTheme();
+  // Live feed (cTrader cBot) for this challenge's account, if present.
+  const liveEquity = live && Number.isFinite(Number(live.equity)) ? Number(live.equity) : null;
+  const liveFloat = live && Number.isFinite(Number(live.floating_pnl)) ? Number(live.floating_pnl) : null;
+  const isLive = liveEquity != null;
 
   // Phase-scoped via explicit trade tags (date-boundary fallback for legacy data)
   // so the card's P&L resets to the initial balance after each phase pass.
@@ -2688,12 +2716,18 @@ function ChallengeCard({ challenge, trades, onSelect, onUpdate, onDelete, compac
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 20, cursor: 'pointer' }}>
           {/* Current P&L */}
           <div style={{ padding: 14, borderRadius: 10, background: theme.hoverBg }}>
-            <div className="stat-label">Current P&L</div>
+            <div className="stat-label" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              Current P&L
+              {isLive && <span title="Live from cTrader" style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 9, fontWeight: 700, color: theme.pos }}><span style={{ width: 6, height: 6, borderRadius: '50%', background: theme.pos, boxShadow: `0 0 0 3px ${theme.pos}22` }} />LIVE</span>}
+            </div>
             <div style={{ fontSize: 20, fontWeight: 700, color: totalPnl >= 0 ? theme.pos : theme.neg, marginTop: 4 }}>
               {totalPnl >= 0 ? '+' : ''}${totalPnl.toFixed(2)}
             </div>
             <div style={{ fontSize: 11, color: theme.textFaint, marginTop: 2 }}>
-              {profitPct >= 0 ? '+' : ''}{profitPct.toFixed(2)}% · Bal ${(accountSize + totalPnl).toLocaleString(undefined, { maximumFractionDigits: 0 })}
+              {profitPct >= 0 ? '+' : ''}{profitPct.toFixed(2)}% · Bal ${(isLive ? liveEquity : accountSize + totalPnl).toLocaleString(undefined, { maximumFractionDigits: 0 })}
+              {isLive && liveFloat != null && liveFloat !== 0 && (
+                <span style={{ color: liveFloat >= 0 ? theme.pos : theme.neg }}> · Float {liveFloat >= 0 ? '+' : ''}${liveFloat.toFixed(2)}</span>
+              )}
             </div>
           </div>
 
@@ -2789,8 +2823,14 @@ function ChallengeCard({ challenge, trades, onSelect, onUpdate, onDelete, compac
 }
 
 // ==================== CHALLENGE DETAIL MODAL ====================
-function ChallengeDetailModal({ challenge, trades, onClose, onUpdate }) {
+function ChallengeDetailModal({ challenge, trades, live, onClose, onUpdate }) {
   const theme = useTheme();
+
+  // Live feed (cTrader cBot) for this challenge's account, if present.
+  const liveEquity = live && Number.isFinite(Number(live.equity)) ? Number(live.equity) : null;
+  const liveFloat = live && Number.isFinite(Number(live.floating_pnl)) ? Number(live.floating_pnl) : null;
+  const liveUpdatedAt = live && live.updated_at ? new Date(live.updated_at) : null;
+  const isLive = liveEquity != null;
 
   // Phase-scoped between the phase's real start and the next phase's start, so
   // leaving a phase freezes it rather than making it unreachable.
@@ -3053,11 +3093,18 @@ function ChallengeDetailModal({ challenge, trades, onClose, onUpdate }) {
             <div style={{ fontSize: 11, color: theme.textFaint }}>{profitPct.toFixed(2)}%</div>
           </div>
           <div style={{ padding: 14, borderRadius: 10, background: theme.hoverBg, textAlign: 'center' }}>
-            <div className="stat-label">Balance</div>
-            <div style={{ fontSize: 22, fontWeight: 700, color: theme.text, marginTop: 4 }}>
-              ${(accountSize + totalPnl).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            <div className="stat-label" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+              {isLive ? 'Equity' : 'Balance'}
+              {isLive && <span title={liveUpdatedAt ? `Live · updated ${liveUpdatedAt.toLocaleTimeString()}` : 'Live from cTrader'} style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 9, fontWeight: 700, color: theme.pos }}><span style={{ width: 6, height: 6, borderRadius: '50%', background: theme.pos, boxShadow: `0 0 0 3px ${theme.pos}22` }} />LIVE</span>}
             </div>
-            <div style={{ fontSize: 11, color: theme.textFaint }}>from ${accountSize.toLocaleString()}</div>
+            <div style={{ fontSize: 22, fontWeight: 700, color: theme.text, marginTop: 4 }}>
+              ${(isLive ? liveEquity : accountSize + totalPnl).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </div>
+            <div style={{ fontSize: 11, color: isLive && liveFloat != null && liveFloat !== 0 ? (liveFloat >= 0 ? theme.pos : theme.neg) : theme.textFaint }}>
+              {isLive
+                ? (liveFloat != null && liveFloat !== 0 ? `floating ${liveFloat >= 0 ? '+' : ''}$${liveFloat.toFixed(2)}` : 'no open trades')
+                : `from $${accountSize.toLocaleString()}`}
+            </div>
           </div>
           <div style={{ padding: 14, borderRadius: 10, background: theme.hoverBg, textAlign: 'center' }}>
             <div className="stat-label">Max Drawdown</div>
