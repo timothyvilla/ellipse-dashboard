@@ -144,6 +144,8 @@ namespace cAlgo.Robots
                 sb.Append("\"lots\":").Append(Num(p.Quantity)).Append(',');
                 sb.Append("\"volume\":").Append(Num(p.VolumeInUnits)).Append(',');
                 sb.Append("\"entry\":").Append(Num(p.EntryPrice)).Append(',');
+                sb.Append("\"sl\":").Append(Num(p.StopLoss ?? 0)).Append(',');   // 0 = not set
+                sb.Append("\"tp\":").Append(Num(p.TakeProfit ?? 0)).Append(',');  // 0 = not set
                 sb.Append("\"floatPnl\":").Append(Num(p.NetProfit)).Append(',');
                 sb.Append("\"swap\":").Append(Num(p.Swap)).Append(',');
                 sb.Append("\"commission\":").Append(Num(p.Commissions));

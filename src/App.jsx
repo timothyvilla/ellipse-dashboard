@@ -5340,28 +5340,27 @@ function DashboardView({ trades, accounts, challenges, selectedAccount, setSelec
   const liveUpdatedAt = live && live.updated_at ? new Date(live.updated_at) : null;
   const isLive = liveEquity != null;
 
-  // ---- Balance & Equity time-series for the selected account (cBot feed) ----
-  const [equityHistory, setEquityHistory] = useState([]);
-  useEffect(() => {
-    if (selectedAccount === 'all') { setEquityHistory([]); return; }
-    let alive = true;
-    const load = async () => {
-      try {
-        const r = await fetch(`/api/ctrader/history?account=${encodeURIComponent(selectedAccount)}&limit=1000`);
-        if (!r.ok || !(r.headers.get('content-type') || '').includes('application/json')) return;
-        const data = await r.json();
-        if (!alive || !Array.isArray(data.points)) return;
-        setEquityHistory(data.points.map(p => ({
-          label: new Date(p.ts).toLocaleString([], { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }),
-          balance: Number(p.balance),
-          equity: Number(p.equity),
-        })));
-      } catch {}
-    };
-    load();
-    const id = setInterval(load, 30000);
-    return () => { alive = false; clearInterval(id); };
-  }, [selectedAccount]);
+  // ---- Open positions (from the live cBot snapshot) with computed RR + quality ----
+  // SL/TP come from the cBot's open_positions payload; RR = reward distance / risk
+  // distance; quality is a simple RR-based grade for the setup.
+  const openPositions = (live && Array.isArray(live.open_positions) ? live.open_positions : []).map(p => {
+    const entry = Number(p.entry);
+    const sl = Number(p.sl), tp = Number(p.tp);
+    const hasSl = Number.isFinite(sl) && sl > 0;
+    const hasTp = Number.isFinite(tp) && tp > 0;
+    const risk = hasSl && Number.isFinite(entry) ? Math.abs(entry - sl) : null;
+    const reward = hasTp && Number.isFinite(entry) ? Math.abs(tp - entry) : null;
+    const rr = risk && reward && risk > 0 ? reward / risk : null;
+    let grade = null, gradeColor = theme.textFaint;
+    if (rr != null) {
+      if (rr >= 3) { grade = 'A'; gradeColor = theme.pos; }
+      else if (rr >= 2) { grade = 'B'; gradeColor = theme.pos; }
+      else if (rr >= 1) { grade = 'C'; gradeColor = '#f59e0b'; }
+      else { grade = 'D'; gradeColor = theme.neg; }
+    }
+    return { ...p, entry, sl: hasSl ? sl : null, tp: hasTp ? tp : null, rr, grade, gradeColor };
+  });
+
   // Score against the real prop rules for this account when a challenge is active.
   const propRules = resolvePropRules(challenges, accounts, selectedAccount);
   const filtered = selectedAccount === 'all' ? trades : trades.filter(t => t.account === selectedAccount);
@@ -5624,26 +5623,51 @@ function DashboardView({ trades, accounts, challenges, selectedAccount, setSelec
         </div>
       </div>
 
-      {/* Balance & Equity (live cBot feed) */}
+      {/* Open Positions (live cBot feed) */}
       {isLive && (
-        <ChartCard title="Balance & Equity · live" minHeight={200}>
-          {equityHistory.length > 1 ? (
-            <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart data={equityHistory} margin={{ top: 8, right: 12, left: 4, bottom: 0 }}>
-                <XAxis dataKey="label" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: theme.textFaint }} minTickGap={48} />
-                <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: theme.textFaint }} tickFormatter={v => `$${(v / 1000).toFixed(1)}k`} domain={['dataMin - 50', 'dataMax + 50']} width={54} />
-                <Tooltip contentStyle={{ background: theme.card, border: `1px solid ${theme.cardBorder}`, borderRadius: 8, fontSize: 12 }} formatter={(v, n) => [`$${Number(v).toLocaleString(undefined, { maximumFractionDigits: 2 })}`, n === 'equity' ? 'Equity' : 'Balance']} />
-                <Legend wrapperStyle={{ fontSize: 11 }} />
-                <Line type="monotone" dataKey="balance" name="Balance" stroke={theme.textMuted} strokeWidth={1.6} dot={false} isAnimationActive={false} />
-                <Line type="monotone" dataKey="equity" name="Equity" stroke={theme.primary} strokeWidth={2} dot={false} isAnimationActive={false} />
-              </ComposedChart>
-            </ResponsiveContainer>
+        <div className="card" style={{ padding: 18 }}>
+          <div className="flex items-center justify-between" style={{ marginBottom: 12 }}>
+            <div className="flex items-center gap-2">
+              <div className="stat-label">Open Positions</div>
+              <span title="Live from cTrader" style={{ width: 7, height: 7, borderRadius: '50%', background: theme.pos, boxShadow: `0 0 0 3px ${theme.pos}22` }} />
+              <span style={{ fontSize: 11, color: theme.textFaint }}>{openPositions.length}</span>
+            </div>
+            {openPositions.length > 0 && liveFloat != null && (
+              <span style={{ fontSize: 12, fontWeight: 600, color: liveFloat > 0 ? theme.pos : liveFloat < 0 ? theme.neg : theme.textMuted }}>
+                Floating {liveFloat >= 0 ? '+' : ''}${(liveFloat || 0).toFixed(2)}
+              </span>
+            )}
+          </div>
+          {openPositions.length === 0 ? (
+            <div style={{ padding: '24px 0', textAlign: 'center', color: theme.textFaint, fontSize: 13 }}>No open positions right now.</div>
           ) : (
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: theme.textFaint, fontSize: 12, textAlign: 'center', padding: 20 }}>
-              Collecting live data — the curve fills in as the cBot posts (about one point per minute).
+            <div style={{ borderRadius: 10, border: `1px solid ${theme.cardBorder}`, overflow: 'hidden' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1.3fr 56px 64px 96px 96px 96px 56px 60px 96px', gap: 8, padding: '10px 14px', background: theme.hoverBg }}>
+                {['SYMBOL', 'SIDE', 'LOTS', 'ENTRY', 'SL', 'TP', 'RR', 'QLTY', 'FLOAT'].map((h, i) => (
+                  <span key={h} style={{ fontSize: 11, fontWeight: 600, color: theme.textMuted, textAlign: i <= 1 ? 'left' : 'right' }}>{h}</span>
+                ))}
+              </div>
+              {openPositions.map((p, i) => (
+                <div key={p.positionId ?? i} style={{ display: 'grid', gridTemplateColumns: '1.3fr 56px 64px 96px 96px 96px 56px 60px 96px', gap: 8, padding: '10px 14px', borderTop: `1px solid ${theme.cardBorder}`, alignItems: 'center' }}>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: theme.text }}>{p.symbol || '—'}</span>
+                  <span style={{ fontSize: 12.5, color: (p.side === 'Buy' || p.side === 'Long') ? theme.pos : theme.neg }}>{p.side || '—'}</span>
+                  <span style={{ fontSize: 12.5, color: theme.textMuted, textAlign: 'right' }}>{p.lots ?? '—'}</span>
+                  <span style={{ fontSize: 12.5, color: theme.textMuted, textAlign: 'right' }}>{Number.isFinite(p.entry) ? p.entry : '—'}</span>
+                  <span style={{ fontSize: 12.5, color: p.sl != null ? theme.neg : theme.textFaint, textAlign: 'right' }}>{p.sl != null ? p.sl : '—'}</span>
+                  <span style={{ fontSize: 12.5, color: p.tp != null ? theme.pos : theme.textFaint, textAlign: 'right' }}>{p.tp != null ? p.tp : '—'}</span>
+                  <span style={{ fontSize: 12.5, fontWeight: 600, color: p.rr != null ? theme.text : theme.textFaint, textAlign: 'right' }}>{p.rr != null ? `${p.rr.toFixed(2)}R` : '—'}</span>
+                  <span style={{ textAlign: 'right' }}>{p.grade ? <span className="badge" style={{ background: `${p.gradeColor}1f`, color: p.gradeColor, fontWeight: 700 }}>{p.grade}</span> : <span style={{ fontSize: 12, color: theme.textFaint }}>—</span>}</span>
+                  <span style={{ fontSize: 12.5, fontWeight: 600, color: Number(p.floatPnl) >= 0 ? theme.pos : theme.neg, textAlign: 'right' }}>{Number(p.floatPnl) >= 0 ? '+' : ''}${Number(p.floatPnl || 0).toFixed(2)}</span>
+                </div>
+              ))}
             </div>
           )}
-        </ChartCard>
+          {openPositions.length > 0 && openPositions.some(p => p.rr == null) && (
+            <div style={{ fontSize: 10.5, color: theme.textFaint, marginTop: 8 }}>
+              RR &amp; quality need a stop‑loss and take‑profit on the position — rebuild &amp; restart the cBot so it captures SL/TP.
+            </div>
+          )}
+        </div>
       )}
 
       {/* Third Row */}
