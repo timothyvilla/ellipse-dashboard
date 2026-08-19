@@ -5496,35 +5496,6 @@ function DashboardView({ trades, accounts, challenges, selectedAccount, setSelec
         </div>
       </div>
 
-      {/* Live account snapshot (cTrader cBot feed) — shows when the selected account has a live feed */}
-      {isLive && (
-        <div className="card" style={{ padding: '14px 18px', display: 'flex', alignItems: 'center', gap: 24, flexWrap: 'wrap', borderLeft: `3px solid ${theme.pos}` }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-            <span style={{ width: 8, height: 8, borderRadius: '50%', background: theme.pos, boxShadow: `0 0 0 4px ${theme.pos}22` }} />
-            <span style={{ fontSize: 12, fontWeight: 700, color: theme.pos, letterSpacing: '0.5px' }}>LIVE</span>
-          </div>
-          <div>
-            <div className="stat-label">Equity</div>
-            <div style={{ fontSize: 20, fontWeight: 700, color: theme.text, marginTop: 2 }}>
-              ${liveEquity.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-            </div>
-          </div>
-          <div>
-            <div className="stat-label">Floating P&L</div>
-            <div style={{ fontSize: 20, fontWeight: 700, marginTop: 2, color: liveFloat > 0 ? theme.pos : liveFloat < 0 ? theme.neg : theme.textMuted }}>
-              {liveFloat >= 0 ? '+' : ''}${(liveFloat || 0).toFixed(2)}
-            </div>
-          </div>
-          <div>
-            <div className="stat-label">Open Positions</div>
-            <div style={{ fontSize: 20, fontWeight: 700, color: theme.text, marginTop: 2 }}>{liveOpenCount}</div>
-          </div>
-          <div style={{ marginLeft: 'auto', fontSize: 11, color: theme.textFaint }}>
-            {liveUpdatedAt ? `updated ${liveUpdatedAt.toLocaleTimeString()}` : ''}
-          </div>
-        </div>
-      )}
-
       {/* Active Challenges Banner */}
       {activeChallenges.length > 0 && (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 12 }}>
