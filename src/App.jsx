@@ -569,6 +569,18 @@ const MT5_SERVER_OFFSET_MIN = 3 * 60; // GMT+3 (fixed)
 // Current date on the MT5 server, as YYYY-MM-DD.
 const serverToday = () => new Date(Date.now() + MT5_SERVER_OFFSET_MIN * 60000).toISOString().split('T')[0];
 
+// ---- Profitable-day rule ----------------------------------------------------
+// A day counts as "profitable" when its net P&L is positive AND reaches the
+// threshold. thresholdPct is a percentage of account size; 0 means any day that
+// closes net positive counts. Pass an array of per-day net P&L numbers.
+const profitableDayCount = (dayPnls, accountSize, thresholdPct = 0) => {
+  const min = thresholdPct > 0 ? (thresholdPct / 100) * (accountSize || 0) : 0;
+  return dayPnls.filter(v => v > 0 && v >= min).length;
+};
+// Whether the consistency rule is switched on for a challenge (back-compat:
+// legacy challenges only have consistencyRule, no explicit enabled flag).
+const consistencyOn = (ch) => ch.consistencyEnabled ?? (ch.consistencyRule != null);
+
 // Inclusive start, exclusive end. end === null means "still open".
 function phaseBounds(challenge, phaseIdx) {
   const starts = challenge.phaseStartDates || {};
@@ -1449,6 +1461,10 @@ export default function TradingJournal() {
               profitSplit: c.profit_split || 80,
               drawdownType: c.drawdown_type || 'balance',
               consistencyRule: c.consistency_rule,
+              consistencyEnabled: c.consistency_enabled ?? (c.consistency_rule != null),
+              profitableDaysEnabled: !!c.profitable_days_enabled,
+              minProfitableDays: c.min_profitable_days || 0,
+              profitableDayThreshold: c.profitable_day_threshold || 0,
               notes: c.notes || ''
             })));
           }
@@ -1933,7 +1949,11 @@ export default function TradingJournal() {
         start_date: challenge.startDate, status: challenge.status,
         phase_start_dates: challenge.phaseStartDates || {},
         profit_split: challenge.profitSplit, drawdown_type: challenge.drawdownType,
-        consistency_rule: challenge.consistencyRule, notes: challenge.notes
+        consistency_rule: challenge.consistencyRule, notes: challenge.notes,
+        consistency_enabled: !!challenge.consistencyEnabled,
+        profitable_days_enabled: !!challenge.profitableDaysEnabled,
+        min_profitable_days: challenge.minProfitableDays || 0,
+        profitable_day_threshold: challenge.profitableDayThreshold || 0
       };
       const { data, error } = await supabase.from('challenges').insert(dbChallenge).select().single();
       if (!error && data) {
@@ -1951,6 +1971,12 @@ export default function TradingJournal() {
       const { error } = await supabase.from('challenges').update({
         name: challenge.name, current_phase: challenge.currentPhase,
         status: challenge.status, phases: challenge.phases, notes: challenge.notes,
+        account_size: challenge.accountSize,
+        consistency_rule: challenge.consistencyRule,
+        consistency_enabled: !!challenge.consistencyEnabled,
+        profitable_days_enabled: !!challenge.profitableDaysEnabled,
+        min_profitable_days: challenge.minProfitableDays || 0,
+        profitable_day_threshold: challenge.profitableDayThreshold || 0,
         phase_start_dates: challenge.phaseStartDates || {},
         trade_phase: challenge.tradePhase || {},
         phase_history: challenge.phaseHistory || [],
@@ -2565,12 +2591,13 @@ function ChallengeCard({ challenge, trades, onSelect, onUpdate, onDelete, compac
   const tradingDays = new Set(challengeTrades.map(t => t.date)).size;
   const minTradingDays = phase?.minTradingDays || 0;
 
-  // Profitable days for the current phase (days closing net positive)
+  // Profitable days for the current phase (days reaching the threshold)
   const dailyPnlByDate = {};
   challengeTrades.forEach(t => { dailyPnlByDate[t.date] = (dailyPnlByDate[t.date] || 0) + (parseFloat(t.pnl) || 0); });
-  const profitableDays = Object.values(dailyPnlByDate).filter(v => v > 0).length;
-  const minProfitableDays = phase?.minProfitableDays || 0;
-  const profitableDaysMet = minProfitableDays === 0 || profitableDays >= minProfitableDays;
+  const profitableDaysEnabled = !!challenge.profitableDaysEnabled;
+  const profitableDays = profitableDayCount(Object.values(dailyPnlByDate), accountSize, parseFloat(challenge.profitableDayThreshold) || 0);
+  const minProfitableDays = parseInt(challenge.minProfitableDays) || 0;
+  const profitableDaysMet = profitableDays >= minProfitableDays;
 
   // Drawdown danger levels
   const isDailyDanger = dailyDDUsed >= 70;
@@ -2639,7 +2666,7 @@ function ChallengeCard({ challenge, trades, onSelect, onUpdate, onDelete, compac
               <span style={{ fontSize: 12, fontWeight: 600, color: theme.neg }}>DRAWDOWN WARNING</span>
             </div>
           )}
-          {minProfitableDays > 0 && (
+          {profitableDaysEnabled && minProfitableDays > 0 && (
             <div
               title={`Profitable days rule: ${profitableDays} of ${minProfitableDays} required in ${phase?.name || 'this phase'}${profitableDaysMet ? ' — met' : ` — ${minProfitableDays - profitableDays} more to go`}`}
               style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '5px 9px', borderRadius: 8, cursor: 'help',
@@ -2799,9 +2826,11 @@ function ChallengeDetailModal({ challenge, trades, onClose, onUpdate }) {
   const bestDay = dailyEntries.length > 0 ? Math.max(...dailyEntries.map(([, d]) => d.pnl)) : 0;
   const bestDayPct = accountSize > 0 ? (bestDay / accountSize) * 100 : 0;
   const avgDailyPnl = tradingDays > 0 ? totalPnl / tradingDays : 0;
-  // Profitable days: number of days in the current phase that closed net positive
-  const profitableDays = dailyEntries.filter(([, d]) => d.pnl > 0).length;
-  const minProfitableDays = phase?.minProfitableDays || 0;
+  // Profitable days: number of days in the current phase reaching the threshold
+  const profitableDaysEnabled = !!challenge.profitableDaysEnabled;
+  const profitableDayThreshold = parseFloat(challenge.profitableDayThreshold) || 0; // % of account
+  const profitableDays = profitableDayCount(dailyEntries.map(([, d]) => d.pnl), accountSize, profitableDayThreshold);
+  const minProfitableDays = parseInt(challenge.minProfitableDays) || 0;
 
   // Max drawdown from peak
   let peak = accountSize;
@@ -2832,7 +2861,15 @@ function ChallengeDetailModal({ challenge, trades, onClose, onUpdate }) {
   const handleUndo = () => onUpdate(undoLastPhaseChange(challenge));
 
   // ---- Edit existing phases ----
-  const startEdit = () => { setDraft({ accountSize: challenge.accountSize, consistencyRule: challenge.consistencyRule ?? '', phases: JSON.parse(JSON.stringify(challenge.phases || [])) }); setEditing(true); };
+  const startEdit = () => { setDraft({
+    accountSize: challenge.accountSize,
+    consistencyEnabled: consistencyOn(challenge),
+    consistencyRule: challenge.consistencyRule ?? '',
+    profitableDaysEnabled: !!challenge.profitableDaysEnabled,
+    profitableDayThreshold: challenge.profitableDayThreshold ?? '',
+    minProfitableDays: challenge.minProfitableDays ?? '',
+    phases: JSON.parse(JSON.stringify(challenge.phases || [])),
+  }); setEditing(true); };
   const setDraftPhase = (idx, field, value) => setDraft(d => ({ ...d, phases: d.phases.map((p, i) => i === idx ? { ...p, [field]: value } : p) }));
   const saveEdit = () => {
     const cleanPhases = draft.phases.map(p => ({
@@ -2842,9 +2879,17 @@ function ChallengeDetailModal({ challenge, trades, onClose, onUpdate }) {
       maxTotalDrawdown: parseFloat(p.maxTotalDrawdown) || 0,
       minTradingDays: parseInt(p.minTradingDays) || 0,
       maxTradingDays: p.maxTradingDays === '' || p.maxTradingDays == null ? null : parseInt(p.maxTradingDays),
-      minProfitableDays: p.minProfitableDays === '' || p.minProfitableDays == null ? 0 : parseInt(p.minProfitableDays),
     }));
-    onUpdate({ ...challenge, accountSize: parseFloat(draft.accountSize) || challenge.accountSize, consistencyRule: draft.consistencyRule === '' ? null : parseFloat(draft.consistencyRule), phases: cleanPhases });
+    onUpdate({
+      ...challenge,
+      accountSize: parseFloat(draft.accountSize) || challenge.accountSize,
+      consistencyEnabled: !!draft.consistencyEnabled,
+      consistencyRule: !draft.consistencyEnabled || draft.consistencyRule === '' ? null : parseFloat(draft.consistencyRule),
+      profitableDaysEnabled: !!draft.profitableDaysEnabled,
+      profitableDayThreshold: draft.profitableDayThreshold === '' ? 0 : parseFloat(draft.profitableDayThreshold) || 0,
+      minProfitableDays: draft.minProfitableDays === '' ? 0 : parseInt(draft.minProfitableDays) || 0,
+      phases: cleanPhases,
+    });
     setEditing(false);
   };
 
@@ -2855,7 +2900,7 @@ function ChallengeDetailModal({ challenge, trades, onClose, onUpdate }) {
     const days = new Set(pts.map(t => t.date)).size;
     const dayPnl = {};
     pts.forEach(t => { dayPnl[t.date] = (dayPnl[t.date] || 0) + (parseFloat(t.pnl) || 0); });
-    const profDays = Object.values(dayPnl).filter(v => v > 0).length;
+    const profDays = profitableDayCount(Object.values(dayPnl), accountSize, profitableDayThreshold);
     let pk = accountSize, run = accountSize, dd = 0;
     [...pts].sort((a, b) => new Date(`${a.date} ${a.time || '00:00'}`) - new Date(`${b.date} ${b.time || '00:00'}`)).forEach(t => {
       run += parseFloat(t.pnl) || 0; if (run > pk) pk = run;
@@ -2864,20 +2909,25 @@ function ChallengeDetailModal({ challenge, trades, onClose, onUpdate }) {
     const status = idx < cur ? 'passed'
       : idx === cur ? (challenge.status === 'active' ? 'current' : challenge.status)
       : 'locked';
-    return { p, idx, pnl, pct: accountSize > 0 ? (pnl / accountSize) * 100 : 0, days, profDays, minProf: p.minProfitableDays || 0, dd, count: pts.length, status };
+    return { p, idx, pnl, pct: accountSize > 0 ? (pnl / accountSize) * 100 : 0, days, profDays, minProf: minProfitableDays, dd, count: pts.length, status };
   });
 
   // ---- Live rule-compliance checklist for the current phase ----
   const worstDayLoss = dailyEntries.length ? Math.abs(Math.min(0, ...dailyEntries.map(([, d]) => d.pnl))) : 0;
   const worstDayDDpct = accountSize > 0 ? (worstDayLoss / accountSize) * 100 : 0;
   const checklist = [
-    phase.profitTarget != null && { label: `Profit target ${phase.profitTarget}%`, ok: profitPct >= phase.profitTarget, detail: `at ${profitPct.toFixed(2)}%` },
-    { label: `Daily drawdown under ${phase.maxDailyDrawdown || 5}%`, ok: worstDayDDpct < (phase.maxDailyDrawdown || 5), detail: `worst ${worstDayDDpct.toFixed(2)}%` },
-    { label: `Total drawdown under ${phase.maxTotalDrawdown || 10}%`, ok: maxDD < (phase.maxTotalDrawdown || 10), detail: `at ${maxDD.toFixed(2)}%` },
-    { label: `Min ${phase.minTradingDays || 0} trading days`, ok: tradingDays >= (phase.minTradingDays || 0), detail: `${tradingDays} logged` },
-    phase.maxTradingDays && { label: `Max ${phase.maxTradingDays} trading days`, ok: tradingDays <= phase.maxTradingDays, detail: `${tradingDays} used` },
-    challenge.consistencyRule && { label: `Consistency under ${challenge.consistencyRule}%`, ok: consistencyPct <= challenge.consistencyRule, detail: `best day ${consistencyPct.toFixed(0)}%` },
+    phase.profitTarget != null && { label: `Profit target ${phase.profitTarget}%`, ok: profitPct >= phase.profitTarget, detail: `at ${profitPct.toFixed(2)}%`, required: true },
+    { label: `Daily drawdown under ${phase.maxDailyDrawdown || 5}%`, ok: worstDayDDpct < (phase.maxDailyDrawdown || 5), detail: `worst ${worstDayDDpct.toFixed(2)}%`, required: true },
+    { label: `Total drawdown under ${phase.maxTotalDrawdown || 10}%`, ok: maxDD < (phase.maxTotalDrawdown || 10), detail: `at ${maxDD.toFixed(2)}%`, required: true },
+    { label: `Min ${phase.minTradingDays || 0} trading days`, ok: tradingDays >= (phase.minTradingDays || 0), detail: `${tradingDays} logged`, required: true },
+    phase.maxTradingDays && { label: `Max ${phase.maxTradingDays} trading days`, ok: tradingDays <= phase.maxTradingDays, detail: `${tradingDays} used`, required: true },
+    profitableDaysEnabled && { label: `Min ${minProfitableDays} profitable day${minProfitableDays === 1 ? '' : 's'}${profitableDayThreshold > 0 ? ` (≥${profitableDayThreshold}%/day)` : ''}`, ok: profitableDays >= minProfitableDays, detail: `${profitableDays} logged`, required: true },
+    consistencyOn(challenge) && challenge.consistencyRule != null && { label: `Consistency under ${challenge.consistencyRule}%`, ok: consistencyPct <= challenge.consistencyRule, detail: `best day ${consistencyPct.toFixed(0)}%`, required: true },
   ].filter(Boolean);
+
+  // ---- Progression gate: every required rule must pass before advancing ------
+  const failedRules = checklist.filter(c => c.required && !c.ok);
+  const allRulesMet = failedRules.length === 0;
 
   // ---- Trade-by-trade list for the current phase ----
   const phaseTradeRows = (() => {
@@ -2932,22 +2982,50 @@ function ChallengeDetailModal({ challenge, trades, onClose, onUpdate }) {
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <label style={{ fontSize: 11, color: theme.textMuted }}>Account size $</label>
                 <input type="number" value={draft.accountSize} onChange={e => setDraft(d => ({ ...d, accountSize: e.target.value }))} className="input input-sm" style={{ width: 120 }} />
-                <label style={{ fontSize: 11, color: theme.textMuted }}>Consistency %</label>
-                <input type="number" value={draft.consistencyRule} onChange={e => setDraft(d => ({ ...d, consistencyRule: e.target.value }))} className="input input-sm" style={{ width: 80 }} placeholder="—" />
+              </div>
+            </div>
+            {/* Challenge-level evaluation rules */}
+            <div style={{ marginBottom: 12, padding: 12, borderRadius: 10, background: theme.card, border: `1px solid ${theme.cardBorder}`, display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 600, color: theme.text, cursor: 'pointer' }}>
+                  <input type="checkbox" checked={!!draft.consistencyEnabled} onChange={e => setDraft(d => ({ ...d, consistencyEnabled: e.target.checked, consistencyRule: e.target.checked && (d.consistencyRule === '' || d.consistencyRule == null) ? 40 : d.consistencyRule }))} />
+                  Consistency rule
+                </label>
+                {draft.consistencyEnabled && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ fontSize: 11, color: theme.textMuted }}>Max single day ≤</span>
+                    <input type="number" value={draft.consistencyRule} onChange={e => setDraft(d => ({ ...d, consistencyRule: e.target.value }))} className="input input-sm" style={{ width: 70 }} placeholder="40" />
+                    <span style={{ fontSize: 11, color: theme.textMuted }}>% of total</span>
+                  </div>
+                )}
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 600, color: theme.text, cursor: 'pointer' }}>
+                  <input type="checkbox" checked={!!draft.profitableDaysEnabled} onChange={e => setDraft(d => ({ ...d, profitableDaysEnabled: e.target.checked }))} />
+                  Profitable days
+                </label>
+                {draft.profitableDaysEnabled && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: 11, color: theme.textMuted }}>Need</span>
+                    <input type="number" value={draft.minProfitableDays} onChange={e => setDraft(d => ({ ...d, minProfitableDays: e.target.value }))} className="input input-sm" style={{ width: 60 }} placeholder="0" />
+                    <span style={{ fontSize: 11, color: theme.textMuted }}>days · a day counts at ≥</span>
+                    <input type="number" step="0.1" value={draft.profitableDayThreshold} onChange={e => setDraft(d => ({ ...d, profitableDayThreshold: e.target.value }))} className="input input-sm" style={{ width: 64 }} placeholder="0" />
+                    <span style={{ fontSize: 11, color: theme.textMuted }}>% of account</span>
+                  </div>
+                )}
               </div>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               {draft.phases.map((p, idx) => (
                 <div key={idx} style={{ padding: 12, borderRadius: 10, background: theme.card, border: `1px solid ${theme.cardBorder}` }}>
                   <input value={p.name || ''} onChange={e => setDraftPhase(idx, 'name', e.target.value)} className="input input-sm" style={{ marginBottom: 8, fontWeight: 600 }} placeholder={`Phase ${idx + 1} name`} />
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 8 }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 8 }}>
                     {[
                       { f: 'profitTarget', label: 'Target %', ph: 'none' },
                       { f: 'maxDailyDrawdown', label: 'Daily DD %' },
                       { f: 'maxTotalDrawdown', label: 'Total DD %' },
                       { f: 'minTradingDays', label: 'Min days' },
                       { f: 'maxTradingDays', label: 'Max days', ph: 'none' },
-                      { f: 'minProfitableDays', label: 'Min prof. days', ph: '0' },
                     ].map(({ f, label, ph }) => (
                       <div key={f}>
                         <label style={{ fontSize: 10, color: theme.textFaint, display: 'block', marginBottom: 3 }}>{label}</label>
@@ -3233,13 +3311,33 @@ function ChallengeDetailModal({ challenge, trades, onClose, onUpdate }) {
             )}
           </div>
           {challenge.status === 'active' && (
-            <div className="flex gap-2">
+            <div className="flex items-center gap-2" style={{ flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+              {!allRulesMet && (
+                <span
+                  title={`Not met: ${failedRules.map(r => r.label).join(', ')}`}
+                  style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 12, color: theme.warn, cursor: 'help' }}
+                >
+                  <AlertTriangle size={13} />{failedRules.length} rule{failedRules.length === 1 ? '' : 's'} not met
+                </span>
+              )}
               {!isLastPhase ? (
-                <button onClick={() => setConfirmAdvance({ effectiveDate: new Date().toISOString().split('T')[0], source: 'manual' })} className="btn-primary" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <button
+                  onClick={() => allRulesMet && setConfirmAdvance({ effectiveDate: serverToday(), source: 'manual' })}
+                  disabled={!allRulesMet}
+                  title={allRulesMet ? '' : `Complete all evaluation rules first: ${failedRules.map(r => r.label).join(', ')}`}
+                  className="btn-primary"
+                  style={{ display: 'flex', alignItems: 'center', gap: 6, opacity: allRulesMet ? 1 : 0.45, cursor: allRulesMet ? 'pointer' : 'not-allowed' }}
+                >
                   <Flag size={16} />Advance to {challenge.phases[(challenge.currentPhase ?? 0) + 1]?.name || 'Next Phase'}
                 </button>
               ) : (
-                <button onClick={handleMarkPassed} className="btn-primary" style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'linear-gradient(135deg, #22d3a5, #5eead4)' }}>
+                <button
+                  onClick={() => allRulesMet && handleMarkPassed()}
+                  disabled={!allRulesMet}
+                  title={allRulesMet ? '' : `Complete all evaluation rules first: ${failedRules.map(r => r.label).join(', ')}`}
+                  className="btn-primary"
+                  style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'linear-gradient(135deg, #22d3a5, #5eead4)', opacity: allRulesMet ? 1 : 0.45, cursor: allRulesMet ? 'pointer' : 'not-allowed' }}
+                >
                   <Trophy size={16} />Mark as Passed
                 </button>
               )}
@@ -3262,7 +3360,9 @@ function NewChallengeModal({ onClose, onSave, accounts }) {
     account: accounts[0]?.name || '', startDate: new Date().toISOString().split('T')[0],
     phaseStartDates: {},
     status: 'active', profitSplit: 80, drawdownType: 'balance',
-    consistencyRule: null, notes: ''
+    consistencyEnabled: false, consistencyRule: null,
+    profitableDaysEnabled: false, minProfitableDays: 0, profitableDayThreshold: 0,
+    notes: ''
   });
 
   const handlePresetChange = (preset) => {
@@ -3273,7 +3373,8 @@ function NewChallengeModal({ onClose, onSave, accounts }) {
       propFirm: config.name,
       phases: JSON.parse(JSON.stringify(config.phases)),
       profitSplit: config.profitSplit,
-      consistencyRule: config.consistencyRule
+      consistencyRule: config.consistencyRule,
+      consistencyEnabled: config.consistencyRule != null,
     }));
   };
 
@@ -3417,6 +3518,46 @@ function NewChallengeModal({ onClose, onSave, accounts }) {
                   Remove Last
                 </button>
               )}
+            </div>
+
+            {/* Evaluation rules (apply across phases) */}
+            <div style={{ padding: 16, borderRadius: 10, border: `1px solid ${theme.cardBorder}`, display: 'flex', flexDirection: 'column', gap: 14 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: theme.text }}>Evaluation rules</div>
+
+              {/* Profitable days */}
+              <div>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                  <input type="checkbox" checked={challenge.profitableDaysEnabled} onChange={(e) => setChallenge({ ...challenge, profitableDaysEnabled: e.target.checked, minProfitableDays: e.target.checked && !challenge.minProfitableDays ? 1 : challenge.minProfitableDays })} />
+                  <span style={{ fontSize: 13, fontWeight: 500, color: theme.text }}>Require profitable days</span>
+                </label>
+                {challenge.profitableDaysEnabled && (
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 10 }}>
+                    <div>
+                      <label className="label">Min Profitable Days</label>
+                      <input type="number" min="0" value={challenge.minProfitableDays} onChange={(e) => setChallenge({ ...challenge, minProfitableDays: parseInt(e.target.value) || 0 })} className="input input-sm" />
+                    </div>
+                    <div>
+                      <label className="label">Counts as profitable at ≥ (% of account)</label>
+                      <input type="number" step="0.1" min="0" value={challenge.profitableDayThreshold} onChange={(e) => setChallenge({ ...challenge, profitableDayThreshold: parseFloat(e.target.value) || 0 })} placeholder="0 = any green day" className="input input-sm" />
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Consistency */}
+              <div>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                  <input type="checkbox" checked={challenge.consistencyEnabled} onChange={(e) => setChallenge({ ...challenge, consistencyEnabled: e.target.checked, consistencyRule: e.target.checked ? (challenge.consistencyRule ?? 40) : null })} />
+                  <span style={{ fontSize: 13, fontWeight: 500, color: theme.text }}>Consistency score</span>
+                </label>
+                {challenge.consistencyEnabled && (
+                  <div style={{ marginTop: 10 }}>
+                    <label className="label">Max single-day profit (% of total profit)</label>
+                    <input type="number" step="1" min="1" value={challenge.consistencyRule ?? ''} onChange={(e) => setChallenge({ ...challenge, consistencyRule: parseFloat(e.target.value) || null })} placeholder="e.g. 40" className="input input-sm" style={{ maxWidth: 200 }} />
+                    <div style={{ fontSize: 11, color: theme.textFaint, marginTop: 4 }}>No single day may exceed this share of total profit. Lower = stricter.</div>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         )}
