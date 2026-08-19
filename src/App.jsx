@@ -581,6 +581,35 @@ const profitableDayCount = (dayPnls, accountSize, thresholdPct = 0) => {
 // legacy challenges only have consistencyRule, no explicit enabled flag).
 const consistencyOn = (ch) => ch.consistencyEnabled ?? (ch.consistencyRule != null);
 
+// ---- Equity-based daily drawdown ------------------------------------------
+// Uses the live cTrader snapshot (day_equity_high/low, start_of_day_*) so the
+// figure reflects floating P&L, the way a prop firm actually measures it.
+// Returns a percentage of account size (0 when no live data). `mode` is the
+// challenge's daily_dd_mode: startOfDay | staticBalance | peakToTrough | trailing.
+const DAILY_DD_MODES = [
+  { key: 'startOfDay', label: 'Start-of-day equity' },
+  { key: 'staticBalance', label: 'Start-of-day balance' },
+  { key: 'peakToTrough', label: 'Peak-to-trough (day)' },
+  { key: 'trailing', label: 'Trailing (from day peak)' },
+];
+function equityDailyDdPct(live, accountSize, mode = 'startOfDay') {
+  if (!live || !Number.isFinite(Number(live.equity)) || !(accountSize > 0)) return null;
+  const eq = Number(live.equity);
+  const hi = Number(live.day_equity_high ?? eq);
+  const lo = Number(live.day_equity_low ?? eq);
+  const sodE = Number(live.start_of_day_equity ?? eq);
+  const sodB = Number(live.start_of_day_balance ?? eq);
+  let loss;
+  switch (mode) {
+    case 'staticBalance': loss = sodB - eq; break;
+    case 'peakToTrough': loss = hi - lo; break;
+    case 'trailing': loss = hi - eq; break;
+    case 'startOfDay':
+    default: loss = sodE - eq; break;
+  }
+  return Math.max(0, loss) / accountSize * 100;
+}
+
 // Inclusive start, exclusive end. end === null means "still open".
 function phaseBounds(challenge, phaseIdx) {
   const starts = challenge.phaseStartDates || {};
@@ -1465,6 +1494,8 @@ export default function TradingJournal() {
               profitableDaysEnabled: !!c.profitable_days_enabled,
               minProfitableDays: c.min_profitable_days || 0,
               profitableDayThreshold: c.profitable_day_threshold || 0,
+              dailyDdMode: c.daily_dd_mode || 'startOfDay',
+              autoBreach: !!c.auto_breach,
               notes: c.notes || ''
             })));
           }
@@ -1953,7 +1984,9 @@ export default function TradingJournal() {
         consistency_enabled: !!challenge.consistencyEnabled,
         profitable_days_enabled: !!challenge.profitableDaysEnabled,
         min_profitable_days: challenge.minProfitableDays || 0,
-        profitable_day_threshold: challenge.profitableDayThreshold || 0
+        profitable_day_threshold: challenge.profitableDayThreshold || 0,
+        daily_dd_mode: challenge.dailyDdMode || 'startOfDay',
+        auto_breach: !!challenge.autoBreach
       };
       const { data, error } = await supabase.from('challenges').insert(dbChallenge).select().single();
       if (!error && data) {
@@ -1977,6 +2010,8 @@ export default function TradingJournal() {
         profitable_days_enabled: !!challenge.profitableDaysEnabled,
         min_profitable_days: challenge.minProfitableDays || 0,
         profitable_day_threshold: challenge.profitableDayThreshold || 0,
+        daily_dd_mode: challenge.dailyDdMode || 'startOfDay',
+        auto_breach: !!challenge.autoBreach,
         phase_start_dates: challenge.phaseStartDates || {},
         trade_phase: challenge.tradePhase || {},
         phase_history: challenge.phaseHistory || [],
@@ -2512,6 +2547,29 @@ function ChallengesView({ challenges, trades, accounts, onUpdate, onDelete }) {
     });
   }, [trades.length]); // Re-check when trade count changes
 
+  // Auto-breach on LIVE equity: when a challenge has auto_breach on and its account
+  // has a live cTrader snapshot, fail it the moment equity crosses the daily or max
+  // drawdown limit (floating P&L included). Only active challenges are processed, so
+  // it fires once per breach. Recorded in phase history with source 'auto-breach'.
+  useEffect(() => {
+    activeChallenges.forEach(challenge => {
+      if (!challenge.autoBreach || challenge.status !== 'active') return;
+      const live = accountLive[challenge.account];
+      if (!live || !Number.isFinite(Number(live.equity))) return;
+      const phase = challenge.phases?.[challenge.currentPhase] || challenge.phases?.[0] || {};
+      const accountSize = challenge.accountSize || 1;
+      const eq = Number(live.equity);
+      const dailyDd = equityDailyDdPct(live, accountSize, challenge.dailyDdMode || 'startOfDay');
+      const dailyLimit = phase.maxDailyDrawdown || 5;
+      const totalFloor = accountSize * (1 - (phase.maxTotalDrawdown || 10) / 100);
+      const dailyBreach = dailyDd != null && dailyDd >= dailyLimit;
+      const totalBreach = eq < totalFloor;
+      if (dailyBreach || totalBreach) {
+        onUpdate(setChallengeStatus(challenge, 'failed', trades, { source: 'auto-breach' }));
+      }
+    });
+  }, [accountLive]); // Re-check on every live snapshot
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
       {/* Active Challenges */}
@@ -2598,7 +2656,10 @@ function ChallengeCard({ challenge, trades, live, onSelect, onUpdate, onDelete, 
   const today = serverToday();
   const todayTrades = challengeTrades.filter(t => t.date === today);
   const todayPnl = todayTrades.reduce((s, t) => s + t.pnl, 0);
-  const dailyDrawdownPct = accountSize > 0 ? Math.abs(Math.min(todayPnl, 0)) / accountSize * 100 : 0;
+  // Daily drawdown: prefer live equity (floating included) via the challenge's
+  // daily_dd_mode; fall back to today's closed-trade loss when no live feed.
+  const liveDailyDd = equityDailyDdPct(live, accountSize, challenge.dailyDdMode || 'startOfDay');
+  const dailyDrawdownPct = liveDailyDd != null ? liveDailyDd : (accountSize > 0 ? Math.abs(Math.min(todayPnl, 0)) / accountSize * 100 : 0);
   const maxDailyDD = phase.maxDailyDrawdown || 5;
   const dailyDDUsed = maxDailyDD > 0 ? (dailyDrawdownPct / maxDailyDD) * 100 : 0;
 
@@ -2786,7 +2847,7 @@ function ChallengeCard({ challenge, trades, live, onSelect, onUpdate, onDelete, 
           <div>
             <div className="flex justify-between items-center" style={{ marginBottom: 6 }}>
               <span style={{ fontSize: 12, fontWeight: 500, color: isDailyDanger ? theme.neg : theme.textMuted }}>
-                Daily Drawdown {isDailyCritical && '⚠️'}
+                Daily Drawdown{liveDailyDd != null ? ' · live' : ''} {isDailyCritical && '⚠️'}
               </span>
               <span style={{ fontSize: 12, fontWeight: 600, color: isDailyDanger ? theme.neg : theme.text }}>
                 {dailyDrawdownPct.toFixed(2)}% / {maxDailyDD}%
@@ -2908,6 +2969,8 @@ function ChallengeDetailModal({ challenge, trades, live, onClose, onUpdate }) {
     profitableDaysEnabled: !!challenge.profitableDaysEnabled,
     profitableDayThreshold: challenge.profitableDayThreshold ?? '',
     minProfitableDays: challenge.minProfitableDays ?? '',
+    dailyDdMode: challenge.dailyDdMode || 'startOfDay',
+    autoBreach: !!challenge.autoBreach,
     phases: JSON.parse(JSON.stringify(challenge.phases || [])),
   }); setEditing(true); };
   const setDraftPhase = (idx, field, value) => setDraft(d => ({ ...d, phases: d.phases.map((p, i) => i === idx ? { ...p, [field]: value } : p) }));
@@ -2928,6 +2991,8 @@ function ChallengeDetailModal({ challenge, trades, live, onClose, onUpdate }) {
       profitableDaysEnabled: !!draft.profitableDaysEnabled,
       profitableDayThreshold: draft.profitableDayThreshold === '' ? 0 : parseFloat(draft.profitableDayThreshold) || 0,
       minProfitableDays: draft.minProfitableDays === '' ? 0 : parseInt(draft.minProfitableDays) || 0,
+      dailyDdMode: draft.dailyDdMode || 'startOfDay',
+      autoBreach: !!draft.autoBreach,
       phases: cleanPhases,
     });
     setEditing(false);
@@ -2955,9 +3020,15 @@ function ChallengeDetailModal({ challenge, trades, live, onClose, onUpdate }) {
   // ---- Live rule-compliance checklist for the current phase ----
   const worstDayLoss = dailyEntries.length ? Math.abs(Math.min(0, ...dailyEntries.map(([, d]) => d.pnl))) : 0;
   const worstDayDDpct = accountSize > 0 ? (worstDayLoss / accountSize) * 100 : 0;
+  // Equity-based daily drawdown from the live feed (includes floating P&L). Falls
+  // back to the closed-trade worst-day figure when there's no live snapshot.
+  const ddMode = challenge.dailyDdMode || 'startOfDay';
+  const liveDailyDd = equityDailyDdPct(live, accountSize, ddMode);
+  const dailyDdShown = liveDailyDd != null ? liveDailyDd : worstDayDDpct;
+  const dailyDdLimit = phase.maxDailyDrawdown || 5;
   const checklist = [
     phase.profitTarget != null && { label: `Profit target ${phase.profitTarget}%`, ok: profitPct >= phase.profitTarget, detail: `at ${profitPct.toFixed(2)}%`, required: true },
-    { label: `Daily drawdown under ${phase.maxDailyDrawdown || 5}%`, ok: worstDayDDpct < (phase.maxDailyDrawdown || 5), detail: `worst ${worstDayDDpct.toFixed(2)}%`, required: false },
+    { label: `Daily drawdown under ${dailyDdLimit}%`, ok: dailyDdShown < dailyDdLimit, detail: liveDailyDd != null ? `live ${dailyDdShown.toFixed(2)}% · ${DAILY_DD_MODES.find(m => m.key === ddMode)?.label || ddMode}` : `worst ${worstDayDDpct.toFixed(2)}%`, required: false },
     { label: `Total drawdown under ${phase.maxTotalDrawdown || 10}%`, ok: maxDD < (phase.maxTotalDrawdown || 10), detail: `at ${maxDD.toFixed(2)}%`, required: false },
     { label: `Min ${phase.minTradingDays || 0} trading days`, ok: tradingDays >= (phase.minTradingDays || 0), detail: `${tradingDays} logged`, required: true },
     phase.maxTradingDays && { label: `Max ${phase.maxTradingDays} trading days`, ok: tradingDays <= phase.maxTradingDays, detail: `${tradingDays} used`, required: true },
@@ -3054,6 +3125,20 @@ function ChallengeDetailModal({ challenge, trades, live, onClose, onUpdate }) {
                   </div>
                 )}
               </div>
+              {/* Live equity drawdown: how daily DD is measured + optional auto-breach */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                <span style={{ fontSize: 12, fontWeight: 600, color: theme.text }}>Daily DD (live)</span>
+                <select value={draft.dailyDdMode || 'startOfDay'} onChange={e => setDraft(d => ({ ...d, dailyDdMode: e.target.value }))} className="input input-sm" style={{ width: 200 }}>
+                  {DAILY_DD_MODES.map(m => <option key={m.key} value={m.key}>{m.label}</option>)}
+                </select>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 600, color: theme.text, cursor: 'pointer', marginLeft: 4 }}>
+                  <input type="checkbox" checked={!!draft.autoBreach} onChange={e => setDraft(d => ({ ...d, autoBreach: e.target.checked }))} />
+                  Auto-fail on breach
+                </label>
+              </div>
+              <div style={{ fontSize: 10.5, color: theme.textFaint }}>
+                Daily DD is measured against live equity (floating included) when a cTrader feed is connected; otherwise it falls back to closed-trade days. Auto-fail marks the challenge failed the moment live equity crosses the daily or max drawdown limit.
+              </div>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               {draft.phases.map((p, idx) => (
@@ -3112,6 +3197,11 @@ function ChallengeDetailModal({ challenge, trades, live, onClose, onUpdate }) {
               {maxDD.toFixed(2)}%
             </div>
             <div style={{ fontSize: 11, color: theme.textFaint }}>Limit: {phase?.maxTotalDrawdown || 10}%</div>
+            {liveDailyDd != null && (
+              <div style={{ fontSize: 10.5, marginTop: 3, fontWeight: 600, color: liveDailyDd >= dailyDdLimit ? theme.neg : liveDailyDd >= dailyDdLimit * 0.7 ? '#f59e0b' : theme.pos }}>
+                ● Daily {liveDailyDd.toFixed(2)}% / {dailyDdLimit}%
+              </div>
+            )}
           </div>
           <div style={{ padding: 14, borderRadius: 10, background: theme.hoverBg, textAlign: 'center' }}>
             <div className="stat-label">Trading Days</div>
@@ -3416,6 +3506,7 @@ function NewChallengeModal({ onClose, onSave, accounts }) {
     status: 'active', profitSplit: 80, drawdownType: 'balance',
     consistencyEnabled: false, consistencyRule: null,
     profitableDaysEnabled: false, minProfitableDays: 0, profitableDayThreshold: 0,
+    dailyDdMode: 'startOfDay', autoBreach: false,
     notes: ''
   });
 
@@ -3611,6 +3702,19 @@ function NewChallengeModal({ onClose, onSave, accounts }) {
                     <div style={{ fontSize: 11, color: theme.textFaint, marginTop: 4 }}>No single day may exceed this share of total profit. Lower = stricter.</div>
                   </div>
                 )}
+              </div>
+
+              {/* Live drawdown */}
+              <div>
+                <label className="label">Daily drawdown basis (live equity)</label>
+                <select value={challenge.dailyDdMode || 'startOfDay'} onChange={(e) => setChallenge({ ...challenge, dailyDdMode: e.target.value })} className="input input-sm" style={{ maxWidth: 260 }}>
+                  {DAILY_DD_MODES.map(m => <option key={m.key} value={m.key}>{m.label}</option>)}
+                </select>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10, cursor: 'pointer' }}>
+                  <input type="checkbox" checked={!!challenge.autoBreach} onChange={(e) => setChallenge({ ...challenge, autoBreach: e.target.checked })} />
+                  <span style={{ fontSize: 13, fontWeight: 500, color: theme.text }}>Auto‑fail on live drawdown breach</span>
+                </label>
+                <div style={{ fontSize: 11, color: theme.textFaint, marginTop: 4 }}>When a cTrader feed is connected, daily drawdown is measured on live equity (floating included). Auto‑fail marks the challenge failed the moment equity crosses the daily or max DD limit.</div>
               </div>
             </div>
           </div>
