@@ -36,7 +36,7 @@ async function ingest(req, res) {
   try {
     const { data: existing } = await supabase
       .from('account_live')
-      .select('server_day, day_equity_high, day_equity_low, start_of_day_equity, start_of_day_balance')
+      .select('server_day, day_equity_high, day_equity_low, start_of_day_equity, start_of_day_balance, last_history_ts')
       .eq('account', account)
       .maybeSingle();
 
@@ -67,6 +67,19 @@ async function ingest(req, res) {
     const { error } = await supabase.from('account_live').upsert(row, { onConflict: 'account' });
     if (error) return send(res, 500, { error: 'upsert_failed', msg: error.message });
 
+    // Best-effort time-series point (~1/min) for the equity chart. Any failure —
+    // e.g. the live_history migration not run yet — is swallowed so it can never
+    // break the live snapshot above. last_history_ts (on account_live) throttles it.
+    try {
+      const nowMs = Date.now();
+      const lastHistMs = existing?.last_history_ts ? new Date(existing.last_history_ts).getTime() : 0;
+      if (!lastHistMs || nowMs - lastHistMs >= 60000) {
+        const nowIso = new Date().toISOString();
+        const { error: hErr } = await supabase.from('account_live_history').insert({ account, ts: nowIso, balance, equity, floating_pnl: floating });
+        if (!hErr) await supabase.from('account_live').update({ last_history_ts: nowIso }).eq('account', account);
+      }
+    } catch {}
+
     return send(res, 200, { ok: true, account, equity, floating_pnl: floating, server_day: today });
   } catch (e) {
     return send(res, 500, { error: 'ingest_threw', msg: e?.message || String(e) });
@@ -96,9 +109,36 @@ async function live(req, res) {
   }
 }
 
+async function history(req, res) {
+  if (req.method !== 'GET') return send(res, 405, { error: 'method_not_allowed' });
+  if (!requireSession(req, res)) return;
+
+  const supabase = getSupabase();
+  if (!supabase) return send(res, 200, { error: 'missing_supabase_env', points: [] });
+
+  const account = req.query?.account;
+  if (!account) return send(res, 400, { error: 'missing_account', points: [] });
+  const raw = parseInt(req.query?.limit, 10);
+  const limit = Number.isFinite(raw) ? Math.min(Math.max(raw, 1), 5000) : 500;
+
+  try {
+    const { data, error } = await supabase
+      .from('account_live_history')
+      .select('ts, balance, equity, floating_pnl')
+      .eq('account', String(account))
+      .order('ts', { ascending: false })
+      .limit(limit);
+    if (error) return send(res, 200, { error: 'history_read_failed', msg: error.message, points: [] });
+    return send(res, 200, { points: (data || []).slice().reverse(), count: (data || []).length });
+  } catch (e) {
+    return send(res, 200, { error: 'history_read_threw', msg: e?.message || String(e), points: [] });
+  }
+}
+
 export default async function handler(req, res) {
   const action = String(req.query?.action || '').toLowerCase();
   if (action === 'ingest') return ingest(req, res);
   if (action === 'live') return live(req, res);
+  if (action === 'history') return history(req, res);
   return send(res, 404, { error: 'not_found' });
 }

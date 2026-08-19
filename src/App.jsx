@@ -5339,6 +5339,29 @@ function DashboardView({ trades, accounts, challenges, selectedAccount, setSelec
   const liveOpenCount = live && Array.isArray(live.open_positions) ? live.open_positions.length : 0;
   const liveUpdatedAt = live && live.updated_at ? new Date(live.updated_at) : null;
   const isLive = liveEquity != null;
+
+  // ---- Balance & Equity time-series for the selected account (cBot feed) ----
+  const [equityHistory, setEquityHistory] = useState([]);
+  useEffect(() => {
+    if (selectedAccount === 'all') { setEquityHistory([]); return; }
+    let alive = true;
+    const load = async () => {
+      try {
+        const r = await fetch(`/api/ctrader/history?account=${encodeURIComponent(selectedAccount)}&limit=1000`);
+        if (!r.ok || !(r.headers.get('content-type') || '').includes('application/json')) return;
+        const data = await r.json();
+        if (!alive || !Array.isArray(data.points)) return;
+        setEquityHistory(data.points.map(p => ({
+          label: new Date(p.ts).toLocaleString([], { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }),
+          balance: Number(p.balance),
+          equity: Number(p.equity),
+        })));
+      } catch {}
+    };
+    load();
+    const id = setInterval(load, 30000);
+    return () => { alive = false; clearInterval(id); };
+  }, [selectedAccount]);
   // Score against the real prop rules for this account when a challenge is active.
   const propRules = resolvePropRules(challenges, accounts, selectedAccount);
   const filtered = selectedAccount === 'all' ? trades : trades.filter(t => t.account === selectedAccount);
@@ -5539,12 +5562,24 @@ function DashboardView({ trades, accounts, challenges, selectedAccount, setSelec
       )}
 
       {/* Top Stats */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 12 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: `repeat(${isLive ? 6 : 5}, 1fr)`, gap: 12 }}>
         <div className="card" style={{ padding: 16 }}>
           <div className="flex items-center gap-2"><div className="stat-label">Net P&L</div><div title={`${netPnlCardCount} ${netPnlCardPhase ? 'phase' : 'closed'} trades`} style={{ minWidth: 18, height: 18, padding: '0 5px', borderRadius: 4, background: theme.hoverBg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, color: theme.textMuted }}>{netPnlCardCount}</div></div>
           <div style={{ fontSize: 22, fontWeight: 700, color: netPnlCard >= 0 ? theme.pos : theme.neg, marginTop: 6 }}>{netPnlCard >= 0 ? '+' : ''}${netPnlCard.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
           {netPnlCardPhase && <div title="Scoped to the active challenge's current phase" style={{ fontSize: 10, color: theme.textFaint, marginTop: 3 }}>{netPnlCardPhase} · resets each phase</div>}
         </div>
+        {isLive && (
+          <div className="card" style={{ padding: 16 }}>
+            <div className="flex items-center gap-2">
+              <div className="stat-label">Floating P&L</div>
+              <span title="Live from cTrader" style={{ width: 7, height: 7, borderRadius: '50%', background: theme.pos, boxShadow: `0 0 0 3px ${theme.pos}22` }} />
+            </div>
+            <div style={{ fontSize: 22, fontWeight: 700, marginTop: 6, color: liveFloat > 0 ? theme.pos : liveFloat < 0 ? theme.neg : theme.textMuted }}>
+              {liveFloat >= 0 ? '+' : ''}${(liveFloat || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </div>
+            <div style={{ fontSize: 10, color: theme.textFaint, marginTop: 3 }}>{liveOpenCount} open · eq ${liveEquity.toLocaleString(undefined, { maximumFractionDigits: 0 })}</div>
+          </div>
+        )}
         <div className="card" style={{ padding: 16 }}>
           <div className="stat-label">Trade Expectancy</div>
           <div style={{ fontSize: 22, fontWeight: 700, color: expectancy >= 0 ? theme.pos : theme.neg, marginTop: 6 }}>${expectancy.toFixed(2)}</div>
@@ -5588,6 +5623,28 @@ function DashboardView({ trades, accounts, challenges, selectedAccount, setSelec
           </ChartCard>
         </div>
       </div>
+
+      {/* Balance & Equity (live cBot feed) */}
+      {isLive && (
+        <ChartCard title="Balance & Equity · live" minHeight={200}>
+          {equityHistory.length > 1 ? (
+            <ResponsiveContainer width="100%" height="100%">
+              <ComposedChart data={equityHistory} margin={{ top: 8, right: 12, left: 4, bottom: 0 }}>
+                <XAxis dataKey="label" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: theme.textFaint }} minTickGap={48} />
+                <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: theme.textFaint }} tickFormatter={v => `$${(v / 1000).toFixed(1)}k`} domain={['dataMin - 50', 'dataMax + 50']} width={54} />
+                <Tooltip contentStyle={{ background: theme.card, border: `1px solid ${theme.cardBorder}`, borderRadius: 8, fontSize: 12 }} formatter={(v, n) => [`$${Number(v).toLocaleString(undefined, { maximumFractionDigits: 2 })}`, n === 'equity' ? 'Equity' : 'Balance']} />
+                <Legend wrapperStyle={{ fontSize: 11 }} />
+                <Line type="monotone" dataKey="balance" name="Balance" stroke={theme.textMuted} strokeWidth={1.6} dot={false} isAnimationActive={false} />
+                <Line type="monotone" dataKey="equity" name="Equity" stroke={theme.primary} strokeWidth={2} dot={false} isAnimationActive={false} />
+              </ComposedChart>
+            </ResponsiveContainer>
+          ) : (
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: theme.textFaint, fontSize: 12, textAlign: 'center', padding: 20 }}>
+              Collecting live data — the curve fills in as the cBot posts (about one point per minute).
+            </div>
+          )}
+        </ChartCard>
+      )}
 
       {/* Third Row */}
       <div style={{ display: 'grid', gridTemplateColumns: '320px 1fr', gap: 12 }}>
