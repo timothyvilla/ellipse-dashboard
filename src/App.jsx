@@ -2917,8 +2917,8 @@ function ChallengeDetailModal({ challenge, trades, onClose, onUpdate }) {
   const worstDayDDpct = accountSize > 0 ? (worstDayLoss / accountSize) * 100 : 0;
   const checklist = [
     phase.profitTarget != null && { label: `Profit target ${phase.profitTarget}%`, ok: profitPct >= phase.profitTarget, detail: `at ${profitPct.toFixed(2)}%`, required: true },
-    { label: `Daily drawdown under ${phase.maxDailyDrawdown || 5}%`, ok: worstDayDDpct < (phase.maxDailyDrawdown || 5), detail: `worst ${worstDayDDpct.toFixed(2)}%`, required: true },
-    { label: `Total drawdown under ${phase.maxTotalDrawdown || 10}%`, ok: maxDD < (phase.maxTotalDrawdown || 10), detail: `at ${maxDD.toFixed(2)}%`, required: true },
+    { label: `Daily drawdown under ${phase.maxDailyDrawdown || 5}%`, ok: worstDayDDpct < (phase.maxDailyDrawdown || 5), detail: `worst ${worstDayDDpct.toFixed(2)}%`, required: false },
+    { label: `Total drawdown under ${phase.maxTotalDrawdown || 10}%`, ok: maxDD < (phase.maxTotalDrawdown || 10), detail: `at ${maxDD.toFixed(2)}%`, required: false },
     { label: `Min ${phase.minTradingDays || 0} trading days`, ok: tradingDays >= (phase.minTradingDays || 0), detail: `${tradingDays} logged`, required: true },
     phase.maxTradingDays && { label: `Max ${phase.maxTradingDays} trading days`, ok: tradingDays <= phase.maxTradingDays, detail: `${tradingDays} used`, required: true },
     profitableDaysEnabled && { label: `Min ${minProfitableDays} profitable day${minProfitableDays === 1 ? '' : 's'}${profitableDayThreshold > 0 ? ` (≥${profitableDayThreshold}%/day)` : ''}`, ok: profitableDays >= minProfitableDays, detail: `${profitableDays} logged`, required: true },
