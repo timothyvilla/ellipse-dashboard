@@ -1,18 +1,13 @@
 {
-  "name": "okx-pnl-bridge",
+  "name": "okx-backfill",
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Sync OKX historical realized P&L into Supabase (rolling 3mo + full history since 2021).",
-  "bin": { "okx-sync": "./okx-sync.mjs" },
-  "scripts": {
-    "recent": "node okx-sync.mjs recent",
-    "positions": "node okx-sync.mjs positions",
-    "backfill": "node okx-sync.mjs backfill",
-    "all": "node okx-sync.mjs all"
-  },
+  "description": "One-time backfill of OKX's full ledger since 2021 into Supabase (crypto_bills). Rolling 3-month history is handled by api/okx/pnl-history.mjs + api/cron/okx-sync.mjs.",
+  "bin": { "okx-backfill": "./okx-backfill.mjs" },
+  "scripts": { "backfill": "node okx-backfill.mjs" },
   "dependencies": {
-    "@supabase/supabase-js": "^2.45.0",
+    "@supabase/supabase-js": "^2.39.0",
     "adm-zip": "^0.5.16"
   },
   "engines": { "node": ">=18" }

@@ -5,6 +5,8 @@
 //   - upserts fills into crypto_trades (deduped on trade_id)
 //   - writes a crypto_snapshots row (powers the equity curve)
 //   - updates active crypto_challenges' current_balance
+//   - upserts CLOSED positions into crypto_positions_history (realized P&L
+//     history that survives past OKX's ~3-month live window)
 //
 // Triggered by a scheduler (Vercel Cron or GitHub Actions) that calls
 // this URL hourly. Protected by CRON_SECRET.
@@ -17,6 +19,8 @@
 // ──────────────────────────────────────────────────────────────────
 import { createClient } from '@supabase/supabase-js';
 import { okxGet } from '../okx/_okx.mjs';
+
+const num = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? n : 0; };
 
 export default async function handler(req, res) {
   res.setHeader('Content-Type', 'application/json');
@@ -106,9 +110,36 @@ export default async function handler(req, res) {
       if (!chErr) challengesUpdated = active.length;
     }
 
+    // ---- Persist CLOSED positions (realized P&L history) ----------------
+    // Best-effort: closed-position history is what powers Net P&L / calendar
+    // beyond OKX's ~3-month live window. Wrapped so a schema/permission issue
+    // here can never fail the core balance/fills/snapshot sync above.
+    let positionsPersisted = 0;
+    try {
+      const ph = await okxGet('/api/v5/account/positions-history?instType=SWAP&limit=100');
+      if (!(ph.body?.code && ph.body.code !== '0')) {
+        const rows = (ph.body?.data || []).filter((p) => p.posId).map((p) => ({
+          pos_id: p.posId, inst_id: p.instId, inst_type: p.instType, pos_side: p.posSide,
+          lever: num(p.lever), open_avg_px: num(p.openAvgPx), close_avg_px: num(p.closeAvgPx),
+          open_time: p.cTime ? new Date(Number(p.cTime)).toISOString() : null,
+          close_time: p.uTime ? new Date(Number(p.uTime)).toISOString() : null,
+          realized_pnl: num(p.realizedPnl), pnl: num(p.pnl), fee: num(p.fee),
+          funding_fee: num(p.fundingFee), liq_penalty: num(p.liqPenalty), pnl_ratio: num(p.pnlRatio),
+          ccy: p.ccy, source: 'cron', raw: p,
+        }));
+        if (rows.length) {
+          const { data, error } = await supabase
+            .from('crypto_positions_history')
+            .upsert(rows, { onConflict: 'pos_id' })
+            .select('pos_id');
+          if (!error) positionsPersisted = data?.length || rows.length;
+        }
+      }
+    } catch { /* non-fatal */ }
+
     return res.status(200).json({
       ok: true, ts: Date.now(), totalEq, openPositions: positions.length,
-      fillsSeen: fills.length, fillsInserted: insertedFills, challengesUpdated,
+      fillsSeen: fills.length, fillsInserted: insertedFills, challengesUpdated, positionsPersisted,
     });
   } catch (e) {
     return res.status(500).json({ error: 'sync_failed', msg: e.message });

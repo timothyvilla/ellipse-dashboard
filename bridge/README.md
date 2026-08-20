@@ -1,66 +1,42 @@
-# OKX historical P&L → Supabase
+# OKX historical P&L
 
-Pull OKX realized P&L from the API instead of retaining it in session state (which
-resets on login). The dashboard reads Supabase — exactly like the cTrader `trades` /
-`account_live` pattern — so history persists across logout and can't drift from OKX.
+Pulls OKX realized P&L from the API instead of retaining it in session state
+(which reset on login). Everything reads from Supabase, matching the existing
+`crypto_trades` / `crypto_snapshots` cron pattern.
 
-## Can I get the *full* history? Yes — in two tiers
+## Where each piece lives
 
-OKX's live API only serves **~3 months**. Full history comes from a separate
-"archive" path. This bridge does both:
+| Concern | Code | Notes |
+|---|---|---|
+| Closed-position P&L, live (~3 mo) | `api/okx/pnl-history.mjs` | The route the dashboard already calls. Serves realized P&L per closed position; **funding is excluded** (it's carry cost, surfaced by `api/okx/funding.mjs`). |
+| Persist closed positions hourly | `api/cron/okx-sync.mjs` | Upserts `crypto_positions_history` so history accumulates past OKX's 3-month window automatically. |
+| Full ledger since 2021 (one-time) | `bridge/okx-backfill.mjs` | The only non-serverless piece — the archive apply/poll/download can take minutes. Writes `crypto_bills`. |
+| Schema | `supabase/…_crypto_pnl_history.sql` | `crypto_positions_history`, `crypto_bills`, `crypto_backfill_progress`, `crypto_pnl_daily` view. |
 
-| Tier | Endpoint | Covers | Table |
-|---|---|---|---|
-| 1 — rolling, rich | `GET /api/v5/account/positions-history` | last ~3 months, per-position `realizedPnl` | `okx_positions_history` |
-| 1b — recent ledger | `GET /api/v5/account/bills-archive` | last ~3 months, full ledger | `okx_bills` (`source='live'`) |
-| **2 — full since 2021** | `POST`+`GET /api/v5/account/bills-history-archive` | **everything back to Jan 2021**, quarterly files | `okx_bills` (`source='archive'`) |
+## Why this also fixes "funding counted as trades"
 
-Tier 2 works by *applying* for a quarter's ledger, waiting for OKX to generate a
-downloadable file, then downloading + parsing it. The apply call is rate-limited
-(~12/day), so `backfill` is **resumable**: progress is tracked per quarter in
-`okx_backfill_progress`, and rerunning skips quarters already done.
-
-> Beyond ~1 year the *UI* only lets you view, but the archive **download** goes back to
-> 2021 — that's what Tier 2 uses, so you genuinely get full history.
+The dashboard calls `/api/okx/pnl-history` for its Net-P&L / Recent-Trades basis.
+That route was **missing**, so the analytics fell back to raw fills and dragged
+funding/dust rows into the graded trades list. With the route in place,
+`cryptoPnl` populates from real closed positions and funding stays out. In OKX's
+ledger, funding is bill `type='8'` and trades are `type='2'` — the backfill tags
+both so a "total funding cost" stat is still possible without polluting trades.
 
 ## Setup
 
-1. Create a **read-only** OKX API key (no trade/withdraw perms) → key, secret, passphrase.
-2. `cd bridge && npm install`
-3. `cp .env.example .env` and fill it in (`OKX_ACCOUNT_LABEL` must match this account's
-   `trades.account`).
-4. Apply the migration in `supabase/20260820_okx_pnl_history.sql`.
+1. Apply `supabase/…_crypto_pnl_history.sql` in Supabase.
+2. Deploy — `api/okx/pnl-history.mjs` and the updated cron ship with the app
+   (same env vars you already use: `OKX_API_*`, `SUPABASE_URL`,
+   `SUPABASE_SERVICE_ROLE_KEY`, `CRON_SECRET`).
 
-## Run
+## One-time deep backfill (only if you want pre-cron history from 2021)
 
 ```bash
-# One-time full backfill (resumable; rerun over a few days if it hits the apply cap)
-npm run backfill
-
-# Ongoing — wire into your existing snapshot cron / Task Scheduler alongside the cTrader bridge
-npm run recent        # positions-history (3mo) + recent bills, every interval
+cd bridge
+npm install
+cp .env.example .env   # same read-only OKX key + Supabase service role
+npm run backfill       # resumable; rerun over a couple of days if it hits OKX's ~12/day apply cap
 ```
 
-`recent` is idempotent (upsert by `pos_id` / `bill_id`), so run it as often as your
-snapshot cadence — it just refreshes the rolling window and dedupes.
-
-## What the dashboard reads
-
-- `okx_positions_history` — closed positions with fee-inclusive `realized_pnl`. **Use this
-  for the Recent Trades card** (see `bridge/recent-trades-fix.md`).
-- `okx_bills` — full ledger; funding rows are `type='8'`, trades are `type='2'`.
-- `okx_pnl_daily` (view) — per-server-day realized P&L, positions for the rolling window
-  and bills for older days, so a daily P&L chart is continuous from 2021 to today.
-
-## Notes
-
-- **Funding ≠ trades.** The "F" rows in Recent Trades are funding fees (`type='8'`), not
-  trades (`type='2'`). Fixed by reading `okx_positions_history` — see the fix doc.
-- **Money scaling:** unlike the cTrader API, OKX returns decimal strings (not scaled
-  integers), so values are used as-is via `Number()`.
-- **Server day:** everything is stamped on the GMT+3 broker day (`MT5_SERVER_OFFSET_MIN`)
-  to line up with the cTrader daily breakdown.
-- **Archive CSV columns** can vary by account locale/version. If a backfill parses blank
-  rows, adjust `HEADER_MAP` in `bridge/okx/pnl-sync.mjs` to your file's headers (the whole
-  row is always preserved in `raw`).
-```
+Going forward you don't need this — the hourly cron persists every closed
+position, so history keeps growing on its own.
