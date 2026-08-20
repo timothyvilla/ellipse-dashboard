@@ -1,0 +1,19 @@
+{
+  "name": "okx-pnl-bridge",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Sync OKX historical realized P&L into Supabase (rolling 3mo + full history since 2021).",
+  "bin": { "okx-sync": "./okx-sync.mjs" },
+  "scripts": {
+    "recent": "node okx-sync.mjs recent",
+    "positions": "node okx-sync.mjs positions",
+    "backfill": "node okx-sync.mjs backfill",
+    "all": "node okx-sync.mjs all"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.0",
+    "adm-zip": "^0.5.16"
+  },
+  "engines": { "node": ">=18" }
+}
