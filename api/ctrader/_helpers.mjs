@@ -1,25 +1,21 @@
 // api/ctrader/_helpers.mjs
 // ──────────────────────────────────────────────────────────────────
-// Shared helpers for the cTrader live-feed routes. Kept in THIS directory
-// (not ../) because Vercel's function bundler fails to trace parent-dir
-// imports — same reason api/okx/_guard.mjs exists.
+// Shared helpers for the cTrader live-feed READ routes. Kept in THIS directory
+// (not ../) because Vercel's function bundler fails to trace parent-dir imports
+// — same reason api/okx/_guard.mjs exists.
 //
-// Two very different auth models live here:
-//   • requireIngestKey  — machine-to-machine (the cBot). Bearer API key in the
-//                         Authorization header, compared to CTRADER_INGEST_KEY.
-//   • requireSession    — the browser session cookie (byte-compatible with
-//                         ../_auth.mjs), used by the read route.
+// account_live / account_live_history are written by the Open API bridge
+// (bridge/ctrader/) with the Supabase service-role key; these routes only READ,
+// gated by the browser session cookie (byte-compatible with ../_auth.mjs).
 //
 // Env vars:
 //   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY  — DB access (service role)
-//   CTRADER_INGEST_KEY                        — shared secret the cBot sends
 //   APP_PASSWORD, AUTH_SECRET                 — existing session gate
 // ──────────────────────────────────────────────────────────────────
 import crypto from 'crypto';
 import { createClient } from '@supabase/supabase-js';
 
 const COOKIE_NAME = 'ellipse_session';
-const MT5_SERVER_OFFSET_MIN = 3 * 60; // GMT+3 — keep in sync with the app's daily boundary
 
 export function send(res, status, obj) {
   res.setHeader('Content-Type', 'application/json');
@@ -39,29 +35,6 @@ export function getSupabase() {
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !key) return null;
   return createClient(url, key, { auth: { persistSession: false } });
-}
-
-/** YYYY-MM-DD for the MT5/broker server day (GMT+3) of the given Date. */
-export function serverDay(date = new Date()) {
-  return new Date(date.getTime() + MT5_SERVER_OFFSET_MIN * 60000).toISOString().slice(0, 10);
-}
-
-// ---- Machine auth (cBot) ----------------------------------------------------
-/** Returns true if the request carries a valid Bearer ingest key. Otherwise it
- *  has already written the response. */
-export function requireIngestKey(req, res) {
-  const expected = process.env.CTRADER_INGEST_KEY;
-  if (!expected) {
-    send(res, 503, { error: 'ingest_not_configured', msg: 'Set CTRADER_INGEST_KEY on the server.' });
-    return false;
-  }
-  const auth = req.headers?.authorization || '';
-  const token = auth.startsWith('Bearer ') ? auth.slice(7).trim() : '';
-  if (!token || !safeEqual(token, expected)) {
-    send(res, 401, { error: 'unauthorized', msg: 'Bad or missing ingest key.' });
-    return false;
-  }
-  return true;
 }
 
 // ---- Browser auth (session cookie) -----------------------------------------
