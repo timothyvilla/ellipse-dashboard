@@ -1,42 +1,125 @@
-# OKX historical P&L
+# cTrader Open API → Supabase live-P&L bridge
 
-Pulls OKX realized P&L from the API instead of retaining it in session state
-(which reset on login). Everything reads from Supabase, matching the existing
-`crypto_trades` / `crypto_snapshots` cron pattern.
+Replaces the old cTrader **cBot** (`cbots/EllipseLivePnl.cs`). Instead of a bot
+running inside cTrader Desktop that POSTs to `/api/ctrader/ingest`, this is a
+small **read-only** Node process that talks to the cTrader **Open API** directly
+over a persistent TLS socket, computes equity / floating P&L per account, and
+writes the same Supabase tables the dashboard already reads:
 
-## Where each piece lives
+- `account_live` — latest snapshot per account (balance, equity, floating P&L,
+  open positions, intraday equity high/low, start-of-day baselines).
+- `account_live_history` — ~1 point/min for the equity chart.
 
-| Concern | Code | Notes |
-|---|---|---|
-| Closed-position P&L, live (~3 mo) | `api/okx/pnl-history.mjs` | The route the dashboard already calls. Serves realized P&L per closed position; **funding is excluded** (it's carry cost, surfaced by `api/okx/funding.mjs`). |
-| Persist closed positions hourly | `api/cron/okx-sync.mjs` | Upserts `crypto_positions_history` so history accumulates past OKX's 3-month window automatically. |
-| Full ledger since 2021 (one-time) | `bridge/okx-backfill.mjs` | The only non-serverless piece — the archive apply/poll/download can take minutes. Writes `crypto_bills`. |
-| Schema | `supabase/…_crypto_pnl_history.sql` | `crypto_positions_history`, `crypto_bills`, `crypto_backfill_progress`, `crypto_pnl_daily` view. |
+No cTrader Desktop, no chart, no cBot. Because the OAuth scope is `accounts`
+(read-only), the bridge **cannot place, modify, or close orders** — safe for
+funded / prop accounts.
 
-## Why this also fixes "funding counted as trades"
+---
 
-The dashboard calls `/api/okx/pnl-history` for its Net-P&L / Recent-Trades basis.
-That route was **missing**, so the analytics fell back to raw fills and dragged
-funding/dust rows into the graded trades list. With the route in place,
-`cryptoPnl` populates from real closed positions and funding stays out. In OKX's
-ledger, funding is bill `type='8'` and trades are `type='2'` — the backfill tags
-both so a "total funding cost" stat is still possible without polluting trades.
+## What it does each cycle
 
-## Setup
+1. `ProtoOATraderReq` → account **balance** (scaled by `moneyDigits`).
+2. `ProtoOAGetPositionUnrealizedPnLReq` → per-position **net floating P&L** → summed.
+3. `ProtoOAReconcileReq` → **open positions** (symbol, side, volume, entry, swap).
+4. `equity = balance + floating`; tracks day high/low + start-of-day baselines per
+   **GMT+3 server day** (so the drawdown modes are accurate between polls).
+5. Upserts `account_live` and (throttled) appends `account_live_history`.
 
-1. Apply `supabase/…_crypto_pnl_history.sql` in Supabase.
-2. Deploy — `api/okx/pnl-history.mjs` and the updated cron ship with the app
-   (same env vars you already use: `OKX_API_*`, `SUPABASE_URL`,
-   `SUPABASE_SERVICE_ROLE_KEY`, `CRON_SECRET`).
+Symbol names come from a one-time `ProtoOASymbolsListReq` per account.
 
-## One-time deep backfill (only if you want pre-cron history from 2021)
+---
 
+## One-time setup
+
+### 1. Register a free Open API application
+Go to <https://openapi.ctrader.com> → create an application → copy **Client ID**
+and **Client Secret**. Add a **redirect URI** — if you have nothing to host, use
+`http://localhost/` (you'll just copy the `?code=…` out of the address bar).
+
+### 2. Configure
 ```bash
-cd bridge
+cd bridge/ctrader
 npm install
-cp .env.example .env   # same read-only OKX key + Supabase service role
-npm run backfill       # resumable; rerun over a couple of days if it hits OKX's ~12/day apply cap
+cp .env.example .env
+# fill in CTRADER_CLIENT_ID / CTRADER_CLIENT_SECRET / SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY
 ```
 
-Going forward you don't need this — the hourly cron persists every closed
-position, so history keeps growing on its own.
+### 3. Authorize (once)
+```bash
+npm run auth
+```
+Open the printed URL, sign in with your cTrader ID, click **Allow**. You'll be
+redirected to your redirect URI with `?code=…`. Paste that URL back in. Tokens are
+saved to `.tokens.json` (gitignored) and refreshed automatically from then on.
+
+### 4. Map accounts → dashboard names
+The first run prints each account's `ctidTraderAccountId`. Put them in `.env`:
+```
+CTRADER_ACCOUNTS=tradinghive:30412345,fundedhive2:30498765
+```
+The name on the left **must** match the dashboard account (`trades.account` /
+`challenges.account`). Without this, rows are named by cTrader login and won't line
+up with your challenges.
+
+---
+
+## Running
+
+Streaming (live, keeps the socket open, reconnects on drop):
+```bash
+npm start
+```
+
+One-shot snapshot (for Windows Task Scheduler / cron — same code):
+```bash
+npm run snapshot        # = node bridge.mjs --snapshot
+```
+
+Keep it always-on with pm2:
+```bash
+npm i -g pm2
+pm2 start bridge.mjs --name ctrader-bridge
+pm2 save
+```
+
+**Graceful degradation:** when the bridge is off (machine off), the dashboard shows
+the last snapshot and closed-trade figures — nothing breaks.
+
+---
+
+## Environment
+
+| Var | Required | Notes |
+|---|---|---|
+| `CTRADER_CLIENT_ID` / `CTRADER_CLIENT_SECRET` | ✓ | from the Open API app |
+| `CTRADER_REDIRECT_URI` | for `auth` | must be registered on the app; default `http://localhost/` |
+| `CTRADER_SCOPE` | | `accounts` (read-only) — **do not** use `trading` on prop accounts |
+| `CTRADER_ACCOUNTS` | recommended | `name:ctid,…` mapping to dashboard names |
+| `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` | ✓ | same service-role creds as the app cron |
+| `MODE` | | `stream` (default) or run with `--snapshot` |
+| `POLL_MS` | | streaming poll interval, default 5000, min 1000 |
+| `HISTORY_MS` | | equity-chart point cadence, default 60000, min 30000 |
+| `CTRADER_ACCESS_TOKEN` / `CTRADER_REFRESH_TOKEN` | | optional: run headless from env instead of `.tokens.json` |
+
+Live vs demo endpoint is chosen automatically per account from the account list's
+`isLive` flag (`live.ctraderapi.com` / `demo.ctraderapi.com`, port 5035).
+
+---
+
+## Notes
+
+- **Money scaling.** The Open API returns money as scaled integers; the bridge
+  divides by `10^moneyDigits` (per message) before storing. Volumes are protocol
+  cents → divided by 100 to units.
+- **Rate limits.** One snapshot ≈ 3 non-historical requests; well under the
+  50 req/s/connection cap even at 1s polling.
+- **Security.** Client secret, tokens, and the Supabase service-role key live only
+  here (server-side). The browser reads `account_live` through the existing
+  session-gated `/api/ctrader/live` route.
+- **Protos.** Official Spotware `.proto` files are vendored in `protos/` so there's
+  no install-time fetch.
+
+### Optional next phase (not built here)
+Closed-deal + cash-flow sync into the `trades` table (`ProtoOADealListReq` +
+`ProtoOACashFlowHistoryListReq`) — additive to the manual import, with automatic
+phase-reset detection. See `claude/ctrader-live-pnl-design.md` §6 in the project.
