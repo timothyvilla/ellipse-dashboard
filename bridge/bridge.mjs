@@ -19,6 +19,7 @@ import 'dotenv/config';
 import { CTraderClient } from './_client.mjs';
 import { supa, serverDay } from './_supabase.mjs';
 import { loadTokens, saveTokens, refreshTokens } from './_oauth.mjs';
+import { syncAccountDeals } from './_dealsync.mjs';
 
 const CLIENT_ID = process.env.CTRADER_CLIENT_ID;
 const CLIENT_SECRET = process.env.CTRADER_CLIENT_SECRET;
@@ -27,6 +28,27 @@ const MODE = process.argv.includes('--snapshot') ? 'snapshot' : (process.env.MOD
 const POLL_MS = Math.max(1000, Number(process.env.POLL_MS || 5000));
 const HISTORY_MS = Math.max(30_000, Number(process.env.HISTORY_MS || 60_000)); // ~1 point/min
 const HOSTS = { live: 'live.ctraderapi.com', demo: 'demo.ctraderapi.com' };
+
+// ---- closed-trade (deal) sync ----------------------------------------------
+// OFF by default. Turning it on writes into the app's `trades` table, so it
+// stays opt-in until supabase/20260826_ctrader_deal_sync.sql has been applied
+// and you have looked at what the first run produced.
+const SYNC_TRADES = /^(1|true|yes)$/i.test(String(process.env.SYNC_TRADES || ''));
+const DEAL_SYNC_MS = Math.max(60_000, Number(process.env.DEAL_SYNC_MS || 300_000)); // 5 min
+// Where the first (backfill) run starts. Accepts YYYY-MM-DD. Defaults to 2y ago
+// rather than the epoch: paging a decade of empty weeks at 4 req/s is minutes
+// of pointless calls against a rate-limited historical endpoint.
+const HISTORY_FROM_MS = (() => {
+  const raw = process.env.CTRADER_HISTORY_FROM;
+  const parsed = raw ? Date.parse(raw) : NaN;
+  if (raw && Number.isNaN(parsed)) {
+    throw new Error(`CTRADER_HISTORY_FROM="${raw}" is not a parseable date (use YYYY-MM-DD).`);
+  }
+  return Number.isNaN(parsed) ? Date.now() - 2 * 365 * 24 * 60 * 60 * 1000 : parsed;
+})();
+// Last deal-sync attempt per account, so the sync runs on its own slower cadence
+// than the live poll instead of hammering the historical endpoint every 5s.
+const lastDealSyncAt = new Map();
 
 const log = {
   info: (...a) => console.log(new Date().toISOString(), ...a),
@@ -282,6 +304,39 @@ async function upsertLive(acct, { balance, equity, floating, positions, marginUs
   } catch {}
 }
 
+// ---- closed-trade sync for one account ------------------------------------
+// Runs on DEAL_SYNC_MS, independent of the live poll. Deliberately isolated:
+// a history failure must never take down live equity tracking, which is the
+// bridge's primary job.
+async function maybeSyncDeals(acct, accessToken) {
+  if (!SYNC_TRADES) return;
+  const due = (lastDealSyncAt.get(acct.name) || 0) + DEAL_SYNC_MS;
+  if (Date.now() < due) return;
+  lastDealSyncAt.set(acct.name, Date.now());
+
+  const entry = await getClient(acct.host);
+  await accountAuth(entry, acct.ctid, accessToken);
+  const syms = await symbolMap(entry, acct.ctid).catch(() => new Map());
+
+  await syncAccountDeals(
+    supa(),
+    (name, payload) => entry.client.send(name, payload),
+    { ctid: acct.ctid, name: acct.name },
+    {
+      symbols: syms,
+      serverOffsetMin: 180,               // GMT+3, matching serverDay()
+      historyFromMs: HISTORY_FROM_MS,
+      log,
+      // History reaches symbols that are not in any open position, so lot sizes
+      // are fetched from what the deals actually reference.
+      ensureLotSizes: async (ids) => {
+        const details = await symbolDetails(entry, acct.ctid, ids).catch(() => new Map());
+        return new Map([...details].map(([id, d]) => [id, d.lotSize]));
+      },
+    }
+  );
+}
+
 // ---- run one full cycle over all accounts ---------------------------------
 async function cycle() {
   const accessToken = await ensureFreshToken();
@@ -292,6 +347,13 @@ async function cycle() {
       await snapshotAccount(acct, accessToken);
     } catch (e) {
       log.error(`snapshot ${acct.name} failed:`, e.message);
+    }
+    try {
+      await maybeSyncDeals(acct, accessToken);
+    } catch (e) {
+      // Never fatal: live equity is the priority, history can catch up next tick.
+      // The watermark is untouched on failure, so nothing is skipped.
+      log.error(`deal sync ${acct.name} failed:`, e.message);
     }
   }
 }
@@ -304,7 +366,8 @@ function closeAll() {
 // ---- main ------------------------------------------------------------------
 async function main() {
   if (!CLIENT_ID || !CLIENT_SECRET) throw new Error('Set CTRADER_CLIENT_ID and CTRADER_CLIENT_SECRET.');
-  log.info(`[ctrader-bridge] mode=${MODE} poll=${POLL_MS}ms`);
+  log.info(`[ctrader-bridge] mode=${MODE} poll=${POLL_MS}ms ` +
+           `deal-sync=${SYNC_TRADES ? `on/${DEAL_SYNC_MS / 1000}s` : 'off'}`);
 
   if (MODE === 'snapshot') {
     await cycle();

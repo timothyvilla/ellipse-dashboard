@@ -8,12 +8,15 @@
     "auth": "node auth.mjs",
     "start": "node bridge.mjs",
     "snapshot": "node bridge.mjs --snapshot",
-    "check": "node --check bridge.mjs && node --check _client.mjs && node --check _proto.mjs && node --check _oauth.mjs && node --check _supabase.mjs && node --check auth.mjs"
+    "check": "node --check bridge.mjs && node --check _client.mjs && node --check _proto.mjs && node --check _oauth.mjs && node --check _supabase.mjs && node --check auth.mjs && node --check _deals.mjs && node --check _dealsync.mjs",
+    "test": "node --test _deals.test.mjs _dealsync.test.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.39.0",
     "dotenv": "^16.4.5",
     "protobufjs": "^7.2.6"
   },
-  "engines": { "node": ">=18" }
+  "engines": {
+    "node": ">=18"
+  }
 }
